@@ -28,6 +28,11 @@ all:
 	@echo "Building all Trafodion components"
 	cd core && $(MAKE) all 
 
+.PHONY: local-lite
+local-lite:
+	@echo "Building local-lite Trafodion native core"
+	cd core && $(MAKE) local-lite
+
 package: 
 	@echo "Packaging Trafodion components"
 	cd core && $(MAKE) package 
