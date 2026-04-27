@@ -31,7 +31,14 @@ HBASE_TRX_LOC    = $(TRAF_HOME)/src/seatrans/hbase-trx
 DEBUG		=
 DEFINES		= -DDEBUG -DxUSE_FILE_AUDIT 
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+DEFINES		+= -DTRAF_LOCAL_LITE
+LIBJVM		=
+TM_HBASE_PREREQ	=
+else
    LIBJVM        = -I. -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux -L$(JAVA_HOME)/jre/lib/amd64/server -ljvm
+TM_HBASE_PREREQ	= $(LIBEXPDIR)/libshbasetmlib.so
+endif
    LIBSBMS       = -L$(LIBEXPDIR) -lsbms
 
 ifeq ($(USE_THREADED_IO),1)
@@ -56,9 +63,13 @@ LIBSTMOBJS = $(OUTDIR)/tmtransid.o \
 			 $(OUTDIR)/tmmutex.o \
 			 $(OUTDIR)/tmregisterregion.o \
              $(OUTDIR)/tmddlrequests.o\
- 			 $(OUTDIR)/javaobjectinterfacetm.o \
 			 $(OUTDIR)/versstmlib.o \
 		         $(OUTDIR)/CommonLogger.o 
+ifeq ($(TRAF_LOCAL_LITE),1)
+LIBSTMOBJS := $(filter-out $(OUTDIR)/tmregisterregion.o $(OUTDIR)/tmddlrequests.o,$(LIBSTMOBJS))
+else
+LIBSTMOBJS += $(OUTDIR)/javaobjectinterfacetm.o
+endif
 LIBSXATMOBJS  = $(OUTDIR)/tmmap.o \
 				$(OUTDIR)/tmmmap.o \
                 $(OUTDIR)/tmmutex.o \
@@ -125,6 +136,9 @@ TMOBJS		= $(OUTDIR)/tmregistry.o \
 		      $(OUTDIR)/tmxarmmain.o \
 		      $(OUTDIR)/tm.o \
 		      $(OUTDIR)/CommonLogger.o  
+ifeq ($(TRAF_LOCAL_LITE),1)
+TMOBJS += $(OUTDIR)/LocalLiteHBaseTmStubs.o
+endif
 
 ifeq ($(SUPPORT_TM_SYNC),1)
 DEFINES         += -DSUPPORT_TM_SYNC
@@ -148,13 +162,23 @@ endif
 
 all:  $(LIBEXPDIR)/libstmlib.so cp_trx_jar
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+cp_trx_jar:
+	@echo "Skipping transaction jar for local-lite"
+else
 cp_trx_jar:
 	cd $(HBASE_TRX_LOC); make all
+endif
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+all:  $(LIBEXPDIR)/libsxatmlib.so $(LIBEXPDIR)/libstmlib.so $(PROGS) $(LIBEXPDIR)/libxarm.so
+	@echo "Skipping TM tools for local-lite"
+else
 all:  $(LIBEXPDIR)/libsxatmlib.so $(LIBEXPDIR)/libstmlib.so $(PROGS) $(LIBEXPDIR)/libxarm.so
 	cd tools; $(MAKE)
+endif
 
-$(OUTDIR)/tm: $(TMOBJS) $(LIBEXPDIR)/libsxatmlib.so $(LIBEXPDIR)/libshbasetmlib.so $(PROGS) $(LIBEXPDIR)/libxarm.so cp_trx_jar
+$(OUTDIR)/tm: $(TMOBJS) $(LIBEXPDIR)/libsxatmlib.so $(TM_HBASE_PREREQ) $(PROGS) $(LIBEXPDIR)/libxarm.so cp_trx_jar
 	@echo "USE_THREADED_IO = " $(USE_THREADED_IO)
 	$(CXX) $(LNK_FLGS) $(LIBJVM) -o $@ $(TMOBJS) $(LIBSTM) -L$(LIBEXPDIR) -llog4cxx -DTM_BUILD_
 
@@ -173,8 +197,10 @@ $(LIBEXPDIR)/libstmlib.so: $(LIBSTMOBJS)
 $(LIBEXPDIR)/libsxatmlib.so: $(LIBSXATMOBJS) 
 	$(CXX) $(LNK_FLGS) -shared -o $@ $(LIBSXATMOBJS) $(LIBSTMX) -L$(LIBEXPDIR) -llog4cxx
 
+ifneq ($(TRAF_LOCAL_LITE),1)
 $(LIBEXPDIR)/libshbasetmlib.so: $(LIBSXATMOBJS) cp_trx_jar
 	cd $(HBASETMLIB); $(MAKE)
+endif
 
 
 $(LIBEXPDIR)/libxarm.so: $(LIBXARMOBJS) 

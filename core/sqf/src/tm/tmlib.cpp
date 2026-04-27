@@ -30,7 +30,9 @@
 #include "seabed/fs.h"
 #include "seabed/trace.h"
 #include "seabed/thread.h"
+#ifndef TRAF_LOCAL_LITE
 #include "javaobjectinterfacetm.h"
+#endif
 
 // tm includes  
 #include "dtm/tm_util.h"
@@ -44,7 +46,14 @@
 
 //==== For the JNI call to RMInterface.cleartransaction - begin
 #include <iostream>
+#ifndef TRAF_LOCAL_LITE
 #include "jni.h"
+#endif
+
+#ifdef TRAF_LOCAL_LITE
+__thread JNIEnv* _tlp_jenv = NULL;
+__thread bool _tlv_jenv_set = false;
+#endif
 
 //
 // ===========================================================================
@@ -2847,6 +2856,9 @@ void TMLIB::initialize()
 // -------------------------------------------------------------------
 int TMLIB::initJNI()
 {
+#ifdef TRAF_LOCAL_LITE
+    return JOI_ERROR_INIT_JNI;
+#else
     int lv_err = 0;
 
     if ((lv_err = initJNIEnv()) != 0)
@@ -2884,6 +2896,7 @@ int TMLIB::initJNI()
             TMlibTrace(("TMLIB_TRACE : TMLIB::initJNI: initConnection succeeded.\n"), 1);
     }
     return 0;
+#endif
 } //initJNI
 
 
@@ -3181,6 +3194,9 @@ unsigned int TMLIB::new_tag()
 
 short TMLIB::setupJNI()
 {
+#ifdef TRAF_LOCAL_LITE
+   return JOI_ERROR_INIT_JNI;
+#else
    jclass lv_javaClass;
    TMLibJavaMethods_ = new JavaMethodInit[JM_LAST];
    TMLibJavaMethods_[JM_CTOR                  ].jm_name      = "<init>";
@@ -3223,6 +3239,7 @@ short TMLIB::setupJNI()
       abort();
    }
    return ret;
+#endif
 } //setupJNI
 
 
@@ -3231,6 +3248,10 @@ short TMLIB::setupJNI()
 ///////////////////////////////////////////////
 short TMLIB::initConnection(short pv_nid)
 {
+#ifdef TRAF_LOCAL_LITE
+  (void) pv_nid;
+  return JOI_ERROR_INIT_JNI;
+#else
   jshort   jdtmid = pv_nid;
   //sleep(30);
   _tlp_jenv->CallBooleanMethod(javaObj_, TMLibJavaMethods_[JM_INIT1].methodID, jdtmid);
@@ -3240,11 +3261,16 @@ short TMLIB::initConnection(short pv_nid)
   }
   // Ignore result and return JOI_OK
   return JOI_OK;
+#endif
 }
 
 
 void TMLIB::cleanupTransactionLocal(long transactionID)
 {
+#ifdef TRAF_LOCAL_LITE
+  (void) transactionID;
+  return;
+#else
   if (enableCleanupRMInterface() == false)
      return;
   initJNI();
@@ -3256,11 +3282,16 @@ void TMLIB::cleanupTransactionLocal(long transactionID)
   }
   _tlp_jenv->PopLocalFrame(NULL);
   return;
+#endif
 } //cleanupTransactionLocal
 
 
 short TMLIB::endTransactionLocal(long transactionID)
 {
+#ifdef TRAF_LOCAL_LITE
+  (void) transactionID;
+  return RET_EXCEPTION;
+#else
   jlong   jlv_transid = transactionID;
   initJNI();
   jshort jresult = _tlp_jenv->CallShortMethod(javaObj_, TMLibJavaMethods_[JM_TRYCOMMIT].methodID, jlv_transid);
@@ -3278,11 +3309,16 @@ short TMLIB::endTransactionLocal(long transactionID)
      return RET_OK;
   } 
   return jresult;
+#endif
 } //endTransactionLocal
 
 
 short TMLIB::abortTransactionLocal(long transactionID)
 {
+#ifdef TRAF_LOCAL_LITE
+  (void) transactionID;
+  return RET_EXCEPTION;
+#else
   jlong   jlv_transid = transactionID;
   initJNI();
   jshort jresult = _tlp_jenv->CallShortMethod(javaObj_, TMLibJavaMethods_[JM_ABORT].methodID, jlv_transid);
@@ -3300,6 +3336,7 @@ short TMLIB::abortTransactionLocal(long transactionID)
   } 
 
   return jresult;
+#endif
 } //abortTransactionLocal
 
 bool TMLIB::close_tm() 
@@ -3354,5 +3391,3 @@ bool DTM_LOCALTRANSACTION(int32 *pp_node, int32 *pp_seqnum)
    *pp_seqnum = lp_transid->get_seq_num();
    return lv_local;
 }
-
-

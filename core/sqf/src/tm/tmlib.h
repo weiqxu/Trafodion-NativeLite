@@ -22,7 +22,37 @@
 #ifndef TMLIB_H_
 #define TMLIB_H_
 
+#ifdef TRAF_LOCAL_LITE
+#include <string>
+
+struct JNIEnv;
+typedef void *jclass;
+typedef void *jmethodID;
+
+struct JavaMethodInit {
+    std::string   jm_name;
+    std::string   jm_signature;
+    jmethodID     methodID;
+  };
+
+typedef enum {
+  JOI_OK = 0,
+  JOI_ERROR_INIT_JNI = 8
+} JOI_RetCode;
+
+class JavaObjectInterfaceTM
+{
+protected:
+  JavaObjectInterfaceTM(int = 0, int = 0) {}
+  virtual ~JavaObjectInterfaceTM() {}
+
+  bool isInitialized() { return false; }
+  JOI_RetCode initJNIEnv() { return JOI_ERROR_INIT_JNI; }
+};
+#else
 #include <jni.h>
+#include "javaobjectinterfacetm.h"
+#endif
 
 #include "dtm/tmtransaction.h"
 #include "tmmap.h"
@@ -30,7 +60,6 @@
 #include "tmlibtxn.h"
 #include "tmlibglobal.h"
 #include "tmseqnum.h"
-#include "javaobjectinterfacetm.h"
 
 //
 // TM handle information 
@@ -157,4 +186,3 @@ short HBasetoTxnError(short pv_HBerr);
 extern __thread TMLIB_ThreadTxn_Object *gp_trans_thr;
 extern TMLIB                         gv_tmlib;
 #endif
-
