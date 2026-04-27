@@ -119,6 +119,19 @@ CPPSRC := Allocator.cpp \
         HdfsClient_JNI.cpp \
         HiveClient_JNI.cpp \
         HBaseClient_JNI.cpp
+
+ifeq ($(TRAF_LOCAL_LITE),1)
+CPPSRC := $(filter-out \
+	JavaObjectInterface.cpp \
+	HdfsClient_JNI.cpp \
+	HiveClient_JNI.cpp \
+	HBaseClient_JNI.cpp \
+	SequenceFileReader.cpp \
+	OrcFileReader.cpp,$(CPPSRC))
+CPPSRC += LocalLiteStorageStubs.cpp
+DEFS += -DTRAF_LOCAL_LITE
+endif
+
 CPPSRC += vers_libexecutor.cpp \
 	ssmpipc.cpp \
 	CancelBroker.cpp \
