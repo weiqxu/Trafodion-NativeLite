@@ -217,8 +217,12 @@ hbasetmlib:
 
 setup:
 	cd tools; $(MAKE) setup
+ifeq ($(TRAF_LOCAL_LITE),1)
+	@echo "Skipping TM Java setup for local-lite"
+else
 	@echo "HBASETMLIB = " $(HBASETMLIB)
 	cd $(HBASETMLIB); $(MAKE) setup
+endif
 
 clean:
 	$(RM) $(LIBEXPDIR)/libsxatmlib.so $(LIBEXPDIR)/libxarm.so $(LIBEXPDIR)/libstmlib.so *.gcda *.gcno *.gcov

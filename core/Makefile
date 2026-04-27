@@ -37,8 +37,12 @@ include macros.gmk
 # Default target (all components)
 all: $(MPI_TARGET) dbsecurity foundation jdbc_jar $(SEAMONSTER_TARGET) ndcs ci jdbc_type2_jar dcs rest odb lib_mgmt
 
+local-lite: SHELL := /bin/bash
+local-lite: export TRAF_LOCAL_LITE := 1
 local-lite: $(MPI_TARGET) dbsecurity local-lite-foundation $(SEAMONSTER_TARGET)
 
+local-lite-foundation: SHELL := /bin/bash
+local-lite-foundation: export TRAF_LOCAL_LITE := 1
 local-lite-foundation: sqroot dbsecurity $(MPI_TARGET) $(SEAMONSTER_TARGET)
 	cd sqf && $(MAKE) local-lite TRAF_LOCAL_LITE=1
 
@@ -162,9 +166,14 @@ version:
 
 # Check that Environment variables are set correctly and
 # create links and files needed as prerequisite for the build
+sqroot: SHELL := /bin/bash
 sqroot:
-	./bldenvchk.sh;
-	cd sqf && $(MAKE) setupdir 2>&1 | sed -e "s/$$/	##(setupdir)/";exit $${PIPESTATUS[0]}
+	if [ "$(TRAF_LOCAL_LITE)" = "1" ]; then \
+	  cd sqf && $(MAKE) setupdir TRAF_LOCAL_LITE=1 2>&1 | sed -e "s/$$/	##(setupdir)/"; exit $${PIPESTATUS[0]}; \
+	else \
+	  ./bldenvchk.sh || exit $$?; \
+	  cd sqf && $(MAKE) setupdir 2>&1 | sed -e "s/$$/	##(setupdir)/"; exit $${PIPESTATUS[0]}; \
+	fi
 
 # Check for absolute filenames used as dynamic linked libraries
 find-absolute-dlls:
