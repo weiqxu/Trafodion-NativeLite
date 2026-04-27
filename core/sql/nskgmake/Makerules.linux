@@ -446,12 +446,14 @@ copytoolslibs:
 	cp -Pf $(LOG4CXX_LIB_DIR)/$(LOG4CXX_SO)* $(LIBROOT)
 	cp -Pf $(THRIFT_LIB_DIR)/$(THRIFT_SO)* $(LIBROOT)
 	cp -Pf $(THRIFT_LIB_DIR)/libthrift.so $(LIBROOT)
+ifneq ($(TRAF_LOCAL_LITE),1)
 	# if these are not found, then...
 	-cp -Pf $(HADOOP_BLD_LIB)/$(LIBHDFS_SO)* $(LIBROOT)
 	-cp -Pf $(HADOOP_BLD_LIB)/$(LIBHADOOP_SO)* $(LIBROOT)
 	-cp -Pf $(HADOOP_BLD_INC)/hdfs.h $(TRAF_HOME)/export/include
 	# download Hadoop-common distro
 	get_libhdfs_files --verbose
+endif
 
 linuxmklinksdebug linuxmklinksrelease: copytoolslibs
 	(OUTDIR=$(dir $(shell pwd))$(TOPLIBDIR)/$(TARGTYPE)/$(ARCHBITS)/$(FLAVOR);\

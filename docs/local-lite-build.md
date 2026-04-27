@@ -22,12 +22,14 @@ HBase utilities, HBase transaction jar setup, `hbasetmlib2`, JVM link flags,
 and global HDFS/JVM SQL link flags.
 
 In this workspace, `make local-lite` reaches SQF setup without invoking the full
-Java/Hadoop build checks, then stops because the native Trafodion build
-environment is not initialized. The observed blocker is an empty `TRAF_HOME`,
-which produces paths such as `/macros.gmk` and `WROOT=/../sql`.
+Java/Hadoop build checks. The local-lite target supplies the minimum SQF path
+defaults normally provided by `sqenv.sh`, including `TRAF_HOME=core/sqf`.
 
-That blocker is native build environment setup, not a remaining Java, Maven,
-HDFS, or HBase dependency in the local-lite graph.
+The current blockers are native third-party build dependencies, such as MPICH
+and Thrift development libraries. In this workspace, the build currently stops
+on missing native Thrift shared libraries. Those blockers are native build
+environment setup, not remaining Java, Maven, HDFS, or HBase dependencies in
+the local-lite graph.
 
 ## Verification
 

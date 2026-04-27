@@ -37,12 +37,39 @@ include macros.gmk
 # Default target (all components)
 all: $(MPI_TARGET) dbsecurity foundation jdbc_jar $(SEAMONSTER_TARGET) ndcs ci jdbc_type2_jar dcs rest odb lib_mgmt
 
+LOCAL_LITE_TRAF_HOME ?= $(CURDIR)/sqf
+LOCAL_LITE_ACTIVE_TRAF_HOME := $(or $(TRAF_HOME),$(LOCAL_LITE_TRAF_HOME))
+LOCAL_LITE_MPICH_ROOT ?= /opt/home/tools/dest-mpich-3.0.4
+LOCAL_LITE_SYSTEM_LIB_DIR ?= $(firstword $(wildcard /usr/lib/$(shell uname -m)-linux-gnu /usr/lib64 /usr/lib) /usr/lib)
+LOCAL_LITE_LOG4CXX_LIB_DIR ?= $(LOCAL_LITE_SYSTEM_LIB_DIR)
+LOCAL_LITE_LOG4CXX_INC_DIR ?= /usr/include/log4cxx
+LOCAL_LITE_THRIFT_LIB_DIR ?= $(LOCAL_LITE_SYSTEM_LIB_DIR)
+LOCAL_LITE_THRIFT_INC_DIR ?= /usr/include
+
 local-lite: SHELL := /bin/bash
 local-lite: export TRAF_LOCAL_LITE := 1
+local-lite: export TRAF_HOME := $(LOCAL_LITE_ACTIVE_TRAF_HOME)
+local-lite: export SQ_MTYPE := $(or $(SQ_MTYPE),64)
+local-lite: export SQ_MBTYPE := $(or $(SQ_MBTYPE),64d)
+local-lite: export MPI_ROOT := $(or $(MPI_ROOT),$(LOCAL_LITE_ACTIVE_TRAF_HOME)/opt/hpmpi)
+local-lite: export MPICH_ROOT := $(or $(MPICH_ROOT),$(LOCAL_LITE_MPICH_ROOT))
+local-lite: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LOCAL_LITE_LOG4CXX_LIB_DIR))
+local-lite: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LOCAL_LITE_LOG4CXX_INC_DIR))
+local-lite: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LOCAL_LITE_THRIFT_LIB_DIR))
+local-lite: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LOCAL_LITE_THRIFT_INC_DIR))
 local-lite: $(MPI_TARGET) dbsecurity local-lite-foundation $(SEAMONSTER_TARGET)
 
 local-lite-foundation: SHELL := /bin/bash
 local-lite-foundation: export TRAF_LOCAL_LITE := 1
+local-lite-foundation: export TRAF_HOME := $(LOCAL_LITE_ACTIVE_TRAF_HOME)
+local-lite-foundation: export SQ_MTYPE := $(or $(SQ_MTYPE),64)
+local-lite-foundation: export SQ_MBTYPE := $(or $(SQ_MBTYPE),64d)
+local-lite-foundation: export MPI_ROOT := $(or $(MPI_ROOT),$(LOCAL_LITE_ACTIVE_TRAF_HOME)/opt/hpmpi)
+local-lite-foundation: export MPICH_ROOT := $(or $(MPICH_ROOT),$(LOCAL_LITE_MPICH_ROOT))
+local-lite-foundation: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LOCAL_LITE_LOG4CXX_LIB_DIR))
+local-lite-foundation: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LOCAL_LITE_LOG4CXX_INC_DIR))
+local-lite-foundation: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LOCAL_LITE_THRIFT_LIB_DIR))
+local-lite-foundation: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LOCAL_LITE_THRIFT_INC_DIR))
 local-lite-foundation: sqroot dbsecurity $(MPI_TARGET) $(SEAMONSTER_TARGET)
 	cd sqf && $(MAKE) local-lite TRAF_LOCAL_LITE=1
 
