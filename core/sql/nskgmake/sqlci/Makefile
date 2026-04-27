@@ -23,7 +23,11 @@
 
 CPPSRC := SqlciMain.cpp 
 
-EARLY_DLLS:= -ljsig
+ifeq ($(TRAF_LOCAL_LITE),1)
+EARLY_DLLS :=
+else
+EARLY_DLLS := -ljsig
+endif
 
 DEP_LIBS += tdm_sqlcli sqlcilib arkcmp_dll
 

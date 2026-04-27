@@ -135,7 +135,11 @@ LOG4CXX_LIB=-llog4cxx
 LOG4CXX_SO=liblog4cxx*.so
 
 # for now, include these libs (copied to our local lib dir) everywhere
+ifeq ($(TRAF_LOCAL_LITE),1)
+GLOBAL_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB)
+else
 GLOBAL_SYS_LIBS := -L $(LOC_JVMLIBS) $(LIBHDFS_LIB) $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB)
+endif
 
 # EXECUTABLES defines the executables that are built for release and debug
 # builds.  Any flavor-specific targets can be added later in this makefile.
@@ -177,6 +181,10 @@ SYS_DEFS := -DNA_LINUX -DSQ_LINUX -DNGG -D_M_DG -D_NSKFS_ -D_FULL_BUILD \
 
 SYS_DEFS += -DSQ_CPP_INTF
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+SYS_DEFS += -DTRAF_LOCAL_LITE
+endif
+
 ifdef SQ_NEW_PHANDLE
 SYS_DEFS += -DSQ_NEW_PHANDLE -DUSE_NEW_PHANDLE
 endif
@@ -192,11 +200,14 @@ ifdef USE_HADOOP_1
 endif
 
 SYS_INCLUDES :=
-   SYS_INCLUDES += -I$(TRAF_HOME)/inc \
+SYS_INCLUDES += -I$(TRAF_HOME)/inc \
 	-I$(TRAF_HOME)/export/include \
-        -I$(PROTOBUFS_INC) \
-	$(THRIFT_INC) $(LOG4CXX_INC)	 $(LIBCURL_INC)  \
-	-I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux
+	-I$(PROTOBUFS_INC) \
+	$(THRIFT_INC) $(LOG4CXX_INC) $(LIBCURL_INC)
+
+ifneq ($(TRAF_LOCAL_LITE),1)
+SYS_INCLUDES += -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux
+endif
 
 OTHER_INCLUDES := -include "$(TRAF_HOME)/inc/seaquest/sqtypes.h" \
 	-I$(LLVM_INC_ROOT) \
@@ -342,8 +353,14 @@ build_c_rule = $(compile_c_rule)
 
 ALL_EXE_LDFLAGS = $(ALL_CXXFLAGS) $(OPT_EXE_LDFLAGS)
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+LOCAL_LITE_EARLY_DLLS =
+else
+LOCAL_LITE_EARLY_DLLS = $(EARLY_DLLS)
+endif
+
 # link_exe defines how to link an executable for OSS
-link_exe = $(CXX) $(ALL_EXE_LDFLAGS) $(EARLY_DLLS) $(OBJ_PATHS) \
+link_exe = $(CXX) $(ALL_EXE_LDFLAGS) $(LOCAL_LITE_EARLY_DLLS) $(OBJ_PATHS) \
 	$(LOC_LIBS) $(EXTRA_LIBS) $(DEP_DLL_NAMES:%=-l%) \
 	$(DEP_LIB_NAMES:%=-l%) $(EXTERN_OBJS) $(SYS_LIBS) $(GLOBAL_SYS_LIBS) $(LINK_EXTERN_LIB) \
 	-Wl,--rpath -Wl,$(RESULTDIR) \
