@@ -22,16 +22,20 @@
 **********************************************************************/
 
 #include "HDFSHook.h"
+#ifndef TRAF_LOCAL_LITE
 #include "hiveHook.h"
+#endif
 #include "CmpCommon.h"
 #include "SchemaDB.h"
 #include "ComCextdecs.h"
 
 // for DNS name resolution
 #include <netdb.h>
+#ifndef TRAF_LOCAL_LITE
 #include "HdfsClient_JNI.h"
 #include "Globals.h"
 #include "Context.h"
+#endif
 // Initialize static variables
 THREAD_P CollIndex HHDFSMasterHostList::numSQNodes_(0);
 THREAD_P NABoolean HHDFSMasterHostList::hasVirtualSQNodes_(FALSE);
@@ -294,6 +298,10 @@ void HHDFSFileStats::populate(hdfsFS fs, hdfsFileInfo *fileInfo,
                               NABoolean doEstimation,
                               char recordTerminator)
 {
+#ifdef TRAF_LOCAL_LITE
+  diags.recordError("HDFS statistics are not available in local-lite builds",
+                    "HHDFSFileStats::populate");
+#else
   // copy fields from fileInfo
   fileName_       = fileInfo->mName;
   replication_    = (Int32) fileInfo->mReplication;
@@ -445,6 +453,7 @@ void HHDFSFileStats::populate(hdfsFS fs, hdfsFileInfo *fileInfo,
           hdfsFreeHosts(blockHostNames);
         }
     }
+#endif
 }
 
 void HHDFSFileStats::print(FILE *ofd)
@@ -480,6 +489,10 @@ void HHDFSBucketStats::addFile(hdfsFS fs, hdfsFileInfo *fileInfo,
                                char recordTerminator,
                                CollIndex pos)
 {
+#ifdef TRAF_LOCAL_LITE
+  diags.recordError("HDFS statistics are not available in local-lite builds",
+                    "HHDFSBucketStats::addFile");
+#else
   HHDFSFileStats *fileStats = new(heap_) HHDFSFileStats(heap_, getTable());
 
   if ( scount_ > 10 )
@@ -501,6 +514,7 @@ void HHDFSBucketStats::addFile(hdfsFS fs, hdfsFileInfo *fileInfo,
         fileStatsList_.insertAt(pos, fileStats);
       add(fileStats);
     }
+#endif
 }
 
 void HHDFSBucketStats::removeAt(CollIndex i)
@@ -520,6 +534,9 @@ void HHDFSBucketStats::print(FILE *ofd)
 
 OsimHHDFSStatsBase* HHDFSBucketStats::osimSnapShot(NAMemory * heap)
 {
+#ifdef TRAF_LOCAL_LITE
+    return NULL;
+#else
     OsimHHDFSBucketStats* stats = new(heap) OsimHHDFSBucketStats(NULL, this, heap);
     
     for(Int32 i = 0; i < fileStatsList_.getUsedLength(); i++){
@@ -528,6 +545,7 @@ OsimHHDFSStatsBase* HHDFSBucketStats::osimSnapShot(NAMemory * heap)
                 stats->addEntry(fileStatsList_[i]->osimSnapShot(heap), i);
     }
     return stats;
+#endif
 }
 
 
@@ -545,6 +563,14 @@ void HHDFSListPartitionStats::populate(hdfsFS fs,
                                        NABoolean doEstimation,
                                        char recordTerminator)
 {
+#ifdef TRAF_LOCAL_LITE
+  partitionDir_     = dir;
+  defaultBucketIdx_ = (numOfBuckets >= 1) ? numOfBuckets : 0;
+  doEstimation_     = doEstimation;
+  recordTerminator_ = recordTerminator;
+  diags.recordError("HDFS statistics are not available in local-lite builds",
+                    "HHDFSListPartitionStats::populate");
+#else
   int numFiles = 0;
 
   // remember parameters
@@ -601,10 +627,14 @@ void HHDFSListPartitionStats::populate(hdfsFS fs,
         if (bucketStatsList_.used(b))
           add(bucketStatsList_[b]);
     }
+#endif
 }
 
 NABoolean HHDFSListPartitionStats::validateAndRefresh(hdfsFS fs, HHDFSDiags &diags, NABoolean refresh)
 {
+#ifdef TRAF_LOCAL_LITE
+  return FALSE;
+#else
   NABoolean result = TRUE;
 
   // assume we get the files sorted by file name
@@ -749,6 +779,7 @@ NABoolean HHDFSListPartitionStats::validateAndRefresh(hdfsFS fs, HHDFSDiags &dia
       result = FALSE; // some files got deleted at the end
 
   return result;
+#endif
 }
 
 Int32 HHDFSListPartitionStats::determineBucketNum(const char *fileName)
@@ -804,6 +835,9 @@ void HHDFSListPartitionStats::print(FILE *ofd)
 
 OsimHHDFSStatsBase* HHDFSListPartitionStats::osimSnapShot(NAMemory * heap)
 {
+#ifdef TRAF_LOCAL_LITE
+    return NULL;
+#else
     OsimHHDFSListPartitionStats* stats = new(heap) OsimHHDFSListPartitionStats(NULL, this, heap);
 
     for(Int32 i = 0; i < bucketStatsList_.getUsedLength(); i++)
@@ -813,6 +847,7 @@ OsimHHDFSStatsBase* HHDFSListPartitionStats::osimSnapShot(NAMemory * heap)
             stats->addEntry(bucketStatsList_[i]->osimSnapShot(heap), i);
     }
     return stats;
+#endif
 }
 
 HHDFSTableStats::~HHDFSTableStats()
@@ -823,6 +858,12 @@ HHDFSTableStats::~HHDFSTableStats()
 
 NABoolean HHDFSTableStats::populate(struct hive_tbl_desc *htd)
 {
+#ifdef TRAF_LOCAL_LITE
+  diags_.reset();
+  diags_.recordError("HDFS statistics are not available in local-lite builds",
+                     "HHDFSTableStats::populate");
+  return FALSE;
+#else
   // here is the basic outline how this works:
   //
   // 1. Walk SD descriptors of the table, one for the table
@@ -893,10 +934,17 @@ NABoolean HHDFSTableStats::populate(struct hive_tbl_desc *htd)
   validationJTimestamp_ = JULIANTIMESTAMP();
 
   return diags_.isSuccess();
+#endif
 }
 
 NABoolean HHDFSTableStats::validateAndRefresh(Int64 expirationJTimestamp, NABoolean refresh)
 {
+#ifdef TRAF_LOCAL_LITE
+  diags_.reset();
+  diags_.recordError("HDFS statistics are not available in local-lite builds",
+                     "HHDFSTableStats::validateAndRefresh");
+  return FALSE;
+#else
   NABoolean result = TRUE;
   // initial heap allocation size
   Int32 initialSize = heap_->getAllocSize();
@@ -945,6 +993,7 @@ NABoolean HHDFSTableStats::validateAndRefresh(Int64 expirationJTimestamp, NABool
   hiveStatsSize_ += (heap_->getAllocSize() - initialSize);
 
   return result;
+#endif
 }
 
 NABoolean HHDFSTableStats::splitLocation(const char *tableLocation,
@@ -1034,6 +1083,10 @@ NABoolean HHDFSTableStats::splitLocation(const char *tableLocation,
 void HHDFSTableStats::processDirectory(const NAString &dir, Int32 numOfBuckets, 
                                        NABoolean doEstimate, char recordTerminator)
 {
+#ifdef TRAF_LOCAL_LITE
+  diags_.recordError("HDFS statistics are not available in local-lite builds",
+                     "HHDFSTableStats::processDirectory");
+#else
   HHDFSListPartitionStats *partStats = new(heap_)
     HHDFSListPartitionStats(heap_, this);
   partStats->populate(fs_, dir, numOfBuckets, diags_, doEstimate, recordTerminator);
@@ -1048,6 +1101,7 @@ void HHDFSTableStats::processDirectory(const NAString &dir, Int32 numOfBuckets,
       if (partStats->dirInfo()->mLastMod > modificationTS_)
         modificationTS_ = partStats->dirInfo()->mLastMod;
     }
+#endif
 }
 
 Int32 HHDFSTableStats::getNumOfConsistentBuckets() const
@@ -1106,6 +1160,11 @@ void HHDFSTableStats::print(FILE *ofd)
 
 NABoolean HHDFSTableStats::connectHDFS(const NAString &host, Int32 port)
 {
+#ifdef TRAF_LOCAL_LITE
+  diags_.recordError("HDFS connections are not available in local-lite builds",
+                     "HHDFSTableStats::connectHDFS");
+  return FALSE;
+#else
   NABoolean result = TRUE;
 
   // establish connection to HDFS . Conect to the connection cached in the context.
@@ -1128,6 +1187,7 @@ NABoolean HHDFSTableStats::connectHDFS(const NAString &host, Int32 port)
       currHdfsPort_ = port;
       //  }
   return result;
+#endif
 }
 
 void HHDFSTableStats::disconnectHDFS()
@@ -1138,6 +1198,9 @@ void HHDFSTableStats::disconnectHDFS()
 
 void HHDFSTableStats::computeModificationTSmsec()
 {
+#ifdef TRAF_LOCAL_LITE
+      modificationTSInMillisec_ = -1;
+#else
       HDFS_Client_RetCode rc;
 
       // get a millisecond-resolution timestamp via JNI
@@ -1156,10 +1219,14 @@ void HHDFSTableStats::computeModificationTSmsec()
           diags_.recordError(errMsg, "HHDFSTableStats::computeModificationTSmsec");
           modificationTSInMillisec_ = -1;
         }
+#endif
 }
 
 OsimHHDFSStatsBase* HHDFSTableStats::osimSnapShot(NAMemory * heap)
 {
+#ifdef TRAF_LOCAL_LITE
+    return NULL;
+#else
     OsimHHDFSTableStats* stats = new(heap) OsimHHDFSTableStats(NULL, this, heap);
 
     for(Int32 i = 0; i < listPartitionStatsList_.getUsedLength(); i++)
@@ -1169,14 +1236,17 @@ OsimHHDFSStatsBase* HHDFSTableStats::osimSnapShot(NAMemory * heap)
             stats->addEntry(listPartitionStatsList_[i]->osimSnapShot(heap), i);
     }
     return stats;
+#endif
 }
 
 OsimHHDFSStatsBase* HHDFSFileStats::osimSnapShot(NAMemory * heap)
 {
+#ifdef TRAF_LOCAL_LITE
+    return NULL;
+#else
     OsimHHDFSFileStats* stats = new(heap) OsimHHDFSFileStats(NULL, this, heap);
 
     return stats;
+#endif
 }
-
-
 

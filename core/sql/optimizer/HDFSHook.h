@@ -43,7 +43,30 @@
 #include "Collections.h"
 #include "NAString.h"
 #include "CmpContext.h"
+#include <time.h>
+#ifndef TRAF_LOCAL_LITE
 #include "hdfs.h"
+#else
+typedef void *hdfsFS;
+typedef enum tObjectKind
+{
+  kObjectKindFile = 'F',
+  kObjectKindDirectory = 'D'
+} tObjectKind;
+typedef struct hdfsFileInfo
+{
+  tObjectKind mKind;
+  char *mName;
+  time_t mLastMod;
+  Int64 mSize;
+  short mReplication;
+  Int64 mBlockSize;
+  char *mOwner;
+  char *mGroup;
+  short mPermissions;
+  time_t mLastAccess;
+} hdfsFileInfo;
+#endif
 #include <stdio.h>
 
 // forward declarations
