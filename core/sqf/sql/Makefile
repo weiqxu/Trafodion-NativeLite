@@ -29,6 +29,11 @@ all:
 	cd stublibs; $(MAKE)
 	cd $(WROOT)/nskgmake; $(MAKE) linux$(SQ_BUILD_TYPE)
 
+.PHONY: local-lite
+local-lite:
+	cd stublibs; $(MAKE)
+	cd $(WROOT)/nskgmake; $(MAKE) TRAF_LOCAL_LITE=1 linux$(SQ_BUILD_TYPE)
+
 clean:
 	cd stublibs; $(MAKE) clean
 	cd $(WROOT)/nskgmake; $(MAKE) linuxcleandebug; $(MAKE) linuxcleanrelease
