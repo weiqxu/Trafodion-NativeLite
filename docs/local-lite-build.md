@@ -15,6 +15,25 @@ make local-lite
 The target forwards through `core/Makefile` and builds the SQF/SQL native subset
 with `TRAF_LOCAL_LITE=1`.
 
+## Native Dependencies
+
+Install the native package set needed by local-lite:
+
+```bash
+scripts/install-local-lite-deps.sh --dry-run
+scripts/install-local-lite-deps.sh -y
+```
+
+The installer sets up C/C++ build tools, MPICH, Thrift, log4cxx, protobuf,
+curl, OpenSSL, readline, ncurses, bison, flex, Perl, Python, and related native
+development headers. It intentionally does not install Java, Maven, Hadoop,
+HBase, or Hive.
+
+On distributions where MPICH headers are not laid out like Trafodion's legacy
+tools tree, the script creates a repository-local compatibility directory at
+`core/sqf/opt/local-lite-mpich`. The `local-lite` target uses that directory
+automatically when present.
+
 ## Current Status
 
 The local-lite graph has been trimmed to skip Maven, Java client modules,

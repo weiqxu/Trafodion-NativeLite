@@ -39,7 +39,7 @@ all: $(MPI_TARGET) dbsecurity foundation jdbc_jar $(SEAMONSTER_TARGET) ndcs ci j
 
 LOCAL_LITE_TRAF_HOME ?= $(CURDIR)/sqf
 LOCAL_LITE_ACTIVE_TRAF_HOME := $(or $(TRAF_HOME),$(LOCAL_LITE_TRAF_HOME))
-LOCAL_LITE_MPICH_ROOT ?= /opt/home/tools/dest-mpich-3.0.4
+LOCAL_LITE_MPICH_ROOT ?= $(firstword $(wildcard $(LOCAL_LITE_ACTIVE_TRAF_HOME)/opt/local-lite-mpich /opt/home/tools/dest-mpich-3.0.4) /opt/home/tools/dest-mpich-3.0.4)
 LOCAL_LITE_SYSTEM_LIB_DIR ?= $(firstword $(wildcard /usr/lib/$(shell uname -m)-linux-gnu /usr/lib64 /usr/lib) /usr/lib)
 LOCAL_LITE_LOG4CXX_LIB_DIR ?= $(LOCAL_LITE_SYSTEM_LIB_DIR)
 LOCAL_LITE_LOG4CXX_INC_DIR ?= /usr/include/log4cxx
