@@ -575,7 +575,7 @@ void SB_SA_Util_Sem::wait() {
 // ----------------------------------------------------------------------------
 
 static void sb_sa_util_slot_mgr_print_str(FILE *pp_f, char *pp_str) {
-    fprintf(pp_f, pp_str);
+    fprintf(pp_f, "%s", pp_str);
 }
 
 SB_SA_Util_Slot_Mgr::SB_SA_Util_Slot_Mgr(const char *pp_name, Alloc_Type pv_alloc, int pv_cap)

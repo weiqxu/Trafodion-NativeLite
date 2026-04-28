@@ -53,6 +53,20 @@ CPPSRC := \
 	LmRoutineCppObj.cpp \
 	vers_libtdm_sqllangman.cpp
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+CPPSRC := $(filter-out \
+	JavaSplitter.cpp \
+	LmConnection.cpp \
+	LmJavaExceptionReporter.cpp \
+	LmJavaHooks.cpp \
+	LmLangManagerJava.cpp \
+	LmResultSetJava.cpp \
+	LmRoutineJava.cpp \
+	LmRoutineJavaObj.cpp \
+	LmUtility.cpp, \
+	$(CPPSRC))
+endif
+
 SRCPATH := langman bin
 
 DEFS := -DLANGMAN -D_CMA_NOWRAPPERS_

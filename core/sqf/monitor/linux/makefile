@@ -48,9 +48,26 @@ FLAGS+= -UNDEBUG
 #   a particular diagnostic (GNU compiler).
 # FLAGS+= -fdiagnostics-show-option
 FLAGS+= -Wall -Wextra -Werror -Wno-unused-variable
+ifeq ($(TRAF_LOCAL_LITE),1)
+ FLAGS+= -DTRAF_LOCAL_LITE
+ FLAGS+= -std=gnu++14 -Wno-unused-parameter
+ FLAGS+= -Wno-error=format-overflow -Wno-error=format-truncation
+ FLAGS+= -Wno-error=stringop-overflow -Wno-error=int-to-pointer-cast
+ FLAGS+= -Wno-error=stringop-overread
+ FLAGS+= -Wno-error=deprecated-declarations -Wno-error=implicit-fallthrough
+endif
 
 # Flags for use in compiling Seabed trace modules
 SBFLAGS = -Wall -Wextra -pedantic -Werror -Wno-error=format-security  -Wno-long-long $(DBG_FLGS) $(OPTIM_FLGS) -Xlinker --copy-dt-needed-entries -fPIC
+ifeq ($(TRAF_LOCAL_LITE),1)
+ SBFLAGS+= -DTRAF_LOCAL_LITE
+ SBFLAGS+= -std=gnu++14 -Wno-unused-parameter
+ SBFLAGS+= -Wno-error=format-overflow -Wno-error=format-truncation
+ SBFLAGS+= -Wno-error=stringop-overflow -Wno-error=int-to-pointer-cast
+ SBFLAGS+= -Wno-error=stringop-overread
+ SBFLAGS+= -Wno-error=deprecated-declarations -Wno-error=implicit-fallthrough
+ SBFLAGS+= -Wno-error=pedantic
+endif
 
 COMMONLOGGERDIR = ../../commonLogger
 
@@ -62,7 +79,11 @@ ifeq ($(USE_DUMA),1)
 endif
 
 CC_RUNTIME_LIB = -L/usr/lib/x86_64-linux-gnu -L/lib/x86_64-linux-gnu -L$(TOOLSDIR)/apache-log4cxx-0.10.0/lib
-LIBS = $(CC_RUNTIME_LIB) -L$(LIBEXPDIR) -L$(ZOOKEEPER_DIR)/lib -lrt -lsblogalt -ltrafconfig -lzookeeper_mt 
+LIBS = $(CC_RUNTIME_LIB) -L$(LIBEXPDIR) -lrt -lsblogalt -ltrafconfig
+ifneq ($(TRAF_LOCAL_LITE),1)
+LIBS+= -L$(ZOOKEEPER_DIR)/lib
+LIBS+= -lzookeeper_mt
+endif
 
 LIBS+= -lmpich
 
@@ -85,6 +106,8 @@ endif
 
 INCLUDES+= -I../../inc
 INCLUDES+= -I../../commonLogger
+INCLUDES+= -I/usr/include
+INCLUDES+= -I/usr/include/x86_64-linux-gnu
 INCLUDES+= -I$(LOG4CXX_INC_DIR) 
 INCLUDES+= -I$(LOG4CXX_INC_DIR)/log4cxx
 INCLUDES+= -I$(ZOOKEEPER_DIR)/include
@@ -416,6 +439,17 @@ $(OUTDIR)/%.o:%.cxx
 	@$(CXX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(INCLUDES) -c -o $@ $<
 	@echo 'Finished building target: $@'
 	@echo ' '
+
+ifeq ($(TRAF_LOCAL_LITE),1)
+$(OUTDIR)/zclient.o: LocalLiteZClientStubs.cpp zclient.h
+	@echo 'Building target2: $@'
+	@echo 'Invoking: C++ Compiler'
+	@echo $(CXX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(INCLUDES) -c -o $@ $<
+	@if [ -d "$(OUTDIR)" ]; then x=1; else mkdir -p "$(OUTDIR)"; fi
+	@$(CXX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(INCLUDES) -c -o $@ $<
+	@echo 'Finished building target: $@'
+	@echo ' '
+endif
 
 $(OUTDIR)/%.o:%.cc
 	@echo 'Building target3: $@'

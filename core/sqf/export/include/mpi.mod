@@ -1,0 +1,1 @@
+/home/weiqxu/learning/trafodion/core/sqf/opt/hpmpi/include/mpi.mod

@@ -69,7 +69,9 @@ using std::ofstream;
 #include "ExHbaseAccess.h"
 #include "ExpErrorEnums.h"
 #include "ExpLOBaccess.h"
+#ifndef TRAF_LOCAL_LITE
 #include "HdfsClient_JNI.h"
+#endif
 
 ///////////////////////////////////////////////////////////////////
 ex_tcb * ExExeUtilCreateTableAsTdb::build(ex_globals * glob)
@@ -1850,9 +1852,15 @@ ex_tcb * ExExeUtilHBaseBulkUnLoadTdb::build(ex_globals * glob)
 void ExExeUtilHBaseBulkUnLoadTcb::createHdfsFileError(Int32 hdfsClientRetCode)
 {
   ComDiagsArea * diagsArea = NULL;
+#ifdef TRAF_LOCAL_LITE
+  char *errorMsg = (char *)"HDFS bulk unload is not supported in local-lite builds";
+  char *jniError = (char *)"";
+#else
   char* errorMsg = HdfsClient::getErrorText((HDFS_Client_RetCode)hdfsClientRetCode);
+  char *jniError = (char *)GetCliGlobals()->getJniErrorStr();
+#endif
   ExRaiseSqlError(getHeap(), &diagsArea, (ExeErrorCode)(8447), NULL,
-                  NULL, NULL, NULL, errorMsg, (char *)GetCliGlobals()->getJniErrorStr());
+                  NULL, NULL, NULL, errorMsg, jniError);
   ex_queue_entry *pentry_up = qparent_.up->getTailEntry();
   pentry_up->setDiagsArea(diagsArea);
 }
@@ -1870,9 +1878,13 @@ ExExeUtilHBaseBulkUnLoadTcb::ExExeUtilHBaseBulkUnLoadTcb(
        emptyTarget_(FALSE),
        oneFile_(FALSE)
 {
+#ifdef TRAF_LOCAL_LITE
+  ehi_ = NULL;
+#else
   ehi_ = ExpHbaseInterface::newInstance(getGlobals()->getDefaultHeap(),
                                    (char*)"", //Later may need to change to hblTdb.server_,
                                    (char*)""); //Later may need to change to hblTdb.zkPort_);
+#endif
   qparent_.down->allocatePstate(this);
 
 }
@@ -2038,6 +2050,22 @@ short ExExeUtilHBaseBulkUnLoadTcb::getTrafodionScanTables()
 //////////////////////////////////////////////////////
 short ExExeUtilHBaseBulkUnLoadTcb::work()
 {
+#ifdef TRAF_LOCAL_LITE
+  if (qparent_.down->isEmpty())
+    return WORK_OK;
+
+  if (qparent_.up->isFull())
+    return WORK_OK;
+
+  Lng32 retCode = -1;
+  ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
+                  &retCode, NULL, NULL,
+                  (char *)"ExExeUtilHBaseBulkUnLoadTcb::work()",
+                  (char *)"HBase bulk unload is not supported in local-lite builds",
+                  (char *)"");
+  handleError();
+  return WORK_OK;
+#else
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
   short rc;
@@ -2397,6 +2425,7 @@ short ExExeUtilHBaseBulkUnLoadTcb::work()
   } // while
 
   return WORK_OK;
+#endif
 }
 
 short ExExeUtilHBaseBulkUnLoadTcb::moveRowToUpQueue(const char * row, Lng32 len,

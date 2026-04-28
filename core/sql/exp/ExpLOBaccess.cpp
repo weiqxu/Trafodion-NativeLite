@@ -50,8 +50,10 @@
 
 
 
+#ifndef TRAF_LOCAL_LITE
 #include "hdfs.h"
 #include "jni.h"
+#endif
 
 
 #include "ExpLOBstats.h"
@@ -63,7 +65,92 @@
 #include "ComQueue.h"
 #include "QRLogger.h"
 #include "NAMemory.h"
+#ifndef TRAF_LOCAL_LITE
 #include "HdfsClient_JNI.h"
+#else
+enum HDFS_Client_RetCode
+{
+  HDFS_CLIENT_OK = 0,
+  HDFS_CLIENT_ERROR = 1
+};
+
+typedef Int64 tOffset;
+typedef Int32 tSize;
+typedef time_t tTime;
+typedef enum tObjectKind
+{
+  kObjectKindFile = 'F',
+  kObjectKindDirectory = 'D'
+} tObjectKind;
+
+struct hdfsFileInfo
+{
+  char *mName;
+  tObjectKind mKind;
+  tOffset mSize;
+  tTime mLastMod;
+};
+
+class HdfsClient
+{
+public:
+  static HdfsClient *newInstance(NAHeap *heap, ExHdfsScanStats *, HDFS_Client_RetCode &rc)
+  {
+    rc = HDFS_CLIENT_OK;
+    return new (heap) HdfsClient();
+  }
+
+  static void deleteInstance(HdfsClient *) {}
+  static HDFS_Client_RetCode hdfsDeletePath(const char *) { return HDFS_CLIENT_ERROR; }
+  static HDFS_Client_RetCode hdfsRename(const char *, const char *) { return HDFS_CLIENT_ERROR; }
+  static Int64 hdfsSize(const char *, HDFS_Client_RetCode &rc) { rc = HDFS_CLIENT_ERROR; return -1; }
+  static HDFS_Client_RetCode getHiveTableMaxModificationTs(Int64 &, const char *, int)
+  {
+    return HDFS_CLIENT_ERROR;
+  }
+
+  HDFS_Client_RetCode hdfsCreate(const char *, NABoolean, NABoolean, NABoolean)
+  {
+    return HDFS_CLIENT_ERROR;
+  }
+  HDFS_Client_RetCode hdfsOpen(const char *, NABoolean) { return HDFS_CLIENT_ERROR; }
+  HDFS_Client_RetCode hdfsClose() { return HDFS_CLIENT_OK; }
+  Int64 hdfsSize(HDFS_Client_RetCode &rc) { rc = HDFS_CLIENT_ERROR; return -1; }
+  Int64 hdfsWriteImmediate(const char *, Int64, HDFS_Client_RetCode &rc, int = 0, NABoolean = FALSE)
+  {
+    rc = HDFS_CLIENT_ERROR;
+    return -1;
+  }
+  Int32 hdfsWrite(const char *, Int64, HDFS_Client_RetCode &rc, int = 0)
+  {
+    rc = HDFS_CLIENT_ERROR;
+    return -1;
+  }
+  Int32 hdfsRead(Int64, const char *, Int64, HDFS_Client_RetCode &rc)
+  {
+    rc = HDFS_CLIENT_ERROR;
+    return -1;
+  }
+};
+
+static inline hdfsFileInfo *hdfsGetPathInfo(hdfsFS, const char *) { return NULL; }
+static inline hdfsFileInfo *hdfsListDirectory(hdfsFS, const char *, int *numEntries)
+{
+  if (numEntries)
+    *numEntries = 0;
+  return NULL;
+}
+static inline void hdfsFreeFileInfo(hdfsFileInfo *, int) {}
+static inline hdfsFile hdfsOpenFile(hdfsFS, const char *, int, int, short, int) { return NULL; }
+static inline int hdfsCloseFile(hdfsFS, hdfsFile) { return 0; }
+static inline int hdfsDelete(hdfsFS, const char *, int) { return -1; }
+static inline tSize hdfsWrite(hdfsFS, hdfsFile, const void *, tSize) { return -1; }
+static inline int hdfsFlush(hdfsFS, hdfsFile) { return -1; }
+static inline tSize hdfsPread(hdfsFS, hdfsFile, tOffset, void *, tSize) { return -1; }
+static inline tSize hdfsRead(hdfsFS, hdfsFile, void *, tSize) { return -1; }
+static inline int hdfsSeek(hdfsFS, hdfsFile, tOffset) { return -1; }
+static inline int hdfsExists(hdfsFS, const char *) { return -1; }
+#endif
 #include <seabed/ms.h>
 #include <seabed/fserr.h>
 #include <curl/curl.h>
@@ -620,7 +707,7 @@ Ex_Lob_Error ExLob::statSourceFile(char *srcfile, Int64 &sourceEOF)
        CURL *curl;
        CURLcode res;
        const time_t filetime = 0;
-        double filesize = 0;
+       Int64 filesize = 0;
        curl = curl_easy_init();
        if(curl) {
 	 curl_easy_setopt(curl, CURLOPT_URL, srcfile);
@@ -636,7 +723,15 @@ Ex_Lob_Error ExLob::statSourceFile(char *srcfile, Int64 &sourceEOF)
 	 curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
 	 res = curl_easy_perform(curl);
 	 if(CURLE_OK == res) {
-           res = curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &filesize);
+#if LIBCURL_VERSION_NUM >= 0x073700
+           curl_off_t downloadSize = 0;
+           res = curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &downloadSize);
+           filesize = downloadSize;
+#else
+           double downloadSize = 0;
+           res = curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &downloadSize);
+           filesize = downloadSize;
+#endif
 	   if (res == CURLE_OK)
 	     {
 	       Int64 temp_fs = 0;

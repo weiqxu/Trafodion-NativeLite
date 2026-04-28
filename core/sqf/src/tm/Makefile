@@ -33,6 +33,15 @@ DEFINES		= -DDEBUG -DxUSE_FILE_AUDIT
 
 ifeq ($(TRAF_LOCAL_LITE),1)
 DEFINES		+= -DTRAF_LOCAL_LITE
+CXXWARN		+= -Wno-unused-parameter
+CXXWARN		+= -Wno-implicit-fallthrough
+CXXWARN		+= -Wno-switch-bool
+CXXWARN		+= -Wno-class-memaccess
+CXXWARN		+= -Wno-misleading-indentation
+CWARN		+= -Wno-unused-parameter
+CWARN		+= -Wno-implicit-fallthrough
+CWARN		+= -Wno-switch-bool
+CWARN		+= -Wno-misleading-indentation
 LIBJVM		=
 TM_HBASE_PREREQ	=
 else
@@ -51,8 +60,10 @@ endif
 DTMOBJS		= -DTMOBJS
 
 
-#gcc 4.8 need explicit set this flag to allow auto search of dependent shared object during link
+# gcc 4.8 needs this flag to auto-search dependent shared objects during link.
+ifneq ($(TRAF_LOCAL_LITE),1)
 LNK_FLGS       += -Xlinker --copy-dt-needed-entries
+endif
 
 LIBSTMOBJS = $(OUTDIR)/tmtransid.o \
 			 $(OUTDIR)/tmtransaction.o \

@@ -126,6 +126,7 @@
 #define ZCLIENT_H_
 
 #include <list>
+#include <sstream>
 #include <string>
 
 #include "zookeeper/zookeeper.h"

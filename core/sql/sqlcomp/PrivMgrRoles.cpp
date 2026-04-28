@@ -728,7 +728,7 @@ PrivStatus PrivMgrRoles::fetchGranteesForRole(
 // *  <roleIDs>                       const std::vector<int32_t> &    In       *
 // *    is a list of roles.                                                    *
 // *                                                                           *
-// *  <granteeIDs>                    std::vector<std::int32_t> &     Out      *
+// *  <granteeIDs>                    std::vector<int32_t> &          Out      *
 // *    passes back a list of user and group grantees for the roles.           *
 // *                                                                           *
 // *****************************************************************************
@@ -742,7 +742,7 @@ PrivStatus PrivMgrRoles::fetchGranteesForRole(
 // *****************************************************************************
 PrivStatus PrivMgrRoles::fetchGranteesForRoles(
    const std::vector<int32_t> & roleIDs,
-   std::vector<std::int32_t> & granteeIDs,
+   std::vector<int32_t> & granteeIDs,
    bool includeSysGrantor)
 {
    std::string whereClause(" WHERE ROLE_ID IN( ");

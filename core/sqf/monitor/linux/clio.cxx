@@ -33,6 +33,7 @@ using namespace std;
 #include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
@@ -112,7 +113,7 @@ void LIOTM_assert_fun(const char *pp_exp,
             lp_s,
             getpid(), gettid(),
             pp_file, pv_line, pp_fun, pp_exp);
-    fprintf(stderr, la_buf);
+    fprintf(stderr, "%s", la_buf);
     fflush(stderr);
     abort();
 }
@@ -325,8 +326,8 @@ void *local_monitor_reader(void *pp_arg) {
     if (gp_local_mon_io && gp_local_mon_io->cv_trace)
         gp_local_mon_io->trace_where_printf(WHERE, "EXIT thread\n");
 
-    pthread_exit((void *) errno); // cast
-    return (void *) errno; // cast
+    pthread_exit((void *) (intptr_t) errno); // cast
+    return (void *) (intptr_t) errno; // cast
 }
 
 void block_lio_signals() {

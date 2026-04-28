@@ -33,6 +33,8 @@
 
 #include <sys/time.h>
 
+#include <string>
+
 #include "seabed/logalt.h"
 
 #include "verslib.h"
@@ -88,18 +90,15 @@ void SBX_log_write(int                     pv_log_type,
                    size_t                  pv_msg_ret_size) {
     char            la_cmdline[BUFSIZ];
     char            la_host[BUFSIZ];
-    char            la_log_file_name[PATH_MAX];
-    char            la_log_file_name_persist[PATH_MAX];
-    char            la_log_file_prefix[BUFSIZ];
     char            la_log_msg[BUFSIZ];
     char            la_pstack[PATH_MAX + 50];
     char            la_snmptrap_cmd[BUFSIZ];
-    char            la_syslog_ident[BUFSIZ];
-    char            la_tl[40];
+    char            la_tl[80];
     FILE           *lp_cmdline_file;
     char           *lp_debug;
     FILE           *lp_log_file;
     static FILE    *lp_log_file_persist = NULL;
+    static std::string lv_log_file_name_persist;
     const char     *lp_snmptrap_addr;
     const char     *lp_snmptrap_addr_env;
     const char     *lp_snmptrap_prefix;
@@ -107,9 +106,12 @@ void SBX_log_write(int                     pv_log_type,
     int             lv_debug;
     int             lv_inx;
     int             lv_ms;
+    std::string     lv_log_file_name;
+    std::string     lv_log_file_prefix;
     bool            lv_persist;
     pid_t           lv_pid;
     int             lv_status;
+    std::string     lv_syslog_ident;
     struct timeval  lv_t;
     pid_t           lv_tid;
     struct tm       lv_tx;
@@ -126,15 +128,16 @@ void SBX_log_write(int                     pv_log_type,
     lp_tx = localtime_r(&lv_t.tv_sec, &lv_tx);
     lv_ms = static_cast<int>(lv_t.tv_usec) / 1000;
     lv_us = static_cast<int>(lv_t.tv_usec) - lv_ms * 1000;
-    sprintf(la_tl, "%02d/%02d/%04d-%02d:%02d:%02d.%03d.%03d",
-            lp_tx->tm_mon + 1, lp_tx->tm_mday, lp_tx->tm_year + 1900,
-            lp_tx->tm_hour, lp_tx->tm_min, lp_tx->tm_sec, lv_ms, lv_us);
+    snprintf(la_tl, sizeof(la_tl), "%02d/%02d/%04d-%02d:%02d:%02d.%03d.%03d",
+             lp_tx->tm_mon + 1, lp_tx->tm_mday, lp_tx->tm_year + 1900,
+             lp_tx->tm_hour, lp_tx->tm_min, lp_tx->tm_sec, lv_ms, lv_us);
 
     // get/format time
     lv_pid = getpid();
     lv_tid = gettid();
 
     // get cmdline
+    strcpy(la_cmdline, "unknown");
     lp_cmdline_file = fopen("/proc/self/cmdline", "r");
     if (lp_cmdline_file != NULL) {
         fgets(la_cmdline, sizeof(la_cmdline), lp_cmdline_file);
@@ -144,11 +147,11 @@ void SBX_log_write(int                     pv_log_type,
     // format msg
     if (pp_msg_prefix == NULL)
         pp_msg_prefix = "";
-    sprintf(la_log_msg, "%s: %s (name=%s/pid=%d/tid=%d) (cmp=%d/ev=%d/fac=%d/sev=%d): %s",
-            la_tl, pp_msg_prefix,
-            pp_name, lv_pid, lv_tid,
-            pv_comp_id, pv_event_id, pv_facility, pv_severity,
-            pp_msg);
+    snprintf(la_log_msg, sizeof(la_log_msg), "%s: %s (name=%s/pid=%d/tid=%d) (cmp=%d/ev=%d/fac=%d/sev=%d): %s",
+             la_tl, pp_msg_prefix,
+             pp_name, lv_pid, lv_tid,
+             pv_comp_id, pv_event_id, pv_facility, pv_severity,
+             pp_msg);
 
     // return msg?
     if (pp_msg_ret != NULL) {
@@ -163,10 +166,10 @@ void SBX_log_write(int                     pv_log_type,
     if (pv_log_type & SBX_LOG_TYPE_STDERR) {
         if (lv_debug)
             printf("%s: STDERR: %s\n", SBX_LOG_PREFIX, la_log_msg);
-        fprintf(stderr, la_log_msg);
+        fprintf(stderr, "%s", la_log_msg);
         fflush(stderr);
         if (pv_log_type & SBX_LOG_TYPE_STDERR_PSTACK) {
-            sprintf(la_pstack, "pstack %d 1>&2", lv_pid);
+            snprintf(la_pstack, sizeof(la_pstack), "pstack %d 1>&2", lv_pid);
             system(la_pstack);
             fflush(stderr);
         }
@@ -176,10 +179,10 @@ void SBX_log_write(int                     pv_log_type,
     if (pv_log_type & SBX_LOG_TYPE_STDOUT) {
         if (lv_debug)
             printf("%s: STDOUT: %s\n", SBX_LOG_PREFIX, la_log_msg);
-        fprintf(stdout, la_log_msg);
+        fprintf(stdout, "%s", la_log_msg);
         fflush(stdout);
         if (pv_log_type & SBX_LOG_TYPE_STDOUT_PSTACK) {
-            sprintf(la_pstack, "pstack %d", lv_pid);
+            snprintf(la_pstack, sizeof(la_pstack), "pstack %d", lv_pid);
             system(la_pstack);
             fflush(stdout);
         }
@@ -197,45 +200,40 @@ void SBX_log_write(int                     pv_log_type,
             if (lv_debug)
                 printf("%s: log-file-%s: %s\n",
                        SBX_LOG_PREFIX,
-                       la_log_file_name_persist,
+                       lv_log_file_name_persist.c_str(),
                        la_log_msg);
         } else {
             if (pp_log_file_prefix == NULL) {
-                sprintf(la_log_file_prefix, "z%s", la_cmdline);
-                pp_log_file_prefix = la_log_file_prefix;
+                lv_log_file_prefix = std::string("z") + la_cmdline;
+                pp_log_file_prefix = lv_log_file_prefix.c_str();
             }
             lv_status = gethostname(la_host, sizeof(la_host));
             if (lv_status == -1)
                 strcpy(la_host, "unknown");
             if (pp_log_file_dir == NULL)
-                sprintf(la_log_file_name,
-                        "%s.%s.%d.log",
-                        pp_log_file_prefix,
-                        la_host,
-                        lv_pid);
+                lv_log_file_name = std::string(pp_log_file_prefix) + "." +
+                                   la_host + "." + std::to_string(lv_pid) + ".log";
             else
-                sprintf(la_log_file_name,
-                        "%s/%s.%s.%d.log",
-                        pp_log_file_dir,
-                        pp_log_file_prefix,
-                        la_host,
-                        lv_pid);
+                lv_log_file_name = std::string(pp_log_file_dir) + "/" +
+                                   pp_log_file_prefix + "." + la_host + "." +
+                                   std::to_string(lv_pid) + ".log";
             if (lv_debug)
                 printf("%s: log-file-%s: %s\n",
                        SBX_LOG_PREFIX,
-                       la_log_file_name,
+                       lv_log_file_name.c_str(),
                        la_log_msg);
-            lp_log_file = fopen(la_log_file_name, "a");
+            lp_log_file = fopen(lv_log_file_name.c_str(), "a");
             if (lv_persist) {
                 lp_log_file_persist = lp_log_file;
-                sprintf(la_log_file_name_persist, "%s(p)", la_log_file_name);
+                lv_log_file_name_persist = lv_log_file_name + "(p)";
             }
         }
         if (lp_log_file != NULL) {
             fprintf(lp_log_file, "%s", la_log_msg);
             fflush(lp_log_file);
             if (pv_log_type & SBX_LOG_TYPE_LOGFILE_PSTACK) {
-                sprintf(la_pstack, "pstack %d >> %s", lv_pid, la_log_file_name);
+                snprintf(la_pstack, sizeof(la_pstack), "pstack %d >> %s",
+                         lv_pid, lv_log_file_name.c_str());
                 system(la_pstack);
             }
             if (lv_persist) {
@@ -247,8 +245,8 @@ void SBX_log_write(int                     pv_log_type,
 
     // write to syslog?
     if (pv_log_type & SBX_LOG_TYPE_SYSLOG) {
-        sprintf(la_syslog_ident, "%s[%d]", la_cmdline, lv_pid);
-        openlog(la_syslog_ident, 0, 0);
+        lv_syslog_ident = std::string(la_cmdline) + "[" + std::to_string(lv_pid) + "]";
+        openlog(lv_syslog_ident.c_str(), 0, 0);
         if (lv_debug)
             printf("%s: syslog: <%d> <%d> <%d> %s\n",
                    SBX_LOG_PREFIX,
@@ -296,4 +294,3 @@ void SBX_log_write(int                     pv_log_type,
     sbx_log_unlock();
 
 }
-

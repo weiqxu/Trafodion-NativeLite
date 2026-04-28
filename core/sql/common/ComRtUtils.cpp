@@ -81,7 +81,9 @@
 #include "seabed/ms.h"
 #include "seabed/fs.h"
 
+#ifndef TRAF_LOCAL_LITE
 #include "HdfsClient_JNI.h"
+#endif
 struct ModName {
 public:
   const char * name;

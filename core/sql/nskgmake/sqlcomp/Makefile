@@ -55,6 +55,16 @@ CPPSRC := CmpDescribe.cpp \
 	QCache.cpp \
 	vers_libsqlcomp.cpp
 
+ifeq ($(strip $(TRAFODION_VER_MAJOR)),)
+  TRAFODION_VER_MAJOR := 2
+endif
+ifeq ($(strip $(TRAFODION_VER_MINOR)),)
+  TRAFODION_VER_MINOR := 5
+endif
+ifeq ($(strip $(TRAFODION_VER_UPDATE)),)
+  TRAFODION_VER_UPDATE := 0
+endif
+
 DEFS += -DTRAF_SOFTWARE_VERS_MAJOR=$(TRAFODION_VER_MAJOR)  -DTRAF_SOFTWARE_VERS_MINOR=$(TRAFODION_VER_MINOR) -DTRAF_SOFTWARE_VERS_UPDATE=$(TRAFODION_VER_UPDATE)
 
 # Define the correct compilation and linking flags depending on whether

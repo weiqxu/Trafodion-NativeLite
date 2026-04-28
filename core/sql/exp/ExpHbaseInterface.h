@@ -51,10 +51,30 @@
 #include "NABasicObject.h"
 
 #include "ExpHbaseDefs.h"
+#include "ExStats.h"
 
+#ifndef TRAF_LOCAL_LITE
 #include "HBaseClient_JNI.h"
 #include "HiveClient_JNI.h"
-#include "HiveClient_JNI.h"
+#else
+#include <string>
+#include <vector>
+typedef std::string Text;
+typedef std::vector<Text> TextVec;
+enum HVC_RetCode
+{
+  HVC_OK = 0,
+  HVC_DONE = 1,
+  HVC_ERROR = 2
+};
+class HiveClient_JNI
+{
+public:
+  static HVC_RetCode executeHiveSQL(const char *) { return HVC_ERROR; }
+  static HVC_RetCode getAllTables(NAHeap *, const char *, LIST(Text) &) { return HVC_DONE; }
+  static HVC_RetCode getAllTables(NAHeap *, const char *, LIST(NAText*) &) { return HVC_DONE; }
+};
+#endif
 
 #define INLINE_COLNAME_LEN 256
 
@@ -398,6 +418,7 @@ protected:
 char * getHbaseErrStr(Lng32 errEnum);
 
 // ===========================================================================
+#ifndef TRAF_LOCAL_LITE
 class ExpHbaseInterface_JNI : public ExpHbaseInterface
 {
  public:
@@ -693,5 +714,6 @@ private:
   HTableClient_JNI *asyncHtc_;
   Int32  retCode_;
 };
+#endif
 
 #endif

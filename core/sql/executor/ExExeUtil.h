@@ -66,7 +66,26 @@ class HdfsClient;
 #include "hiveHook.h"
 #include "ExpHbaseDefs.h"
 
+#ifndef TRAF_LOCAL_LITE
 #include "SequenceFileReader.h"
+#else
+inline const char *getSqlJniErrorStr()
+{
+  return "";
+}
+
+inline void deleteNAArray(CollHeap *heap, NAArray<HbaseStr> *array)
+{
+  if (array == NULL)
+    return;
+
+  CollIndex entryCount = array->entries();
+  for (CollIndex i = 0; i < entryCount; i++)
+    NADELETEBASIC(array->at(i).val, heap);
+
+  NADELETE(array, NAArray, heap);
+}
+#endif
 
 #define TO_FMT3u(u) MINOF(((u)+500)/1000, 999)
 #define MAX_ACCUMULATED_STATS_DESC 2
@@ -4176,6 +4195,4 @@ protected:
 
 short ExExeUtilLobExtractLibrary(ExeCliInterface *cliInterface,char *libHandle, char *cachedLibName,ComDiagsArea *toDiags);
 #endif
-
-
 

@@ -22,7 +22,12 @@
 // **********************************************************************
 
 #include <HdfsLogger.h>
+#if __has_include(<log4cxx/rollingfileappender.h>)
 #include <log4cxx/rollingfileappender.h>
+#else
+#include <log4cxx/rolling/rollingfileappender.h>
+namespace log4cxx { using rolling::RollingFileAppender; }
+#endif
 #include <log4cxx/patternlayout.h>
 #include <log4cxx/propertyconfigurator.h>
 #include <log4cxx/configurator.h>
@@ -88,4 +93,3 @@ void HdfsLogger::initCategory(const char* cat, log4cxx::Priority::PriorityLevel 
   catObj.setAppender(fileAppender_);
   catObj.setPriority(defaultPriority);
 }
-

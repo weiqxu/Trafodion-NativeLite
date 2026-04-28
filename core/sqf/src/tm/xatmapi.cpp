@@ -967,6 +967,7 @@ int tm_xa_forget (XID *xid, int rmid, int64 flags)
 int tm_xa_recover (XID *xids, int64 count, int rmid, int64 flags)
 {
    //int lv_xaError = XA_OK;
+   (void) xids;
 
    XATrace(XATM_TraceXAAPI,("XATM: tm_xa_recover ENTRY UNEXPECTED! rmid=%d, flags=0x" PFLLX 
            ", count=" PFLL ".\n", rmid, flags, count));

@@ -73,6 +73,12 @@ using namespace std;
 #include "ptpclient.h"
 #endif
 
+#ifdef TRAF_LOCAL_LITE
+#define MON_MPI_STATUS_COUNT(status) ((status).count_lo)
+#else
+#define MON_MPI_STATUS_COUNT(status) ((status).count)
+#endif
+
 extern bool IAmIntegrating;
 extern bool IAmIntegrated;
 extern bool IsRealCluster;
@@ -1435,7 +1441,7 @@ int CCluster::CheckSockPeer( int pnid, MPI_Status *stats, peer_t *peer )
                                 , pnid, socks_[pnid] );
                 }
                 stats[pnid].MPI_ERROR = MPI_ERR_EXITED;
-                stats[pnid].count = 0;
+                MON_MPI_STATUS_COUNT(stats[pnid]) = 0;
                 err = MPI_ERR_IN_STATUS;
                 if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                 {
@@ -1515,7 +1521,7 @@ int CCluster::CheckSockPeer( int pnid, MPI_Status *stats, peer_t *peer )
                         socks_[pnid] = -1;
                     }
                     stats[pnid].MPI_ERROR = MPI_ERR_EXITED;
-                    stats[pnid].count = 0;
+                    MON_MPI_STATUS_COUNT(stats[pnid]) = 0;
                     if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                     {
                         trace_printf( "%s@%d - Setting Node %s (%d) status to "
@@ -1580,7 +1586,7 @@ int CCluster::CheckSockPeer( int pnid, MPI_Status *stats, peer_t *peer )
                         socks_[pnid] = -1;
                     }
                     stats[pnid].MPI_ERROR = MPI_ERR_EXITED;
-                    stats[pnid].count = 0;
+                    MON_MPI_STATUS_COUNT(stats[pnid]) = 0;
                     if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                     {
                         trace_printf( "%s@%d - Setting Node %s (%d) status to "
@@ -5481,7 +5487,7 @@ int CCluster::AllgatherSock( int nbytes, void *sbuf, char *rbuf, int tag, MPI_St
     {
         peer_t *peer = &p[indexToPnid_[iPeer]];
         stats[indexToPnid_[iPeer]].MPI_ERROR = MPI_SUCCESS;
-        stats[indexToPnid_[iPeer]].count = 0;
+        MON_MPI_STATUS_COUNT(stats[indexToPnid_[iPeer]]) = 0;
         if ( indexToPnid_[iPeer] == MyPNID || socks_[indexToPnid_[iPeer]] == -1 )
         {
             peer->p_sending = peer->p_receiving = false;
@@ -6006,7 +6012,7 @@ read_again:
                             // this buffer is done
                             peer->p_receiving = false;
                             nrecv++;
-                            stats[indexToPnid_[iPeer]].count = peer->p_received;
+                            MON_MPI_STATUS_COUNT(stats[indexToPnid_[iPeer]]) = peer->p_received;
                             if (trace_settings & TRACE_SYNC)
                             {
                                 trace_printf( "%s@%d - EPOLLIN from %s(%d),"
@@ -6262,7 +6268,7 @@ int CCluster::AllgatherSockReconnect( MPI_Status *stats, peer_t *peers, bool res
                                         , indexToPnid_[idst], socks_[indexToPnid_[idst]] );
                         }
                         stats[indexToPnid_[idst]].MPI_ERROR = MPI_ERR_EXITED;
-                        stats[indexToPnid_[idst]].count = 0;
+                        MON_MPI_STATUS_COUNT(stats[indexToPnid_[idst]]) = 0;
                         err = MPI_ERR_IN_STATUS;
                         if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                         {
@@ -6318,7 +6324,7 @@ int CCluster::AllgatherSockReconnect( MPI_Status *stats, peer_t *peers, bool res
                         if (reconnectSock == -1)
                         {
                             stats[indexToPnid_[idst]].MPI_ERROR = MPI_ERR_EXITED;
-                            stats[indexToPnid_[idst]].count = 0;
+                            MON_MPI_STATUS_COUNT(stats[indexToPnid_[idst]]) = 0;
                             err = MPI_ERR_IN_STATUS;
                             if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                             {
@@ -6370,7 +6376,7 @@ int CCluster::AllgatherSockReconnect( MPI_Status *stats, peer_t *peers, bool res
                         }
                         reconnectSock = -1;
                         stats[indexToPnid_[idst]].MPI_ERROR = MPI_ERR_EXITED;
-                        stats[indexToPnid_[idst]].count = 0;
+                        MON_MPI_STATUS_COUNT(stats[indexToPnid_[idst]]) = 0;
                         if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                         {
                             trace_printf( "%s@%d - Setting Node %s (%d) status to "
@@ -6405,7 +6411,7 @@ int CCluster::AllgatherSockReconnect( MPI_Status *stats, peer_t *peers, bool res
                                         , indexToPnid_[idst], socks_[indexToPnid_[idst]] );
                         }
                         stats[indexToPnid_[idst]].MPI_ERROR = MPI_ERR_EXITED;
-                        stats[indexToPnid_[idst]].count = 0;
+                        MON_MPI_STATUS_COUNT(stats[indexToPnid_[idst]]) = 0;
                         err = MPI_ERR_IN_STATUS;
                         if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                         {
@@ -6500,7 +6506,7 @@ int CCluster::AllgatherSockReconnect( MPI_Status *stats, peer_t *peers, bool res
                         }
                         reconnectSock = -1;
                         stats[indexToPnid_[idst]].MPI_ERROR = MPI_ERR_EXITED;
-                        stats[indexToPnid_[idst]].count = 0;
+                        MON_MPI_STATUS_COUNT(stats[indexToPnid_[idst]]) = 0;
                         if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                         {
                             trace_printf( "%s@%d - Setting Node %s (%d) status to "
@@ -6764,7 +6770,7 @@ int CCluster::AcceptSockPeer( MPI_Status *stats, bool resetConnections )
                                 close( socks_[acceptedNode->GetPNid()] );
                                 socks_[acceptedNode->GetPNid()] = -1;
                                 stats[acceptedNode->GetPNid()].MPI_ERROR = MPI_ERR_EXITED;
-                                stats[acceptedNode->GetPNid()].count = 0;
+                                MON_MPI_STATUS_COUNT(stats[acceptedNode->GetPNid()]) = 0;
 
                                 if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
                                 {
@@ -9168,4 +9174,3 @@ int CCluster::SendMPI(char *buf, int size, int source, MonXChngTags tag, MPI_Com
     TRACE_EXIT;
     return error;
 }
-

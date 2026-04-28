@@ -255,7 +255,7 @@ Int16 AnsiName::convertAnsiName(bool doCheck)
   while (*ptr != '\0' && *ptr == ' ')
     *ptr++;  
 
-  if (ptr != '\0') 
+  if (*ptr != '\0')
   {
     if (*(ptr) != '\"') // Check that the first char is Alpha if not in quotes
     {
@@ -958,4 +958,3 @@ Lng32 TrafQuerySimilarityInfo::unpack(void * base, void * reallocator)
 
 
 // End
-

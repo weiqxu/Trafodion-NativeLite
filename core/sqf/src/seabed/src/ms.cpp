@@ -460,15 +460,16 @@ short msg_buf_read_data_int(int     pv_msgid,
                            "ENTER msgid=%d, reqD=%p, bytecount=%d\n",
                            pv_msgid, pp_reqdata, pv_bytecount);
     lp_md = SB_Trans::Msg_Mgr::map_to_md(pv_msgid, WHERE);
-    if (lp_md == NULL)
+    if (lp_md == NULL) {
         return ms_err_rtn_msg(WHERE, "EXIT [msg == NULL]", XZFIL_ERR_NOTFOUND);
-        SB_Trans::Trans_Stream::recv_copy(WHERE,
-                                          &lp_md->out.ip_recv_data,
-                                          lp_md->out.iv_recv_data_size,
-                                          pp_reqdata,
-                                          pv_bytecount,
-                                          &lv_rc,
-                                          false);
+    }
+    SB_Trans::Trans_Stream::recv_copy(WHERE,
+                                      &lp_md->out.ip_recv_data,
+                                      lp_md->out.iv_recv_data_size,
+                                      pp_reqdata,
+                                      pv_bytecount,
+                                      &lv_rc,
+                                      false);
     if (gv_ms_trace_data) {
         trace_where_printf(WHERE,
                            "reqD=%p, bytecount=%d\n",
@@ -1444,8 +1445,10 @@ SB_THROWS_FATAL {
 //
 void msg_init_env(int pv_argc, char **ppp_argv) {
     char        la_host[200];
-    char        la_unique[200];
     const char *lp_p;
+    char       *lp_unique;
+
+    lp_unique = NULL;
 
     if (gv_ms_pre_inited)
         return;
@@ -1492,8 +1495,10 @@ void msg_init_env(int pv_argc, char **ppp_argv) {
         delete [] gp_ms_trace_file;
         if (gv_ms_trace_file_unique < 0) {
             gethostname(la_host, sizeof(la_host));
-            sprintf(la_unique, "%s.%s.", lp_p, la_host);
-            lp_p = la_unique;
+            size_t lv_unique_len = strlen(lp_p) + strlen(la_host) + 3;
+            lp_unique = new char[lv_unique_len];
+            snprintf(lp_unique, lv_unique_len, "%s.%s.", lp_p, la_host);
+            lp_p = lp_unique;
         }
         if (gp_ms_trace_file_dir == NULL) {
             gp_ms_trace_file = new char[strlen(lp_p) + 1];
@@ -1504,6 +1509,7 @@ void msg_init_env(int pv_argc, char **ppp_argv) {
             sprintf(gp_ms_trace_file, "%s/%s", gp_ms_trace_file_dir, lp_p);
         }
     }
+    delete [] lp_unique;
     ms_getenv_bool(gp_ms_env_trace_file_delta, &gv_ms_trace_file_delta);
     ms_getenv_int(gp_ms_env_trace_file_fb, &gv_ms_trace_file_fb);
     if (gv_ms_trace_file_fb > 0)
@@ -1660,7 +1666,7 @@ void msg_init_trace_com(const char *pp_where, int pv_argc, char **ppp_argv) {
     if (gv_ms_trace_enable) {
         SB_Buf_Line la_line;
         trace_printf("%s\n", libsbms_vers2_str());
-        trace_where_printf(pp_where, &lv_line);
+        trace_where_printf(pp_where, "%s", &lv_line);
         SB_util_get_cmdline(0,
                             true, // args
                             la_line,
@@ -2870,15 +2876,16 @@ SB_Export short BMSG_READCTRL_(int    pv_msgid,
     lp_md = SB_Trans::Msg_Mgr::map_to_md(pv_msgid, WHERE);
     if (lp_md == NULL)
         return ms_err_rtn_msg(WHERE, "EXIT [msg == NULL]", XZFIL_ERR_NOTFOUND);
-    if (lp_md->iv_abandoned)
+    if (lp_md->iv_abandoned) {
         return ms_err_rtn_msg(WHERE, "EXIT [msg abandoned]", 1); // spec says 1
-        SB_Trans::Trans_Stream::recv_copy(WHERE,
-                                          &lp_md->out.ip_recv_ctrl,
-                                          lp_md->out.iv_recv_ctrl_size,
-                                          reinterpret_cast<char *>(pp_reqctrl),
-                                          pv_bytecount,
-                                          &lv_rc,
-                                          false);
+    }
+    SB_Trans::Trans_Stream::recv_copy(WHERE,
+                                      &lp_md->out.ip_recv_ctrl,
+                                      lp_md->out.iv_recv_ctrl_size,
+                                      reinterpret_cast<char *>(pp_reqctrl),
+                                      pv_bytecount,
+                                      &lv_rc,
+                                      false);
     if (gv_ms_trace_data) {
         trace_where_printf(WHERE,
                            "reqC=%p, bytecount=%d\n",
@@ -2909,15 +2916,16 @@ SB_Export short BMSG_READDATA_(int     pv_msgid,
     lp_md = SB_Trans::Msg_Mgr::map_to_md(pv_msgid, WHERE);
     if (lp_md == NULL)
         return ms_err_rtn_msg(WHERE, "EXIT [msg == NULL]", XZFIL_ERR_NOTFOUND);
-    if (lp_md->iv_abandoned)
+    if (lp_md->iv_abandoned) {
         return ms_err_rtn_msg(WHERE, "EXIT [msg abandoned]", 1); // spec says 1
-        SB_Trans::Trans_Stream::recv_copy(WHERE,
-                                          &lp_md->out.ip_recv_data,
-                                          lp_md->out.iv_recv_data_size,
-                                          pp_reqdata,
-                                          pv_bytecount,
-                                          &lv_rc,
-                                          false);
+    }
+    SB_Trans::Trans_Stream::recv_copy(WHERE,
+                                      &lp_md->out.ip_recv_data,
+                                      lp_md->out.iv_recv_data_size,
+                                      pp_reqdata,
+                                      pv_bytecount,
+                                      &lv_rc,
+                                      false);
     if (gv_ms_trace_data) {
         trace_where_printf(WHERE,
                            "reqD=%p, bytecount=%d\n",
@@ -3514,4 +3522,3 @@ void __msg_init(void) {
 //
 void __msg_fini(void) {
 }
-

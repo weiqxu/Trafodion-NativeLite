@@ -32,6 +32,8 @@
 ****************************************************************************
 */
 #include "Platform.h"
+#include <fcntl.h>
+#include <unistd.h>
 
 
 #include <iostream>
@@ -417,5 +419,4 @@ case 9:
   return 0;
   
 }
-
 

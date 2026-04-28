@@ -35,6 +35,8 @@
 
 #include <sys/stat.h>
 
+#include <string>
+
 #include "seabed/debug.h"
 #include "seabed/trace.h"
 
@@ -48,7 +50,6 @@ enum { MAX_BT   = 25 };
 typedef char Addr_Type[MAX_BT][MAX_ADDR];
 
 static bool debug_exec_exists(char *pp_exec) {
-    char         la_fname[PATH_MAX];
     char         la_path[PATH_MAX+1];
     int          lv_err;
     bool         lv_ret;
@@ -66,11 +67,12 @@ static bool debug_exec_exists(char *pp_exec) {
         lp_end = strchr(lp_beg, ':');
         if (lp_end != NULL)
             *lp_end = '\0';
+        std::string lv_fname;
         if (*lp_beg == '/')
-            sprintf(la_fname, "%s/%s", lp_beg, pp_exec);
+            lv_fname = std::string(lp_beg) + "/" + pp_exec;
         else // transform relative-to-absolute
-            sprintf(la_fname, "%s/%s/%s", getenv("PWD"), lp_beg, pp_exec);
-        lv_err = lstat(la_fname, &lv_statbuf);
+            lv_fname = std::string(getenv("PWD")) + "/" + lp_beg + "/" + pp_exec;
+        lv_err = lstat(lv_fname.c_str(), &lv_statbuf);
         if (lv_err == 0) {
             lv_ret = true;
             break;
@@ -93,7 +95,6 @@ static void debug_th(int pv_sig) {
     char        la_errno[100];
     char        la_exec[PATH_MAX];
     char        la_pid[40];
-    char        la_title[PATH_MAX];
     bool        lv_arg;
     int         lv_inx;
     int         lv_pid;
@@ -101,6 +102,7 @@ static void debug_th(int pv_sig) {
     char       *lp_end;
     char       *lp_env;
     char       *lp_p;
+    std::string lv_title;
 
     pv_sig = pv_sig; // touch
     lv_ret = static_cast<int>(readlink("/proc/self/exe", la_exec, PATH_MAX));
@@ -148,8 +150,10 @@ static void debug_th(int pv_sig) {
         }
         if (lv_arg) {
             la_arg[lv_inx++] = const_cast<char *>("-T");
-            sprintf(la_title, "%s cmd=%s pid=%d", la_debugger, la_exec, lv_pid);
-            la_arg[lv_inx++] = la_title;
+            lv_title = std::string(la_debugger) +
+                       " cmd=" + la_exec +
+                       " pid=" + la_pid;
+            la_arg[lv_inx++] = const_cast<char *>(lv_title.c_str());
             la_arg[lv_inx++] = const_cast<char *>("-e");
             la_arg[lv_inx++] = la_debugger;
             la_arg[lv_inx++] = la_exec;
@@ -192,7 +196,6 @@ static void debug_th(int pv_sig) {
 SB_Export void SB_backtrace(SB_BT_CB pv_callback) {
     Addr_Type  la_addr;
     void      *la_array[MAX_BT];
-    char       la_line[BUFSIZ];
     int        lv_array_size;
 
     lv_array_size = backtrace(la_array, MAX_BT);
@@ -220,18 +223,20 @@ SB_Export void SB_backtrace(SB_BT_CB pv_callback) {
         }
         char *lp_fun = la_tokens[TOKEN_FUN];
         if (lp_fun[0] == '\0') {
-            sprintf(la_line, "sym1=%s\n", la_symbol_save);
-            pv_callback(SB_BT_REASON_STR, la_line);
+            std::string lv_line = std::string("sym1=") + la_symbol_save + "\n";
+            pv_callback(SB_BT_REASON_STR, const_cast<char *>(lv_line.c_str()));
         } else {
             int lv_status;
             char *lp_name = abi::__cxa_demangle(lp_fun, 0, 0, &lv_status);
             if (lv_status)
                 lp_name = lp_fun;
-            sprintf(la_line, "%s(%s+%s) [%s]\n",
-                    la_tokens[0], lp_name, la_tokens[2], la_tokens[3]);
+            std::string lv_line = std::string(la_tokens[0]) +
+                                  "(" + lp_name +
+                                  "+" + la_tokens[2] +
+                                  ") [" + la_tokens[3] + "]\n";
             if (lv_status == 0)
                 free(lp_name);
-            pv_callback(SB_BT_REASON_STR, la_line);
+            pv_callback(SB_BT_REASON_STR, const_cast<char *>(lv_line.c_str()));
         }
     }
     pv_callback(SB_BT_REASON_END, NULL);
@@ -246,7 +251,6 @@ SB_Export void SB_backtrace2(int   pv_max_rec_count,
                              char *pp_records) {
     Addr_Type  la_addr;
     void      *la_array[MAX_BT];
-    char       la_line[BUFSIZ];
     int        lv_array_size;
     int        lv_rec_count;
 
@@ -278,21 +282,28 @@ SB_Export void SB_backtrace2(int   pv_max_rec_count,
             lp_symbol = NULL;
         }
         char *lp_fun = la_tokens[TOKEN_FUN];
+        std::string lv_line;
         if (lp_fun[0] == '\0') {
-            sprintf(la_line, "sym1=%s", la_symbol_save);
+            lv_line = std::string("sym1=") + la_symbol_save;
         } else {
             int lv_status;
             char *lp_name = abi::__cxa_demangle(lp_fun, 0, 0, &lv_status);
             if (lv_status)
                 lp_name = lp_fun;
-            sprintf(la_line, "%s(%s+%s) [%s]",
-                    la_tokens[0], lp_name, la_tokens[2], la_tokens[3]);
+            lv_line = std::string(la_tokens[0]) +
+                      "(" + lp_name +
+                      "+" + la_tokens[2] +
+                      ") [" + la_tokens[3] + "]";
             if (lv_status == 0)
                 free(lp_name);
         }
-        if (static_cast<int>(strlen(la_line)) >= pv_rec_size)
-            la_line[pv_rec_size-1] = '\0';
-        strcpy(&pp_records[lv_rec_count * pv_rec_size], la_line);
+        int lv_copy_len = static_cast<int>(lv_line.length());
+        if (lv_copy_len >= pv_rec_size)
+            lv_copy_len = pv_rec_size - 1;
+        memcpy(&pp_records[lv_rec_count * pv_rec_size],
+               lv_line.c_str(),
+               static_cast<size_t>(lv_copy_len));
+        pp_records[lv_rec_count * pv_rec_size + lv_copy_len] = '\0';
     }
     *pp_rec_count = lv_rec_count;
 }
@@ -316,4 +327,3 @@ SB_Export void XDEBUG() {
     if (gv_ms_trace_params)
         trace_where_printf(WHERE, "EXIT\n");
 }
-

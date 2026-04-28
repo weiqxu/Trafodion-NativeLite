@@ -58,6 +58,7 @@ class Ctimeval :public timeval
 public:
    Ctimeval() { tv_sec = 0; tv_usec = 0;}
    Ctimeval(timeval pv_tv) :timeval(pv_tv) {}
+   Ctimeval(const Ctimeval &rhs) :timeval(rhs) {}
 
    bool operator==(const Ctimeval &rhs)
    {
@@ -190,6 +191,7 @@ private:
 
 public:
    CdblTime() :iv_sec(0) {}
+   CdblTime(const CdblTime &rhs) :iv_sec(rhs.iv_sec) {}
    CdblTime(Ctimeval pv_tv) 
    {
       iv_sec = pv_tv.tv_sec + ((double) pv_tv.tv_usec / 1000000);
@@ -223,9 +225,9 @@ public:
       iv_sec = rhs;
       return *this;
    }
-   CdblTime& operator=(CdblTime &rhs)
+   CdblTime& operator=(const CdblTime &rhs)
    {
-      iv_sec = rhs.get();
+      iv_sec = rhs.iv_sec;
       return *this;
    }
    CdblTime& operator=(const Ctimeval &rhs)

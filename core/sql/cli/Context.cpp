@@ -95,7 +95,9 @@
 #include "../../dbsecurity/auth/inc/dbUserAuth.h"
 #include "ComDistribution.h"
 #include "LmRoutine.h"
+#ifndef TRAF_LOCAL_LITE
 #include "HiveClient_JNI.h"
+#endif
 
 // Printf-style tracing macros for the debug build. The macros are
 // no-ops in the release build.
@@ -411,7 +413,9 @@ void ContextCli::deleteMe()
   NADELETE(env_, IpcEnvironment, ipcHeap_);
   NAHeap *parentHeap = cliGlobals_->getProcessIpcHeap();
   NADELETE(ipcHeap_, NAHeap, parentHeap);
+#ifndef TRAF_LOCAL_LITE
   HiveClient_JNI::deleteInstance();
+#endif
   disconnectHdfsConnections();
   delete hdfsHandleList_;
   hdfsHandleList_ = NULL;
@@ -2938,7 +2942,9 @@ void ContextCli::dropSession(NABoolean clearCmpCache)
   // prevStmtStats_ is decremented so that it can be freed up when
   // GC happens in mxssmp
   setStatsArea(NULL, FALSE, FALSE, TRUE);
+#ifndef TRAF_LOCAL_LITE
   HiveClient_JNI::deleteInstance();
+#endif
   disconnectHdfsConnections();
 }
 
@@ -4840,6 +4846,9 @@ void ContextCli::putTrustedRoutine(CollIndex ix)
 // gets cleaned up when the thread exits.
 hdfsFS ContextCli::getHdfsServerConnection(char * hdfs_server, Int32 port)
 {
+#ifdef TRAF_LOCAL_LITE
+  return NULL;
+#else
   if (hdfs_server == NULL) // guard against NULL and use default value.
     {
       hdfs_server = (char *)"default";
@@ -4869,11 +4878,15 @@ hdfsFS ContextCli::getHdfsServerConnection(char * hdfs_server, Int32 port)
   hdfsHandleList_->insert(hdfs_server,strlen(hdfs_server),hdfsConnectEntry);
    
   return newFS;   
+#endif
     
 }
 
 void ContextCli::disconnectHdfsConnections()
 {
+#ifdef TRAF_LOCAL_LITE
+  return;
+#else
   if (hdfsHandleList_)
     {
       hdfsConnectStruct * entry = NULL;
@@ -4882,4 +4895,5 @@ void ContextCli::disconnectHdfsConnections()
           hdfsDisconnect(entry->hdfsHandle_);         
         }
     }
+#endif
 }

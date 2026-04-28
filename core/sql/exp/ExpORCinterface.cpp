@@ -23,6 +23,74 @@
 
 #include "ExpORCinterface.h"
 
+#ifdef TRAF_LOCAL_LITE
+
+ExpORCinterface* ExpORCinterface::newInstance(CollHeap* heap,
+                                              const char* server,
+                                              const Lng32 port)
+{
+  return new (heap) ExpORCinterface(heap, server, port);
+}
+
+ExpORCinterface::ExpORCinterface(CollHeap * heap,
+                                 const char * server,
+                                 const Lng32 port) :
+  retCode_(0),
+  heap_(heap),
+  port_(port),
+  ofr_(NULL),
+  startRowNum_(0),
+  stopRowNum_(0),
+  currRowNum_(0)
+{
+  if (server)
+    strcpy(server_, server);
+  else
+    server_[0] = 0;
+}
+
+ExpORCinterface::~ExpORCinterface()
+{
+}
+
+Lng32 ExpORCinterface::init()
+{
+  return 0;
+}
+
+Lng32 ExpORCinterface::scanOpen(
+                                char * orcFileName,
+                                const Int64 startRowNum,
+                                const Int64 stopRowNum)
+{
+  return -1;
+}
+
+Lng32 ExpORCinterface::scanFetch(char* row, Int64 &rowLen, Int64 &rowNum,
+                                 Lng32 &numCols)
+{
+  return 100;
+}
+
+Lng32 ExpORCinterface::scanClose()
+{
+  return 0;
+}
+
+Lng32 ExpORCinterface::getRowCount(char * orcFileName, Int64 &count)
+{
+  count = 0;
+  return -1;
+}
+
+char * ExpORCinterface::getErrorText(Lng32 errEnum)
+{
+  static char errText[] = "ORC access is disabled in local-lite";
+  return errText;
+}
+
+#else
+
 ExpORCinterface* ExpORCinterface::newInstance(CollHeap* heap,
                                               const char* server,
                                               const Lng32 port)
@@ -133,4 +201,4 @@ char * ExpORCinterface::getErrorText(Lng32 errEnum)
   return ofr_->getErrorText((OFR_RetCode)errEnum);
 }
 
-
+#endif

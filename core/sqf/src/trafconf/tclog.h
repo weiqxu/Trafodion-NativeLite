@@ -30,7 +30,7 @@
 
 using namespace std;
 
-#define TC_LOG_BUF_SIZE 256
+#define TC_LOG_BUF_SIZE 16384
 
 #define TC_LOG_EMERG   0   /* system is unusable */
 #define TC_LOG_ALERT   1   /* action must be taken immediately */

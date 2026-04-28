@@ -62,8 +62,17 @@ SB_INLINE void *SB_TimerMap::get_lock(SB_TML_Type *pp_link, bool pv_lock) {
 }
 
 SB_INLINE void SB_TimerMap::init_link(SB_TML_Type *pp_link) {
-    memset(pp_link, 0, sizeof(SB_TML_Type));
+    pp_link->ip_next = NULL;
+    pp_link->ip_prev = NULL;
+    pp_link->ip_item = NULL;
+    pp_link->iv_hash = 0;
+    pp_link->iv_pop_time.tic_set(0);
+    pp_link->iv_running = false;
     pp_link->iv_qid = QID_NONE;
+    pp_link->iv_qid_last = 0;
+    pp_link->iv_tics = 0;
+    pp_link->iv_to_cb = NULL;
+    pp_link->iv_user_param = 0;
 }
 
 SB_INLINE SB_TimerMap_Enum *SB_TimerMap::keys() {

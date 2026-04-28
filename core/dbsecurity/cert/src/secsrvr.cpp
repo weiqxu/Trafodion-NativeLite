@@ -31,6 +31,7 @@
 #include "openssl/x509.h"
 #include "openssl/pkcs7.h"
 #include "openssl/pem.h"
+#include "openssl/rsa.h"
 #include "seabed/ms.h"
 #include "seabed/int/types.h"
 #include "seabed/pctl.h"
@@ -52,6 +53,14 @@ char *cert_data;                                 // Certificate contents to pass
 time_t cert_timestamp;                           // last mod time of the certificate
 
 ProcInfo proc_info;                              // Process Information used by Digest
+
+static RSA *GetCipherRsaKey()
+{
+    if (!cipher_key)
+        return NULL;
+
+    return EVP_PKEY_get1_RSA(cipher_key);
+}
 
 // *****************************************************************************
 // *                                                                           *
@@ -180,7 +189,12 @@ bool ValidateLoginDigest(
     int len = sizeof(ProcInfo) + TIMESTAMP_SIZE + sizeof(LoginData) - LOGIN_DATA_OVERHEAD;
     
     // The len was calculated for a 2048 bit (256 byte) key; adjust if 1024.
-    int key_byte_len = RSA_size(cipher_key->pkey.rsa);
+    RSA *rsa_key = GetCipherRsaKey();
+    if (!rsa_key)
+        return false;
+
+    int key_byte_len = RSA_size(rsa_key);
+    RSA_free(rsa_key);
     if (key_byte_len == (1024 / 8)) {
         len -= ((2048 - 1024) / 8);
     }
@@ -477,13 +491,20 @@ extern "C" int decrypt_message(char *message, char *role)
        }
 
        // Decrypt (session key, nonce, password).
-       int key_byte_len = RSA_size(cipher_key->pkey.rsa);
+       RSA *rsa_key = GetCipherRsaKey();
+       if (!rsa_key)
+       {
+          return SECMXO_PRIVKEY_FILE_ERR;
+       }
+
+       int key_byte_len = RSA_size(rsa_key);
 
        int plain_text_len = RSA_private_decrypt(key_byte_len, 
                                                 pwd_key_text,
                                                 (unsigned char *)&decrypted_data, 
-                                                cipher_key->pkey.rsa,
+                                                rsa_key,
                                                 RSA_PKCS1_PADDING);
+       RSA_free(rsa_key);
 //     Above returns -1 if there is an error
        if (plain_text_len < 0)
        {

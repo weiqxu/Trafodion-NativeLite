@@ -52,7 +52,20 @@
 #include "CmpSeabaseDDL.h"
 #include "TrafDDLdesc.h"
 
+#ifndef TRAF_LOCAL_LITE
 #include "HBaseClient_JNI.h"
+#else
+enum { HBC_OK = 0 };
+class HBaseClient_JNI
+{
+public:
+  static Lng32 getLatestSnapshot(const char *, char *&snapshotName, NAHeap *)
+  {
+    snapshotName = NULL;
+    return HBC_OK;
+  }
+};
+#endif
 
 /////////////////////////////////////////////////////////////////////
 //

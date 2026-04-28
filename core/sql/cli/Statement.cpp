@@ -84,7 +84,9 @@
 #include "arkcmp_proc.h"
 #include "CmpContext.h"
 
+#ifndef TRAF_LOCAL_LITE
 #include "HiveClient_JNI.h"
+#endif
 
 // Printf-style tracing macros for the debug build. The macros are
 // no-ops in the release build.
@@ -2025,6 +2027,10 @@ RETCODE Statement::doHiveTableSimCheck(TrafSimilarityTableInfo *si,
 
   if ((si->hdfsRootDir() == NULL) || (si->modTS() == -1))
     return SUCCESS;
+
+#ifdef TRAF_LOCAL_LITE
+  return SUCCESS;
+#else
  
   char *tmpBuf = new (&heap_) char[ComMAX_3_PART_EXTERNAL_UTF8_NAME_LEN_IN_BYTES+6];
   Lng32 numParts = 0;
@@ -2083,6 +2089,7 @@ RETCODE Statement::doHiveTableSimCheck(TrafSimilarityTableInfo *si,
   } 
   NADELETEBASIC(tmpBuf, &heap_);
   return SUCCESS;
+#endif
 }
 
 RETCODE Statement::doQuerySimilarityCheck(TrafQuerySimilarityInfo * qsi,
@@ -6938,4 +6945,3 @@ Lng32 Statement::getChildQueryInfo(ComDiagsArea &diagsArea, char * uniqueQueryId
             sizeof(SQL_QUERY_COMPILER_STATS_INFO));
   return SUCCESS;
 }
-

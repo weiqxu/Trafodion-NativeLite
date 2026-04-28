@@ -54,10 +54,7 @@ TM_Transid::TM_Transid (TM_Txid_Internal &tx)
 
 TM_Transid::TM_Transid(TM_Transid &tx)
 {
-    if (&tx == NULL)
-        TM_Transid();
-    else
-        *this = tx;
+    *this = tx;
 }
 TM_Transid &
 TM_Transid::operator= (const TM_Transid &rhs)
@@ -269,4 +266,3 @@ int64 TTflagstoint64(TM_TT_Flags pv_flags)
     u.iv_flags = pv_flags;
     return u.iv_int;
 }
-

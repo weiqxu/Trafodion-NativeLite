@@ -8919,7 +8919,7 @@ ex_expr::exp_return_type ExFunctionAESEncrypt::eval(char * op_data[],
 
   unsigned char rkey[EVP_MAX_KEY_LENGTH];
   int u_len, f_len;
-  EVP_CIPHER_CTX ctx;
+  EVP_CIPHER_CTX *ctx = NULL;
   const EVP_CIPHER * cipher = aes_algorithm_type[aes_mode];
 
   int iv_len_need = EVP_CIPHER_iv_length(cipher);
@@ -8953,19 +8953,23 @@ ex_expr::exp_return_type ExFunctionAESEncrypt::eval(char * op_data[],
 
   aes_create_key(key, key_len, rkey, aes_mode);
 
-  if (!EVP_EncryptInit(&ctx, cipher, (const unsigned char*)rkey, iv))
+  ctx = EVP_CIPHER_CTX_new();
+  if (ctx == NULL)
       goto aes_encrypt_error;
 
-  if (!EVP_CIPHER_CTX_set_padding(&ctx, true))
+  if (!EVP_EncryptInit(ctx, cipher, (const unsigned char*)rkey, iv))
       goto aes_encrypt_error;
 
-  if (!EVP_EncryptUpdate(&ctx, result, &u_len, (const unsigned char *)source, source_len))
+  if (!EVP_CIPHER_CTX_set_padding(ctx, true))
       goto aes_encrypt_error;
 
-  if (!EVP_EncryptFinal(&ctx, result + u_len, &f_len))
+  if (!EVP_EncryptUpdate(ctx, result, &u_len, (const unsigned char *)source, source_len))
       goto aes_encrypt_error;
 
-  EVP_CIPHER_CTX_cleanup(&ctx);
+  if (!EVP_EncryptFinal(ctx, result + u_len, &f_len))
+      goto aes_encrypt_error;
+
+  EVP_CIPHER_CTX_free(ctx);
 
   tgt->setVarLength(u_len + f_len, op_data[-MAX_OPERANDS]);
 
@@ -8973,7 +8977,7 @@ ex_expr::exp_return_type ExFunctionAESEncrypt::eval(char * op_data[],
 
 aes_encrypt_error:
   ERR_clear_error();
-  EVP_CIPHER_CTX_cleanup(&ctx);
+  EVP_CIPHER_CTX_free(ctx);
 
   ExRaiseSqlError(heap, diagsArea, EXE_OPENSSL_ERROR);
   *(*diagsArea) << DgString0("AES_ENCRYPT FUNCTION");
@@ -8999,7 +9003,7 @@ ex_expr::exp_return_type ExFunctionAESDecrypt::eval(char * op_data[],
   unsigned char rkey[EVP_MAX_KEY_LENGTH] = {0};
   int u_len, f_len;
 
-  EVP_CIPHER_CTX ctx;
+  EVP_CIPHER_CTX *ctx = NULL;
 
   const EVP_CIPHER * cipher = aes_algorithm_type[aes_mode];
 
@@ -9034,19 +9038,23 @@ ex_expr::exp_return_type ExFunctionAESDecrypt::eval(char * op_data[],
 
   aes_create_key(key, key_len, rkey, aes_mode);
 
-  if (!EVP_DecryptInit(&ctx, cipher, rkey, iv))
+  ctx = EVP_CIPHER_CTX_new();
+  if (ctx == NULL)
       goto aes_decrypt_error;
 
-  if (!EVP_CIPHER_CTX_set_padding(&ctx, true))
+  if (!EVP_DecryptInit(ctx, cipher, rkey, iv))
       goto aes_decrypt_error;
 
-  if (!EVP_DecryptUpdate(&ctx, result, &u_len, source, source_len))
+  if (!EVP_CIPHER_CTX_set_padding(ctx, true))
       goto aes_decrypt_error;
 
-  if (!EVP_DecryptFinal_ex(&ctx, result + u_len, &f_len))
+  if (!EVP_DecryptUpdate(ctx, result, &u_len, source, source_len))
       goto aes_decrypt_error;
 
-  EVP_CIPHER_CTX_cleanup(&ctx);
+  if (!EVP_DecryptFinal_ex(ctx, result + u_len, &f_len))
+      goto aes_decrypt_error;
+
+  EVP_CIPHER_CTX_free(ctx);
 
   tgt->setVarLength(u_len + f_len, op_data[-MAX_OPERANDS]);
 
@@ -9054,7 +9062,7 @@ ex_expr::exp_return_type ExFunctionAESDecrypt::eval(char * op_data[],
 
 aes_decrypt_error:
   ERR_clear_error();
-  EVP_CIPHER_CTX_cleanup(&ctx);
+  EVP_CIPHER_CTX_free(ctx);
 
   ExRaiseSqlError(heap, diagsArea, EXE_OPENSSL_ERROR);
   *(*diagsArea) << DgString0("AES_DECRYPT FUNCTION");

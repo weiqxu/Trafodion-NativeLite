@@ -979,7 +979,10 @@ int CxaTM_RM::close(char *info, int64 pv_flags)
                           RM_MsgSize(lp_msg->Req()->u.iv_close), 
                           RM_MsgSize(lp_msg->Rsp()->u.iv_close));
        lp_msg->Req()->u.iv_close.iv_rmid = getRmid();
-       sprintf(lp_msg->Req()->u.iv_close.iv_info, info);
+       snprintf(lp_msg->Req()->u.iv_close.iv_info,
+                sizeof(lp_msg->Req()->u.iv_close.iv_info),
+                "%s",
+                info);
        lp_msg->Req()->u.iv_close.iv_flags = pv_flags;
        lp_msg->Req()->u.iv_start.iv_nid = gv_xaTM.my_nid();
        lp_msg->Req()->u.iv_start.iv_pid = gv_xaTM.my_pid();
@@ -1356,6 +1359,5 @@ int CxaTM_RM::rollback(XID *pp_xid, int64 pv_flags)
    else
       return lv_xaError;
 } //CxaTM_RM::rollback
-
 
 

@@ -381,13 +381,15 @@ void STFS_checkLocation(int pv_instnum)
 
   memset(STFS_stub::stfsLocation_, 0, sizeof(STFS_stub::stfsLocation_));
 
-  if (!lp_HDDEnvLocation) 
-    if (!lp_SSDEnvLocation) 
+  if (!lp_HDDEnvLocation)
+    {
+    if (!lp_SSDEnvLocation)
       return;
+    }
     
     
 
-    if(lp_SSDEnvLocation) {
+  if(lp_SSDEnvLocation) {
       extractLocations(lp_SSDEnvLocation, STFS_SSD);
     }
   else {
@@ -755,4 +757,3 @@ ssize_t STFS_write( stfs_fhndl_t  fhandle
 
   return bytesWritten;
 }
-

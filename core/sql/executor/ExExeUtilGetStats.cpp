@@ -860,12 +860,12 @@ short ExExeUtilGetStatisticsTcb::work()
 
 		strcpy(line, "UniqueQueryId          ");
 		strncat(line, masterStats->getQueryId(), 43);
-		sprintf(statsBuf_, line);
+		sprintf(statsBuf_, "%s", line);
 		moveRowToUpQueue(statsBuf_);
 
 		strcpy(line, "                       ");
 		strcat(line, &masterStats->getQueryId()[43]);
-		sprintf(statsBuf_, line);
+		sprintf(statsBuf_, "%s", line);
 		moveRowToUpQueue(statsBuf_);
 
 		//sprintf (statsBuf_,    "UniqueQueryId          %s",
@@ -4360,4 +4360,3 @@ short ExExeUtilGetProcessStatisticsTcb::work()
 }
 
      
-

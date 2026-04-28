@@ -36,6 +36,7 @@ using namespace std;
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <unistd.h>
 #include "seabed/logalt.h"
 #include "tclog.h"
@@ -613,7 +614,6 @@ int DisplayPersistConfig( char *key )
 {
     int rc   = -1;
     bool foundConfig = false;
-    char persist_config_buf[TC_PERSIST_VALUE_MAX*2];
     char process_name_str[TC_PERSIST_VALUE_MAX];
     char process_type_str[TC_PERSIST_VALUE_MAX];
     char program_name_str[TC_PERSIST_VALUE_MAX];
@@ -699,29 +699,36 @@ int DisplayPersistConfig( char *key )
                         , PERSIST_ZONES_KEY
                         , persistConfig->GetZoneFormat()
                         );
-                snprintf( persist_config_buf, sizeof(persist_config_buf)
-                        , "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n"
-                        , process_name_str
-                        , process_type_str
-                        , program_name_str
-                        , program_args_str
-                        , requires_dtm_str
-                        , stdout_str
-                        , persist_retries_str
-                        , persist_zones_str
-                        );
+                string persist_config_buf;
+                persist_config_buf.reserve(TC_PERSIST_VALUE_MAX * 2);
+                persist_config_buf += process_name_str;
+                persist_config_buf += "\n";
+                persist_config_buf += process_type_str;
+                persist_config_buf += "\n";
+                persist_config_buf += program_name_str;
+                persist_config_buf += "\n";
+                persist_config_buf += program_args_str;
+                persist_config_buf += "\n";
+                persist_config_buf += requires_dtm_str;
+                persist_config_buf += "\n";
+                persist_config_buf += stdout_str;
+                persist_config_buf += "\n";
+                persist_config_buf += persist_retries_str;
+                persist_config_buf += "\n";
+                persist_config_buf += persist_zones_str;
+                persist_config_buf += "\n";
                 if (strcasecmp( key, persistConfig->GetPersistPrefix()) == 0)
                 {
-                    printf ("%s", persist_config_buf);
+                    printf ("%s", persist_config_buf.c_str());
                     break;
                 }
                 if (persistConfig->GetNext())
                 {
-                    printf ("%s\n", persist_config_buf);
+                    printf ("%s\n", persist_config_buf.c_str());
                 }
                 else
                 {
-                    printf ("%s", persist_config_buf);
+                    printf ("%s", persist_config_buf.c_str());
                 }
                 rc   = 0;
             }

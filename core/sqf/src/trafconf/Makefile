@@ -46,6 +46,14 @@ LIBSX	+= -lrt
 # need -lsqlite3 for SQLite
 LIBSX	+=  -lsqlite3
 
+LOCAL_SQLITE_ROOT ?= $(TRAF_HOME)/opt/local-lite-sqlite
+ifneq ($(wildcard $(LOCAL_SQLITE_ROOT)/include/sqlite3.h),)
+INCLUDES += -I$(LOCAL_SQLITE_ROOT)/include
+endif
+ifneq ($(wildcard $(LOCAL_SQLITE_ROOT)/lib/libsqlite3.so),)
+LIBSX += -L$(LOCAL_SQLITE_ROOT)/lib
+endif
+
 # need -lpthread starting on CentOS7
 LIBSX	+=  -lpthread  
 

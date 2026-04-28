@@ -26,6 +26,7 @@
 using namespace std;
 
 #include <string.h>
+#include <string>
 #include "tcdb.h"
 #include "tctrace.h"
 #include "trafconf/trafconfig.h"
@@ -240,20 +241,23 @@ TC_Export int tc_put_node( TcNodeConfiguration_t *node_config )
     }
 
     int rc = TCDBOPERROR;
-    char fqdn_name[TC_PROCESSOR_NAME_MAX];
+    string fqdn_name;
 
     if (strlen(node_config->domain_name))
     {
-        snprintf( fqdn_name, sizeof(fqdn_name), "%s.%s"
-                , node_config->node_name
-                , node_config->domain_name );
+        fqdn_name = string(node_config->node_name) + "." + node_config->domain_name;
     }
     else
     {
-        strncpy( fqdn_name, node_config->node_name, sizeof(fqdn_name) );
+        fqdn_name = node_config->node_name;
     }
 
-    rc = TrafConfigDb.AddPNodeData( fqdn_name
+    if (fqdn_name.size() >= TC_PROCESSOR_NAME_MAX)
+    {
+        return( TCDBTRUNCATE );
+    }
+
+    rc = TrafConfigDb.AddPNodeData( fqdn_name.c_str()
                                   , node_config->pnid
                                   , node_config->excluded_first_core
                                   , node_config->excluded_last_core );
@@ -671,4 +675,3 @@ TC_Export int tc_get_unique_string_id_max( int nid, int *id )
 
     return( rc );
 }
-

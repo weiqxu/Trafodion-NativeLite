@@ -22,7 +22,12 @@
 // **********************************************************************
 
 #include <log4cxx/fileappender.h>
+#if __has_include(<log4cxx/rollingfileappender.h>)
 #include <log4cxx/rollingfileappender.h>
+#else
+#include <log4cxx/rolling/rollingfileappender.h>
+namespace log4cxx { using rolling::RollingFileAppender; }
+#endif
 #include <log4cxx/patternlayout.h>
 #include <log4cxx/propertyconfigurator.h>
 #include <log4cxx/basicconfigurator.h>
@@ -578,7 +583,7 @@ NABoolean QRLogger::startLogFile(const std::string &cat, const char * logFileNam
       log4cxx::LoggerPtr logger(Logger::getLogger(cat));
       logger->setAdditivity(false);  // make this logger non-additive
 
-      log4cxx::PatternLayout * layout = new PatternLayout("%d, %p, %c, %m%n");
+      log4cxx::PatternLayoutPtr layout(new PatternLayout("%d, %p, %c, %m%n"));
       log4cxx::LogString fileName(logFileName);
       log4cxx::FileAppenderPtr fap(new FileAppender(layout,fileName,false /* no append */));
       
@@ -631,7 +636,7 @@ NABoolean QRLogger::getRootLogDirectory(const std::string &cat, std::string &out
         {
           log4cxx::AppenderPtr appender = appenderList[i];
           log4cxx::LogString appenderName = appender->getName();
-          log4cxx::Appender * appenderP = appender;
+          log4cxx::Appender * appenderP = appender.get();
           log4cxx::FileAppender * fileAppender = dynamic_cast<FileAppender *>(appenderP);
           if (fileAppender)
             {
@@ -651,5 +656,3 @@ NABoolean QRLogger::getRootLogDirectory(const std::string &cat, std::string &out
 
   return retcode;
 }
-
-

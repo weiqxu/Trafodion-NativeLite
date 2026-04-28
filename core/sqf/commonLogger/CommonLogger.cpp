@@ -97,7 +97,7 @@ bool CommonLogger::initLog4cxx(const char* configFileName, const char* fileSuffi
 
   }
   //catch (log4cxx::ConfigureFailure e)
-  catch (Exception e)
+  catch (const Exception &)
   {
     return false;
   }

@@ -391,7 +391,7 @@ short convertTypeToText_basic(char * text,	   // OUTPUT
       if (!precision)
       {
         if (displaydatatype && !str_cmp_c(displaydatatype, "BYTEINT"))
-          str_sprintf(text, displaydatatype);
+          str_sprintf(text, "%s", displaydatatype);
         else
           str_sprintf(text, "SMALLINT");
       }
@@ -473,7 +473,7 @@ short convertTypeToText_basic(char * text,	   // OUTPUT
       {
         if(displaydatatype && strlen(displaydatatype) > 0)
         {
-          str_sprintf(text, displaydatatype);
+          str_sprintf(text, "%s", displaydatatype);
           if(str_str(displaydatatype, " CHARACTER SET "))
             addCharSet = 0;
         }
@@ -518,7 +518,7 @@ short convertTypeToText_basic(char * text,	   // OUTPUT
       {
         if(displaydatatype && strlen(displaydatatype) > 0)
         {
-          str_sprintf(text, displaydatatype);
+          str_sprintf(text, "%s", displaydatatype);
           if(str_str(displaydatatype, " CHARACTER SET "))
             addCharSet = 0;
         }
@@ -558,7 +558,7 @@ short convertTypeToText_basic(char * text,	   // OUTPUT
       {
         if(displaydatatype && strlen(displaydatatype) > 0)
         {
-          str_sprintf(text, displaydatatype);
+          str_sprintf(text, "%s", displaydatatype);
           if(str_str(displaydatatype, " CHARACTER SET "))
             addCharSet = 0;
         }

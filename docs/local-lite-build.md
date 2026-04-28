@@ -25,9 +25,9 @@ scripts/install-local-lite-deps.sh -y
 ```
 
 The installer sets up C/C++ build tools, MPICH, Thrift, log4cxx, protobuf,
-curl, OpenSSL, readline, ncurses, bison, flex, Perl, Python, and related native
-development headers. It intentionally does not install Java, Maven, Hadoop,
-HBase, or Hive.
+SQLite, curl, OpenSSL, readline, ncurses, bison, flex, Perl, Python, and related
+native development headers. It intentionally does not install Java, Maven,
+Hadoop, HBase, or Hive.
 
 On distributions where MPICH headers are not laid out like Trafodion's legacy
 tools tree, the script creates a repository-local compatibility directory at

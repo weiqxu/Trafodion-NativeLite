@@ -38,6 +38,7 @@
  */
 
 #include "Platform.h"
+#include <stdio.h>
 #include <string.h>
 
 #include "PortProcessCalls.h"
@@ -118,8 +119,17 @@ short NAProcessHandle::decompose()
                                   );
   processName[processNameLen] = '\0';
 
-  this->phandleStringLen_ = sprintf(this->phandleString_, "%s:%ld",		
-                                    processName, this->seqNum_);
+  int len = snprintf(this->phandleString_,
+                     sizeof(this->phandleString_),
+                     "%s:%ld",
+                     processName,
+                     this->seqNum_);
+  if (len < 0)
+    this->phandleStringLen_ = 0;
+  else if (len > PhandleStringLen)
+    this->phandleStringLen_ = PhandleStringLen;
+  else
+    this->phandleStringLen_ = (short)len;
   return err;
 }
 

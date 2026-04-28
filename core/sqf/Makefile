@@ -52,6 +52,7 @@ buildinfo:
 
 all: genverhdr $(SQ_COMPONENTS) 
 
+local-lite: SHELL := /bin/bash
 local-lite: genverhdr $(LOCAL_LITE_COMPONENTS)
 
 win: make_sqevlog seabed
@@ -82,7 +83,7 @@ make_sql_local_lite: $(SEAMONSTER_TARGET) win
 	cd $(TRAF_HOME)/sql/scripts && ./makemsg.ksh 2>&1 | sed -e "s/$$/	##(SQL-LOCAL-LITE)/" ; exit $${PIPESTATUS[0]}
 
 make_monitor: stfs make_sqevlog seabed trafconf
-	cd monitor/linux; $(MAKE) 2>&1 | sed -e "s/$$/	##(SQF)/" ; exit $${PIPESTATUS[0]}
+	cd monitor/linux; $(MAKE) all 2>&1 | sed -e "s/$$/	##(SQF)/" ; exit $${PIPESTATUS[0]}
 
 stfs: make_sqevlog
 	-cd src/stfs; $(MAKE) -f Makefile.stub  2>&1 | sed -e "s/$$/	##(SQF)/" ; exit $${PIPESTATUS[0]}

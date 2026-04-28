@@ -87,7 +87,9 @@
 #define MAX_NODE_NAME 9
 
 #include "SqlParserGlobals.h"
+#ifndef TRAF_LOCAL_LITE
 #include "HdfsClient_JNI.h"
+#endif
 
 //#define __ROSETTA
 //#include "rosetta_ddl_include.h"
@@ -9350,4 +9352,3 @@ void NATableDB::getCacheStats(NATableCacheStats & stats)
   stats.maxCacheSize = maxCacheSize_;
   stats.numEntries =  cachedTableList_.entries();    
 }
-

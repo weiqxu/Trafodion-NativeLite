@@ -52,7 +52,11 @@
 #include <string.h>
 #include <dirent.h>
 #include <cstdarg>
+#ifndef TRAF_LOCAL_LITE
 #include "HBaseClient_JNI.h"
+#else
+#include "ExpHbaseInterface.h"
+#endif
 
 #include "vproc.h"
 #include "CmpSeabaseDDL.h"
@@ -2049,6 +2053,9 @@ NABoolean OptimizerSimulator::readHiveStmt(ifstream & DDLFile, NAString & stmt, 
 
 void OptimizerSimulator::histogramHDFSToLocal()
 {
+#ifdef TRAF_LOCAL_LITE
+    raiseOsimException("HDFS histogram capture is disabled in local-lite");
+#else
     Int32 status;
     struct hdfsBuilder * srcBld = hdfsNewBuilder();
     //build locfs handle
@@ -2098,10 +2105,12 @@ void OptimizerSimulator::histogramHDFSToLocal()
     {
             raiseOsimException("Error getting histogram data, disconneting");
     }
+#endif
 }
 
 void OptimizerSimulator::removeHDFSCacheDirectory()
 {    
+#ifndef TRAF_LOCAL_LITE
     //build hdfs handle
     struct hdfsBuilder * hdfsBld = hdfsNewBuilder();
     hdfsBuilderSetNameNode(hdfsBld, "default");
@@ -2112,6 +2121,7 @@ void OptimizerSimulator::removeHDFSCacheDirectory()
     hdfsDelete(hdfs, UNLOAD_HDFS_DIR, 1);
     
     hdfsDisconnect(hdfs);
+#endif
 }
 
 void OptimizerSimulator::createLogDir()
@@ -3416,4 +3426,3 @@ void OsimHHDFSStatsBase::endElement(void *parser, const char *elementName)
 {
     XMLDocument::setCurrentElement(parser, getParent());
 }
-

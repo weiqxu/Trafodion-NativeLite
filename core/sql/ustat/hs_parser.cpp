@@ -619,7 +619,7 @@ void showColSet(HSColSet &colSet, const char *title)
   if (LM->LogNeeded())
     {
       UInt32 i;
-      sprintf(LM->msg, title);
+      sprintf(LM->msg, "%s", title);
       LM->Log(LM->msg);
       for (i=0; i<colSet.entries(); i++)
         {

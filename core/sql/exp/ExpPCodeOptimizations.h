@@ -79,7 +79,9 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#ifndef TRAF_LOCAL_LITE
 #define NA_LINUX_LLVMJIT
+#endif
 #undef  NA_LINUX_LIBJIT
 
 //
@@ -180,6 +182,13 @@ typedef llvm::Type       * jit_type_t   ; // To simplify converting from old LIB
                };
 
 #endif  /* NA_LINUX_LLVMJIT */
+
+#ifndef NA_LINUX_LLVMJIT
+typedef char *p_IR_block_t;
+typedef void *jit_value_t;
+typedef void *jit_type_t;
+#define IR_block_undefined  ((p_IR_block_t) NULL)
+#endif
 
 // Forward external declaractions
 //
@@ -1619,6 +1628,18 @@ private:
   NExDbgInfo *NExDbgInfoPtr_ ; // Native Expr Dbg Info Pointer
   Int32       NExprDbgLvl_ ;   // Native Expr Debug Level
 
+#else
+
+  /**********************************************
+   * Native Expr Related
+   **********************************************/
+
+  jit_value_t* jitParams_;
+  NABoolean jitFailureSeen_;
+  NExTEMPSLIST * NExTempsList_;
+  NExDbgInfo *NExDbgInfoPtr_;
+  Int32 NExprDbgLvl_;
+
 #endif  /* NA_LINUX_LLVMJIT */
 
 #ifdef NA_LINUX_LIBJIT
@@ -2126,6 +2147,10 @@ public:
   void NExLog(const char *data) ;
 
 #endif /* NA_LINUX_LLVMJIT */
+
+#ifndef NA_LINUX_LLVMJIT
+  void NExLog(const char *data);
+#endif
 
 };
 

@@ -146,7 +146,7 @@ void xaRM_attach()
          abort();
       }
    }
-   catch (SB_Fatal_Excep lv_except)
+   catch (SB_Fatal_Excep &)
    {
       //cerr << "** Error: unable to attach to Monitor or start Seaquest process, exiting." << endl;
       //exit(-1);

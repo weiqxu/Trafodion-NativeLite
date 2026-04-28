@@ -114,11 +114,12 @@ SB_Export void SB_util_abort(const char *pp_msg) {
     sb_util_save_state();
     if (strlen(ga_ms_su_pname) == 0)
         lp_pname = const_cast<char *>("$<unkwn>");
-    else
+    else {
         lp_pname = ga_ms_su_pname;
         sprintf(la_buf, "Fatal error (%s-%d-%d): %s\n",
                 lp_pname, getpid(), gettid(), pp_msg);
-        fprintf(stderr, la_buf);
+        fprintf(stderr, "%s", la_buf);
+    }
     fflush(stderr);
     sb_log_aggr_cap_log_flush();
 #ifdef USE_SB_SP_LOG
@@ -258,7 +259,7 @@ static void sb_util_assert_fun_com(Assert_Type  pv_assert,
         break;
     }
 
-    fprintf(stderr, gv_ms_save_assert.ia_buf);
+    fprintf(stderr, "%s", gv_ms_save_assert.ia_buf);
     fflush(stderr);
     sb_log_aggr_cap_log_flush();
 #ifdef USE_SB_SP_LOG
@@ -973,7 +974,7 @@ SB_Export void SB_util_fatal(const char *pp_msg,
     if (pv_stderr) {
         sprintf(la_buf, "Fatal error (%s-%d-%d): %s\n",
                 lp_pname, getpid(), gettid(), pp_msg);
-        fprintf(stderr, la_buf);
+        fprintf(stderr, "%s", la_buf);
     }
     fflush(stderr);
     sb_log_aggr_cap_log_flush();
@@ -987,7 +988,7 @@ SB_Export void SB_util_fatal(const char *pp_msg,
 #endif
     sb_util_write_log(la_buf);
     trace_flush();
-    SB_THROW_FATAL(pp_msg);
+    throw SB_Fatal_Excep(pp_msg);
 }
 
 //

@@ -89,7 +89,7 @@ int
 check_env(FILE **file)
 {
     char cmdline[BUFSIZ];
-    char fline[BUFSIZ];
+    char fline[BUFSIZ - sizeof("/tmp/zevlog.")];
     char tmpfile[BUFSIZ];
     char *b;
     FILE *fcmd;
@@ -115,10 +115,10 @@ check_env(FILE **file)
                 fclose(fcmd);
                 b = basename(cmdline);
                 if (b == NULL)
-                    sprintf(fline, "%d", getpid());
+                    snprintf(fline, sizeof(fline), "%d", getpid());
                 else
-                    sprintf(fline, "%s.%d", b, getpid());
-                sprintf(tmpfile, "/tmp/zevlog.%s", fline);
+                    snprintf(fline, sizeof(fline), "%s.%d", b, getpid());
+                snprintf(tmpfile, sizeof(tmpfile), "/tmp/zevlog.%s", fline);
                 ftmp = fopen(tmpfile, "a");
                 if (ftmp == NULL)
                 {
@@ -691,7 +691,5 @@ evl_sqlog_write(posix_sqlog_facility_t facility, int event_type,
     }
     return 0;
 }
-
-
 
 

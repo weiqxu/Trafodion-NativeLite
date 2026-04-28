@@ -72,7 +72,11 @@
 #include "PrivMgrComponentPrivileges.h"
 #include "PrivMgrCommands.h"
 #include "CmpDDLCatErrorCodes.h"
+#ifndef TRAF_LOCAL_LITE
 #include "HBaseClient_JNI.h"  // to get HBC_ERROR_ROWCOUNT_EST_EXCEPTION
+#else
+enum { HBC_ERROR_ROWCOUNT_EST_EXCEPTION = -1 };
+#endif
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -16828,4 +16832,3 @@ Lng32 HSGlobalsClass::CollectStatisticsWithFastStats()
 
   return retcode;
 }
-

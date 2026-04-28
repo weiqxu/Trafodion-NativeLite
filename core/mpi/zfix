@@ -23,7 +23,7 @@
 export IFS=""
 TMP=/tmp/zxx.$$
 cp $1 $TMP
-while read -e x; do
+while read -r x; do
 	if [ "$x" != "#include \"mpio.h\"" -a "$x" != "#include \"mpicxx.h\"" ]; then
 		echo "$x"
 		if [ "$x" = "#define MPI_ERR_QUOTA       39      /* */" ]; then

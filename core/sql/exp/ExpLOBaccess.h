@@ -57,8 +57,15 @@
 #else
 #endif
 
+#ifndef TRAF_LOCAL_LITE
 #define SQ_USE_HDFS 1
 #include "hdfs.h"
+#else
+typedef void *hdfsFS;
+typedef void *hdfsFile;
+typedef int tPort;
+struct hdfsFile_internal;
+#endif
 using namespace std;
 
 

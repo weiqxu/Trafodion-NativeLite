@@ -57,6 +57,8 @@ local-lite: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LOCAL_LITE_LOG4C
 local-lite: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LOCAL_LITE_LOG4CXX_INC_DIR))
 local-lite: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LOCAL_LITE_THRIFT_LIB_DIR))
 local-lite: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LOCAL_LITE_THRIFT_INC_DIR))
+local-lite: export SQ_PHANDLE_VERIFIER := $(or $(SQ_PHANDLE_VERIFIER),1)
+local-lite: export RH_MAJ_VERS := $(or $(RH_MAJ_VERS),7)
 local-lite: $(MPI_TARGET) dbsecurity local-lite-foundation $(SEAMONSTER_TARGET)
 
 local-lite-foundation: SHELL := /bin/bash
@@ -70,6 +72,8 @@ local-lite-foundation: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LOCAL
 local-lite-foundation: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LOCAL_LITE_LOG4CXX_INC_DIR))
 local-lite-foundation: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LOCAL_LITE_THRIFT_LIB_DIR))
 local-lite-foundation: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LOCAL_LITE_THRIFT_INC_DIR))
+local-lite-foundation: export SQ_PHANDLE_VERIFIER := $(or $(SQ_PHANDLE_VERIFIER),1)
+local-lite-foundation: export RH_MAJ_VERS := $(or $(RH_MAJ_VERS),7)
 local-lite-foundation: sqroot dbsecurity $(MPI_TARGET) $(SEAMONSTER_TARGET)
 	cd sqf && $(MAKE) local-lite TRAF_LOCAL_LITE=1
 

@@ -278,7 +278,7 @@ static void sqstate_pi_openers_com(MS_Mon_Node_Info_Entry_Type *pp_node,
                                    int                          pv_rsplen,
                                    int                         *pp_rsplen,
                                    bool                         pv_str) {
-    char        la_title[100];
+    char        la_title[256];
     const char *lp_op;
     const char *lp_proc_t;
     char       *lp_prog;
@@ -333,7 +333,7 @@ static void sqstate_pi_opens_com(MS_Mon_Node_Info_Entry_Type *pp_node,
                                  int                          pv_rsplen,
                                  int                         *pp_rsplen,
                                  bool                         pv_str) {
-    char        la_title[100];
+    char        la_title[256];
     const char *lp_op;
     const char *lp_proc_t;
     char       *lp_prog;
@@ -380,7 +380,7 @@ static void sqstate_pi_opens_com(MS_Mon_Node_Info_Entry_Type *pp_node,
 // sqstate entry point - mds
 //
 SQSTATE_PI_EP(mymodule,mds,pp_node,pp_proc,pp_info,pp_lib) {
-    char        la_title[100];
+    char        la_title[256];
     const char *lp_proc_t;
     char       *lp_prog;
 
@@ -422,7 +422,7 @@ SQSTATE_PI_EP(mymodule,mds,pp_node,pp_proc,pp_info,pp_lib) {
 // sqstate entry point - metrics
 //
 SQSTATE_PI_EP(mymodule,metrics,pp_node,pp_proc,pp_info,pp_lib) {
-    char        la_title[100];
+    char        la_title[256];
     const char *lp_proc_t;
     char       *lp_prog;
 
@@ -495,7 +495,7 @@ SQSTATE_PI_SQSTATE_EP(mymodule,opens,pp_node,pp_proc,pp_info,pp_lib,pp_rsp,pv_rs
 // sqstate entry point - prog
 //
 SQSTATE_PI_EP(mymodule,prog,pp_node,pp_proc,pp_info,pp_lib) {
-    char        la_title[100];
+    char        la_title[256];
     const char *lp_proc_t;
     char       *lp_prog;
 
@@ -537,7 +537,7 @@ SQSTATE_PI_EP(mymodule,prog,pp_node,pp_proc,pp_info,pp_lib) {
 // sqstate entry point - pstate
 //
 SQSTATE_PI_EP(mymodule,pstate,pp_node,pp_proc,pp_info,pp_lib) {
-    char        la_title[100];
+    char        la_title[256];
     const char *lp_proc_t;
     char       *lp_prog;
 
@@ -586,7 +586,7 @@ static void sqstate_pi_trans_com(MS_Mon_Node_Info_Entry_Type *pp_node,
                                  int                          pv_rsplen,
                                  int                         *pp_rsplen,
                                  bool                         pv_str) {
-    char        la_title[100];
+    char        la_title[256];
     const char *lp_op;
     const char *lp_proc_t;
     char       *lp_prog;
@@ -654,7 +654,7 @@ SQSTATE_PI_SQSTATE_EP(mymodule,trans,pp_node,pp_proc,pp_info,pp_lib,pp_rsp,pv_rs
 // sqstate entry point - unload ms-ic
 //
 SQSTATE_PI_EP(mymodule,unload,pp_node,pp_proc,pp_info,pp_lib) {
-    char la_title[100];
+    char la_title[256];
 
     plugin_get_test_info(pp_info);
     sb_pi_verb_print_info(pp_node, pp_proc, "sb-unload");
@@ -722,4 +722,3 @@ static void sb_pi_verb_printf(const char *pp_format, ...) {
     vprintf(pp_format, lv_ap);
     va_end(lv_ap);
 }
-

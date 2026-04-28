@@ -387,7 +387,6 @@ static void thr_int_rs_threads_init_setup_thr(const char *pp_where) {
     DIR                *lp_dir;
     struct dirent      *lp_dirent;
     Thr_Rs_Thread      *lp_thr;
-    struct dirent       lv_entry;
     int                 lv_err;
     unsigned long long  lv_sigblk_blocked;
     unsigned long long  lv_sigblk_tid;
@@ -412,9 +411,8 @@ static void thr_int_rs_threads_init_setup_thr(const char *pp_where) {
     for (;;) {
         if (lp_dir == NULL)
             break;
-        lv_err = readdir_r(lp_dir, &lv_entry, &lp_dirent);
-        if (lv_err)
-            break;
+        errno = 0;
+        lp_dirent = readdir(lp_dir);
         if (lp_dirent == NULL)
             break;
         if (lp_dirent->d_ino == 0) // invalid inode-number

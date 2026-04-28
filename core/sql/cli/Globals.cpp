@@ -59,9 +59,11 @@
 #include "ComRtUtils.h"
 #include <semaphore.h>
 #include <pthread.h>
+#ifndef TRAF_LOCAL_LITE
 #include "HBaseClient_JNI.h"
 #include "HdfsClient_JNI.h"
 #include "HiveClient_JNI.h"
+#endif
 #include "LmLangManagerC.h"
 #include "LmLangManagerJava.h"
 #include "CliSemaphore.h"
@@ -373,7 +375,11 @@ LmLanguageManager * CliGlobals::getLanguageManager(ComRoutineLanguage language)
   switch (language)
     {
     case COM_LANGUAGE_JAVA:
+#ifdef TRAF_LOCAL_LITE
+      return NULL;
+#else
       return getLanguageManagerJava();
+#endif
       break;
     case COM_LANGUAGE_C:
     case COM_LANGUAGE_CPP:
@@ -408,6 +414,9 @@ LmLanguageManagerC * CliGlobals::getLanguageManagerC()
 
 LmLanguageManagerJava * CliGlobals::getLanguageManagerJava()
 {
+#ifdef TRAF_LOCAL_LITE
+  return NULL;
+#else
   if (!langManJava_)
     {
       LmResult result;
@@ -429,6 +438,7 @@ LmLanguageManagerJava * CliGlobals::getLanguageManagerJava()
     }
 
   return langManJava_;
+#endif
 }
 
 ExeTraceInfo *CliGlobals::getExeTraceInfo()
@@ -449,7 +459,9 @@ CliGlobals * CliGlobals::createCliGlobals(NABoolean espProcess)
   result =  new CliGlobals(espProcess);
   //pthread_key_create(&thread_key, SQ_CleanupThread);
   cli_globals = result;
+#ifndef TRAF_LOCAL_LITE
   HBaseClient_JNI::getInstance();
+#endif
   return result;
 }
 
@@ -1029,8 +1041,8 @@ void CliGlobals::yieldMemoryQuota(ULng32 size)
 
 void SQ_CleanupThread(void *arg)
 {
+#ifndef TRAF_LOCAL_LITE
   HBaseClient_JNI::deleteInstance();
   HiveClient_JNI::deleteInstance();
+#endif
 }
-
-

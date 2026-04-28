@@ -28,6 +28,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <string>
+
 #include "seabed/fserr.h"
 #include "seabed/pevents.h"
 #include "seabed/trace.h"
@@ -2529,6 +2531,7 @@ void SB_Trans::Trans_Stream::set_prog(const char *pp_prog) {
 }
 
 void SB_Trans::Trans_Stream::set_stream_name() {
+    char           la_id[80];
     char          *lp_p;
     int            lv_nid;
     int            lv_pid;
@@ -2550,28 +2553,28 @@ void SB_Trans::Trans_Stream::set_stream_name() {
 #endif
     }
     lp_p = strchr(ia_stream_name, '=');
-    if (lp_p == NULL)
 #ifdef SQ_PHANDLE_VERIFIER
-        sprintf(ia_stream_name, "p-id=%d/%d/" PFVY " (%s-%s)",
+    snprintf(la_id, sizeof(la_id), "p-id=%d/%d/" PFVY,
 #else
-        sprintf(ia_stream_name, "p-id=%d/%d (%s-%s)",
+    snprintf(la_id, sizeof(la_id), "p-id=%d/%d",
 #endif
 #ifdef SQ_PHANDLE_VERIFIER
-                lv_nid, lv_pid, lv_verif, ia_pname, ia_prog);
+             lv_nid, lv_pid, lv_verif);
 #else
-                lv_nid, lv_pid, ia_pname, ia_prog);
+             lv_nid, lv_pid);
 #endif
-    else
-#ifdef SQ_PHANDLE_VERIFIER
-        sprintf(&lp_p[1], "%d/%d/" PFVY " (%s-%s)",
-#else
-        sprintf(&lp_p[1], "%d/%d (%s-%s)",
-#endif
-#ifdef SQ_PHANDLE_VERIFIER
-                lv_nid, lv_pid, lv_verif, ia_pname, ia_prog);
-#else
-                lv_nid, lv_pid, ia_pname, ia_prog);
-#endif
+    std::string lv_stream_name = std::string(la_id) +
+                                 " (" + ia_pname + "-" + ia_prog + ")";
+    if (lp_p == NULL) {
+        strncpy(ia_stream_name, lv_stream_name.c_str(), sizeof(ia_stream_name) - 1);
+        ia_stream_name[sizeof(ia_stream_name) - 1] = '\0';
+    } else {
+        char *lp_value = &lp_p[1];
+        size_t lv_value_size =
+          sizeof(ia_stream_name) - static_cast<size_t>(lp_value - ia_stream_name);
+        strncpy(lp_value, lv_stream_name.c_str() + strlen("p-id="), lv_value_size - 1);
+        lp_value[lv_value_size - 1] = '\0';
+    }
 }
 
 //
@@ -2706,4 +2709,3 @@ char *sb_stream_get_name(MS_Md_Type *pp_md) {
         lp_name = lp_stream->get_name();
     return lp_name;
 }
-

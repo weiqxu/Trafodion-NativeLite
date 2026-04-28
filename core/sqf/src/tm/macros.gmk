@@ -39,7 +39,11 @@ endif
 INCMONDIR	= ../../monitor/linux
 
 #tm
+ifeq ($(TRAF_LOCAL_LITE),1)
+LIBSTMB         =  -L$(LIBEXPDIR) -lsbutil -lsbms
+else
 LIBSTMB         =  -L$(LIBEXPDIR) -lutil -lsbms
+endif
 
 LIBSTMX         =  $(LIBSTMB) $(LIBS) $(DEBUG)
 ifeq ($(TRAF_LOCAL_LITE),1)

@@ -62,10 +62,12 @@ bool        gv_fs_trace_verbose      = false;
 void fs_trace_change_item(const char *pp_key, const char *pp_value) {
     const char *WHERE = "fs_trace_change_item";
     char        la_host[200];
-    char        la_unique[200];
     const char *lp_p;
+    char       *lp_unique;
     bool        lv_old_enable;
     bool        lv_old_fb;
+
+    lp_unique = NULL;
 
     // save interesting old variables
     lv_old_enable = gv_fs_trace_enable;
@@ -103,8 +105,10 @@ void fs_trace_change_item(const char *pp_key, const char *pp_value) {
         delete [] gp_fs_trace_file;
         if (gv_fs_trace_file_unique < 0) {
             gethostname(la_host, sizeof(la_host));
-            sprintf(la_unique, "%s.%s.", lp_p, la_host);
-            lp_p = la_unique;
+            size_t lv_unique_len = strlen(lp_p) + strlen(la_host) + 3;
+            lp_unique = new char[lv_unique_len];
+            snprintf(lp_unique, lv_unique_len, "%s.%s.", lp_p, la_host);
+            lp_p = lp_unique;
         }
         if (gp_fs_trace_file_dir == NULL) {
             gp_fs_trace_file = new char[strlen(lp_p) + 1];
@@ -115,6 +119,7 @@ void fs_trace_change_item(const char *pp_key, const char *pp_value) {
             sprintf(gp_fs_trace_file, "%s/%s", gp_fs_trace_file_dir, lp_p);
         }
     }
+    delete [] lp_unique;
     ms_help_bool(pp_key, pp_value,
                  gp_ms_env_trace_file_delta, &gv_ms_trace_file_delta);
     ms_help_int(pp_key, pp_value,

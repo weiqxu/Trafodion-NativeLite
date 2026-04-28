@@ -47,8 +47,8 @@ TM_Audit::TM_Audit()
     ip_cursor = ip_audit_rec = ip_audit_file = NULL;
     iv_initialized = iv_notified_threshold = false;
     iv_position = -1;
-    memset(ia_vol_name, 0, 4);
-    memset(ia_vol_name2, 0, 9);
+    memset(ia_vol_name, 0, sizeof(ia_vol_name));
+    memset(ia_vol_name2, 0, sizeof(ia_vol_name2));
     memset(&iv_adp_phandle, 0, sizeof(SB_Phandle_Type));
 
 #ifdef USE_FILE_AUDIT
@@ -90,9 +90,9 @@ int TM_Audit::initialize_adp()
     if (!iv_initialized)
     {
         msg_mon_get_process_info (NULL, &lv_nid, &lv_pid);
-        sprintf(la_name, "0DTM%d", lv_nid);
+        snprintf(la_name, sizeof(la_name), "0DTM%d", lv_nid);
         memcpy (ia_vol_name, la_name, strlen(la_name));
-        sprintf (ia_vol_name2, la_name, strlen(la_name));
+        snprintf(ia_vol_name2, sizeof(ia_vol_name2), "%s", la_name);
 
         iv_mutex.lock();
         iv_mutex.unlock();

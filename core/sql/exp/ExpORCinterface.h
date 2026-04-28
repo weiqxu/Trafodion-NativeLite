@@ -44,7 +44,11 @@
 #include "Collections.h"
 #include "NABasicObject.h"
 
+#ifndef TRAF_LOCAL_LITE
 #include "OrcFileReader.h"
+#else
+class OrcFileReader;
+#endif
 
 typedef std::string Text;
 

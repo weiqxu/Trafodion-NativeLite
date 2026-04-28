@@ -2143,7 +2143,7 @@ Lng32 OpenCursor( const char *descID
   desc->identifier = new char[HS_STMTID_LENGTH];
   desc->handle     = 0;
 
-  sprintf((char*)desc->identifier, descID);
+  sprintf((char*)desc->identifier, "%s", descID);
   desc->identifier_len = strlen(descID);
 
   SQL_EXEC_ClearDiagnostics(desc);

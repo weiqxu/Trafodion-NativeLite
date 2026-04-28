@@ -2377,6 +2377,7 @@ void SB_Trans::Sock_Stream_Helper_Thread::run() {
             Stream_Base *lp_stream = static_cast<Stream_Base *>(lp_md->ip_stream);
             lp_stream->exec(lp_md);
 #endif
+            __attribute__((fallthrough));
 
         default:
             SB_util_abort("invalid lp_md->iv_op"); // sw fault (invalid op)

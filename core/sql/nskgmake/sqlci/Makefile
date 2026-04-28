@@ -29,10 +29,38 @@ else
 EARLY_DLLS := -ljsig
 endif
 
-DEP_LIBS += tdm_sqlcli sqlcilib arkcmp_dll
+DEP_LIBS += \
+	sqlcilib \
+	sqlmsg \
+	executor \
+	optimizer \
+	generator \
+	sqlcomp \
+	cli \
+	comexe \
+	common \
+	eh \
+	sort \
+	tdm_sqlerrormsg \
+	tdm_sqlexport \
+	tdm_sqlshare \
+	tdm_sqlmxevents \
+	ustat \
+	sqlcat \
+	parser \
+	arkcmplib \
+	tdm_sqlcli \
+	tdm_sqlexp \
+	porting_layer \
+	lmcomp \
+	smdio \
+	qmscommon \
+	arkcmp_dll
+
+EXTERN_LIBS := \
+	$(LIBROOT)/libtdm_tmfuser.so
 
 CPPSRC += vprocsqlci.cpp
 
 
 SRCPATH := sqlci bin
-

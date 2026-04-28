@@ -170,7 +170,7 @@ short TM_Transaction::create_table(char* pa_tbldesc, int pv_tbldesc_len,
     }
   
     iv_last_error = gv_tmlib.send_tm_link(buffer, total_buffer, &lv_rsp, iv_transid.get_node());
-    delete buffer;
+    delete [] buffer;
     if(iv_last_error)
     {
         TMlibTrace(("TMLIB_TRACE : TM_Transaction::create_table returning error %d\n", iv_last_error), 1);
@@ -224,7 +224,7 @@ short TM_Transaction::alter_table(char * pa_tblname, int pv_tblname_len,
     }
 
     short lv_last_error = gv_tmlib.send_tm_link(buffer, total_buffer, &lv_rsp, iv_transid.get_node());
-    delete buffer;
+    delete [] buffer;
     if(lv_last_error)
     {
         TMlibTrace(("TMLIB_TRACE : TM_Transaction::alter_table returning error %d\n", iv_last_error), 1);
@@ -686,7 +686,7 @@ short TM_Transaction::suspend(TM_Transid *pp_transid, bool pv_coordinator_role)
                      iv_last_error, iv_transid.get_seq_num()), 1);
         return iv_last_error; 
      }
-     memcpy (pp_transid, iv_transid.get_data_address(), sizeof (TM_Transid_Type));
+     *pp_transid = iv_transid.get_data();
      
      if (pv_coordinator_role == false)
      {

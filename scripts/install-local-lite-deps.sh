@@ -133,7 +133,7 @@ install_packages() {
         autoconf automake libtool pkg-config
         bison flex gawk byacc ksh perl python3 python3-dev
         libreadline-dev libncurses-dev libcurl4-openssl-dev
-        libssl-dev zlib1g-dev libevent-dev libboost-dev
+        libssl-dev zlib1g-dev libevent-dev libboost-dev libsqlite3-dev sqlite3
         libprotobuf-dev protobuf-compiler
         liblog4cxx-dev libthrift-dev thrift-compiler
         mpich libmpich-dev
@@ -150,7 +150,7 @@ install_packages() {
         autoconf automake libtool pkgconf-pkg-config
         bison flex gawk byacc ksh perl python3 python3-devel
         readline-devel ncurses-devel libcurl-devel openssl-devel
-        zlib-devel libevent-devel boost-devel
+        zlib-devel libevent-devel boost-devel sqlite-devel sqlite
         protobuf-devel protobuf-compiler
         log4cxx-devel thrift-devel thrift
         mpich mpich-devel
@@ -161,7 +161,7 @@ install_packages() {
       run "${sudo_prefix[@]}" "$manager" install -y "${packages[@]}"
       ;;
     *)
-      echo "ERROR: unsupported package manager. Install MPICH, Thrift, log4cxx, protobuf, curl, OpenSSL, readline, ncurses, bison, flex, and C/C++ build tools manually." >&2
+      echo "ERROR: unsupported package manager. Install MPICH, Thrift, log4cxx, protobuf, SQLite, curl, OpenSSL, readline, ncurses, bison, flex, and C/C++ build tools manually." >&2
       exit 1
       ;;
   esac
@@ -206,7 +206,7 @@ find_hydra_pmi_proxy() {
 }
 
 link_mpich_compat_tree() {
-  local mpi_h mpirun hydra
+  local mpi_h mpi_include_dir mpicxx mpirun hydra header
 
   if [[ "$dry_run" -eq 1 ]]; then
     echo "Would create MPICH compatibility tree at: $mpich_prefix"
@@ -214,15 +214,22 @@ link_mpich_compat_tree() {
   fi
 
   mpi_h="$(find_mpi_header || true)"
+  mpicxx="$(find_binary mpicxx.mpich mpicxx || true)"
   mpirun="$(find_binary mpirun.mpich mpirun || true)"
   hydra="$(find_hydra_pmi_proxy || true)"
 
   [[ -n "$mpi_h" ]] || { echo "ERROR: could not find mpi.h after installing MPICH." >&2; exit 1; }
+  [[ -n "$mpicxx" ]] || { echo "ERROR: could not find mpicxx after installing MPICH." >&2; exit 1; }
   [[ -n "$mpirun" ]] || { echo "ERROR: could not find mpirun after installing MPICH." >&2; exit 1; }
   [[ -n "$hydra" ]] || { echo "ERROR: could not find hydra_pmi_proxy after installing MPICH." >&2; exit 1; }
 
   mkdir -p "$mpich_prefix/include" "$mpich_prefix/bin"
-  ln -sfn "$mpi_h" "$mpich_prefix/include/mpi.h"
+  mpi_include_dir="$(dirname "$mpi_h")"
+  for header in "$mpi_include_dir"/*; do
+    [[ -f "$header" ]] || continue
+    ln -sfn "$header" "$mpich_prefix/include/$(basename "$header")"
+  done
+  ln -sfn "$mpicxx" "$mpich_prefix/bin/mpicxx"
   ln -sfn "$mpirun" "$mpich_prefix/bin/mpirun"
   ln -sfn "$hydra" "$mpich_prefix/bin/hydra_pmi_proxy"
 

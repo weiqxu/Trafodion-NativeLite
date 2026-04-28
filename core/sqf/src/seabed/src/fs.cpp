@@ -264,7 +264,7 @@ int file_init_com(int    *pp_argc,
 SB_THROWS_FATAL {
     const char *WHERE = "file_init";
     char        la_host[200];
-    char        la_unique[200];
+    char       *lp_unique;
     const char *lp_p;
 
     if (gv_fs_inited && !gv_fs_init_test)
@@ -296,11 +296,14 @@ SB_THROWS_FATAL {
         ms_getenv_int(gp_fs_env_trace_file_unique, &gv_fs_trace_file_unique);
         lp_p = ms_getenv_str(gp_fs_env_trace_file);
         if (lp_p != NULL) {
+            lp_unique = NULL;
             delete [] gp_fs_trace_file;
             if (gv_fs_trace_file_unique < 0) {
                 gethostname(la_host, sizeof(la_host));
-                sprintf(la_unique, "%s.%s.", lp_p, la_host);
-                lp_p = la_unique;
+                size_t lv_unique_len = strlen(lp_p) + strlen(la_host) + 3;
+                lp_unique = new char[lv_unique_len];
+                snprintf(lp_unique, lv_unique_len, "%s.%s.", lp_p, la_host);
+                lp_p = lp_unique;
             }
             if (gp_fs_trace_file_dir == NULL) {
                 gp_fs_trace_file = new char[strlen(lp_p) + 1];
@@ -310,6 +313,7 @@ SB_THROWS_FATAL {
                   new char[strlen(gp_fs_trace_file_dir) + strlen(lp_p) + 2];
                 sprintf(gp_fs_trace_file, "%s/%s", gp_fs_trace_file_dir, lp_p);
             }
+            delete [] lp_unique;
         }
         ms_getenv_bool(gp_fs_env_trace_file_delta, &gv_fs_trace_file_delta);
         ms_getenv_int(gp_fs_env_trace_file_fb, &gv_fs_trace_file_fb);
@@ -529,7 +533,7 @@ SB_Export _bcc_status BAWAITIOX(short        *pp_filenum,
                 pfp(pp_filenum), lv_filenum, *ppp_buf,
                 pfp(pp_xfercount), pfp(pp_tag), pv_timeout);
         if (!gv_fs_trace_params0)
-            trace_where_printf(WHERE, la_trace);
+            trace_where_printf(WHERE, "%s", la_trace);
     }
     if (!gv_fs_inited) {
         lv_fserr =
@@ -572,7 +576,7 @@ SB_Export _bcc_status BAWAITIOX(short        *pp_filenum,
         *pp_segid = lv_segid;
 
     if (gv_fs_trace_params0 && (lv_fserr == XZFIL_ERR_OK))
-        trace_where_printf(WHERE, la_trace);
+        trace_where_printf(WHERE, "%s", la_trace);
     if ((gv_fs_trace_params && !gv_fs_trace_params0) ||
         (gv_fs_trace_params0 && (lv_fserr == XZFIL_ERR_OK)))
         trace_where_printf(WHERE, "EXIT ret=%d, fnum=%d, buf=%p, xc=%d, tag=" PFTAG ", segid=%d\n",
@@ -622,7 +626,7 @@ SB_Export _bcc_status BAWAITIOXTS(short        *pp_filenum,
                 pfp(pp_filenum), lv_filenum, *ppp_buf,
                 pfp(pp_xfercount), pfp(pp_tag), pv_timeout);
         if (!gv_fs_trace_params0)
-            trace_where_printf(WHERE, la_trace);
+            trace_where_printf(WHERE, "%s", la_trace);
     }
     if (!gv_fs_inited) {
         lv_fserr =
@@ -665,7 +669,7 @@ SB_Export _bcc_status BAWAITIOXTS(short        *pp_filenum,
         *pp_segid = lv_segid;
 
     if (gv_fs_trace_params0 && (lv_fserr == XZFIL_ERR_OK))
-        trace_where_printf(WHERE, la_trace);
+        trace_where_printf(WHERE, "%s", la_trace);
     if ((gv_fs_trace_params && !gv_fs_trace_params0) ||
         (gv_fs_trace_params0 && (lv_fserr == XZFIL_ERR_OK)))
         trace_where_printf(WHERE, "EXIT ret=%d, fnum=%d, buf=%p, xc=%d, tag=" PFTAG ", segid=%d\n",

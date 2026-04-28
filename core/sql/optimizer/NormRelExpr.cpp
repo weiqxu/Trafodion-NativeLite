@@ -62,8 +62,12 @@
 #include "ItemOther.h"
 #include "ItemExpr.h"
 #include "QRDescGenerator.h"
+#ifndef TRAF_LOCAL_LITE
 #include "HBaseClient_JNI.h"
 #include "HiveClient_JNI.h"
+#else
+#include "ExpHbaseInterface.h"
+#endif
 
 #ifndef TRANSFORM_DEBUG_DECL		// artifact of NSK's OptAll.cpp ...
 #define TRANSFORM_DEBUG_DECL

@@ -61,7 +61,9 @@
 
 #include  "GetErrorMessage.h"
 #include  "ErrorMessage.h"
+#ifndef TRAF_LOCAL_LITE
 #include  "HBaseClient_JNI.h"
+#endif
 
 #include "CmpDDLCatErrorCodes.h"
 #include "PrivMgrCommands.h"
@@ -71,7 +73,9 @@
 #include "sql_buffer_size.h"
 
 #include "NAType.h"
+#ifndef TRAF_LOCAL_LITE
 #include "HiveClient_JNI.h"
+#endif
 
 //******************************************************************************
 //                                                                             *
@@ -6126,6 +6130,16 @@ short ExExeUtilHiveMDaccessTcb::work()
 	    if ((hiveMDtdb().mdType_ == ComTdbExeUtilHiveMDaccess::SCHEMAS_) ||
                 (! hiveMDtdb().getSchema()))
               {
+#ifdef TRAF_LOCAL_LITE
+                Lng32 retCode = -1;
+                ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
+                           &retCode, NULL, NULL,
+                           (char*)"HiveClient_JNI::getAllSchemas()",
+                           (char*)"Hive metadata is not supported in local-lite builds",
+                           (char*)"");
+                step_ = HANDLE_ERROR_;
+                break;
+#else
                 HVC_RetCode retCode = HiveClient_JNI::getAllSchemas((NAHeap *)getHeap(), schNames_);
                 if ((retCode != HVC_OK) && (retCode != HVC_DONE)) 
                   {
@@ -6137,6 +6151,7 @@ short ExExeUtilHiveMDaccessTcb::work()
                     step_ = HANDLE_ERROR_;
                     break;
                   }
+#endif
               }
             else
               {
@@ -6185,6 +6200,16 @@ short ExExeUtilHiveMDaccessTcb::work()
 
             if (! currObj)
               {
+#ifdef TRAF_LOCAL_LITE
+                Lng32 retCode = -1;
+                ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
+                           &retCode, NULL, NULL,
+                           (char*)"HiveClient_JNI::getAllTables()",
+                           (char*)"Hive metadata is not supported in local-lite builds",
+                           (char*)"");
+                step_ = HANDLE_ERROR_;
+                break;
+#else
                 HVC_RetCode retCode = HiveClient_JNI::getAllTables((NAHeap *)getHeap(), currSch, tblNames_);
                 if (retCode == HVC_ERROR_EXISTS_EXCEPTION)
                   {
@@ -6205,6 +6230,7 @@ short ExExeUtilHiveMDaccessTcb::work()
                     step_ = HANDLE_ERROR_;
                     break;
                   }
+#endif
               }
             else
               {
@@ -7897,10 +7923,14 @@ else
                 
   //EOD of LOB data file
   snprintf(lobDataFilePath, LOBINFO_MAX_FILE_LEN, "%s/%s", lobLocation, lobDataFile);
+#ifdef TRAF_LOCAL_LITE
+  lobEOD = 0;
+#else
   HDFS_Client_RetCode hdfsClientRetcode;
   lobEOD = HdfsClient::hdfsSize(lobDataFilePath, hdfsClientRetcode);
   if (hdfsClientRetcode != HDFS_CLIENT_OK) 
      return LOB_DATA_FILE_OPEN_ERROR;
+#endif
 
   str_sprintf(buf, "  LOB EOD :  %ld", lobEOD);
   if (moveRowToUpQueue(buf, strlen(buf), &rc))
@@ -8184,10 +8214,14 @@ short ExExeUtilLobInfoTableTcb::collectLobInfo(char * tableName,Int32 currLobNum
     }             
   //EOD of LOB data file
   snprintf(lobDataFilePath, LOBINFO_MAX_FILE_LEN, "%s/%s", lobLocation, lobDataFile);
+#ifdef TRAF_LOCAL_LITE
+  lobEOD = 0;
+#else
   HDFS_Client_RetCode hdfsClientRetcode;
   lobEOD = HdfsClient::hdfsSize(lobDataFilePath, hdfsClientRetcode);
   if (hdfsClientRetcode != HDFS_CLIENT_OK) 
      return LOB_DATA_FILE_OPEN_ERROR;
+#endif
 
   lobInfo_->lobDataFileSizeEod=lobEOD;
   // Sum of all the lobDescChunks for used space

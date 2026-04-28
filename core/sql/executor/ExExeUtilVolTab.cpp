@@ -479,7 +479,7 @@ short ExExeUtilCleanupVolatileTablesTcb::work()
 	    schemaQuery_ =
 	      new(getHeap()) char[gluedQuerySize + 10 + 1];
 
-	    str_sprintf(schemaQuery_, gluedQuery);
+	    str_sprintf(schemaQuery_, "%s", gluedQuery);
             NADELETEBASIC(gluedQuery, getMyHeap());
 
 	    if (initializeInfoList(schemaNamesList_))
@@ -769,8 +769,10 @@ short ExExeUtilCleanupVolatileTablesTcb::dropHiveTempTablesForCSEs()
           NAString dropHiveTable("drop table ");
 
           dropHiveTable += origTableName;
+#ifndef TRAF_LOCAL_LITE
           if (HiveClient_JNI::executeHiveSQL(dropHiveTable.data()) != HVC_OK)
             ; // ignore errors for now
+#endif
         }
 
       hiveTableNames->advance();

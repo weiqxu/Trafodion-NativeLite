@@ -488,7 +488,7 @@ void tm_process_xa_open(CTmTxMessage * pp_msg)
    else
    {
       TMTrace(3, ("tm_process_xa_open ENTRY: Received from (%d,%d), rmid %d "
-         "is not in use, openInfo %s, flags "PFLL".\n", 
+         "is not in use, openInfo %s, flags " PFLL ".\n",
          pp_msg->request()->u.iv_open.iv_nid,
          pp_msg->request()->u.iv_open.iv_pid,
          pp_msg->request()->u.iv_open.iv_rmid, 
@@ -521,7 +521,7 @@ void tm_process_xa_close(CTmTxMessage * pp_msg)
    }
    else
    {
-      TMTrace(1, ("tm_process_xa_end ENTRY RM NOT FOUND for rmid %d, openInfo %s, flags "PFLL".\n", 
+      TMTrace(1, ("tm_process_xa_end ENTRY RM NOT FOUND for rmid %d, openInfo %s, flags " PFLL ".\n",
          pp_msg->request()->u.iv_open.iv_rmid, 
          pp_msg->request()->u.iv_open.iv_info,
          pp_msg->request()->u.iv_open.iv_flags));
@@ -578,4 +578,3 @@ void tm_process_ax_unreg(CTmTxMessage * pp_msg)
    pp_msg->reply(XA_OK);
    TMTrace(2, ("tm_process_ax_unreg EXIT.\n"));
 }
-

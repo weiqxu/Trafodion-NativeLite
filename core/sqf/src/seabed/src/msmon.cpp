@@ -4788,7 +4788,7 @@ int msg_mon_open_process_com_ph1(char             *pp_name,
                 CHK_STATUSIGNORE(lv_status);
 #endif
                 if (gv_ms_trace_mon || gv_ms_trace_errors) {
-                    trace_where_printf(WHERE, &lv_line);
+                    trace_where_printf(WHERE, "%s", &lv_line);
                     trace_where_printf(WHERE, "EXIT FAILURE all streams used\n");
                 }
                 return lv_fserr;
@@ -9263,7 +9263,7 @@ void ms_stats_print(bool pv_trace, char *pp_line) {
     const char    *WHERE = "ms_stats";
 
     if (pv_trace)
-        trace_where_printf(WHERE, pp_line);
+        trace_where_printf(WHERE, "%s", pp_line);
     else
         printf("%s-%d: %s", ga_ms_su_pname, getpid(), pp_line);
 }
@@ -9601,4 +9601,3 @@ void ms_util_string_copy(char       *pp_dest,
     strncpy(pp_dest, pp_src, pv_dest_size - 1);
     pp_dest[pv_dest_size - 1] = '\0'; \
 }
-

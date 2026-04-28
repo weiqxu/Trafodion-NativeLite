@@ -29,7 +29,9 @@ CMPGUI_FINAL:=$(RESULTDIR)/$(LIBPREFIX)$(notdir $(obj))
 CMPGUI_OBJ:=$(obj)
 
 #add to buildall prerequisite
+ifneq ($(TRAF_LOCAL_LITE),1)
 FINAL_DLLS += $(CMPGUI_FINAL)
+endif
 
 .PHONY: cmpdbg_qt_build clean
 
@@ -37,9 +39,13 @@ $(CMPGUI_FINAL) : cmpdbg_qt_build
 
 # optional component, ignore cp return code
 cmpdbg_qt_build :
+ifeq ($(TRAF_LOCAL_LITE),1)
+	@echo "Skipping SqlCompilerDebugger Qt build for local-lite"
+else
 	cd ../$(basename $(CMPGUI_OBJ)) && . ./mk.sh
 ifneq ($(QT_TOOLKIT),"")
 	-cp -f ../$(basename $(CMPGUI_OBJ))/$(LIBPREFIX)$(notdir $(obj)) $(CMPGUI_FINAL)
+endif
 endif
 
 #when clean, this clean first

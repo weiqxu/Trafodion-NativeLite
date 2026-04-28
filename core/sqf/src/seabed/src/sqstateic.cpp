@@ -1243,7 +1243,7 @@ namespace SB_Trans {
                                             const char *pp_indent,
                                             Pstate     *pp_s) {
         char                la_month[50];
-        char                la_time[50];
+        char                la_time[128];
         struct tm          *lp_tm;
         unsigned long long  lv_exe;
         int                 lv_exe_usec;
@@ -1261,9 +1261,9 @@ namespace SB_Trans {
         lv_time = static_cast<time_t>(pp_s->iv_stat.iv_btime + lv_sec);
         lp_tm = localtime_r(&lv_time, &lv_tm);
         strftime(la_month, sizeof(la_month), "%B", lp_tm);
-        sprintf(la_time, "%s %d, %d %02d:%02d:%02d.%02d (LCT)",
-                la_month, lp_tm->tm_mday, lp_tm->tm_year + 1900,
-                lp_tm->tm_hour, lp_tm->tm_min, lp_tm->tm_sec, lv_hz);
+        snprintf(la_time, sizeof(la_time), "%s %d, %d %02d:%02d:%02d.%02d (LCT)",
+                 la_month, lp_tm->tm_mday, lp_tm->tm_year + 1900,
+                 lp_tm->tm_hour, lp_tm->tm_min, lp_tm->tm_sec, lv_hz);
         lv_len = sprintf(pp_rsp, "%sprocess creation time: %s\n",
                          pp_indent, la_time);
         lv_exe = pp_s->iv_rusage.ru_utime.tv_sec * 1000000 +
@@ -2394,7 +2394,7 @@ SB_Export int sqstateic_set_ic_args_options(int                      pv_ic_argc,
         for (lv_opt = 0; pp_options[lv_opt].option_str != NULL; lv_opt++) {
             if (lv_opt != 0)
                 lv_len += sprintf(&pp_rsp[lv_len], ", ");
-            lv_len += sprintf(&pp_rsp[lv_len], pp_options[lv_opt].option_str);
+            lv_len += sprintf(&pp_rsp[lv_len], "%s", pp_options[lv_opt].option_str);
         }
         lv_len += sprintf(&pp_rsp[lv_len], " }\n");
     }
@@ -2511,7 +2511,7 @@ SB_Export int sqstateic_struct_format_field(void *pp_data,
                 lv_c = lp_data[pv_data_off + lv_inx];
                 la_hex[0] = (char) HEXDIG[lv_c >> 4];
                 la_hex[1] = (char) HEXDIG[lv_c & 0xf];
-                lv_len += sprintf(&pp_rsp[lv_len], la_hex);
+                lv_len += sprintf(&pp_rsp[lv_len], "%s", la_hex);
             }
         }
         if (lv_fmt_both)
@@ -2542,7 +2542,7 @@ SB_Export int sqstateic_struct_format_field(void *pp_data,
                 lv_c = lp_data[pv_data_off + lv_inx];
                 la_hex[0] = (char) HEXDIG[lv_c >> 4];
                 la_hex[1] = (char) HEXDIG[lv_c & 0xf];
-                lv_len += sprintf(&pp_rsp[lv_len], la_hex);
+                lv_len += sprintf(&pp_rsp[lv_len], "%s", la_hex);
             }
         }
     }
@@ -2685,4 +2685,3 @@ SB_Export Sqstate_Ic_Var *sqstateic_var_lookup(const char *pp_var_str) {
       reinterpret_cast<Sqstate_Ic_Var *>(gp_ic_var_map->getv(pp_var_str));
     return lp_entry;
 }
-

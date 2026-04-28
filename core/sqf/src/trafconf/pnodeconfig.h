@@ -122,7 +122,7 @@ private:
     CPNodeConfigContainer *pnodesConfig_; // physical nodes container
     char                   name_[TC_PROCESSOR_NAME_MAX]; // short hostname
     char                   domain_[TC_PROCESSOR_NAME_MAX]; // domain
-    char                   fqdn_[TC_PROCESSOR_NAME_MAX]; // FQDN hostname
+    char                   fqdn_[TC_PROCESSOR_NAME_MAX * 2]; // FQDN hostname
     int                    pnid_;         // physical node identifier
     cpu_set_t              excludedCoreMask_; // mask of excluded SMP processor cores
     int                    excludedFirstCore_;// First excluded SMP processor core used by logical node

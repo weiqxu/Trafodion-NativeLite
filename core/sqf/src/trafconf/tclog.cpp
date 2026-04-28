@@ -82,7 +82,7 @@ int TcLogWrite(int eventType, int severity, char *msg)
 {
     int status;
 
-    char   eventTimeFmt[20];
+    char   eventTimeFmt[32];
     struct timeval eventTime;
 
     status = pthread_mutex_lock(&TcLogMutex);
@@ -90,14 +90,10 @@ int TcLogWrite(int eventType, int severity, char *msg)
 
     gettimeofday(&eventTime, NULL);
     struct tm *ltime = localtime(&eventTime.tv_sec);
-    sprintf( eventTimeFmt
-           , "%04d-%02d-%02d %02d:%02d:%02d"
-           , ltime->tm_year+1900
-           , ltime->tm_mon+1
-           , ltime->tm_mday
-           , ltime->tm_hour
-           , ltime->tm_min
-           , ltime->tm_sec );
+    strftime( eventTimeFmt
+            , sizeof(eventTimeFmt)
+            , "%Y-%m-%d %H:%M:%S"
+            , ltime );
 
     fprintf( stderr
            , "%s,, %s, TRAFCONFIG,,, PIN: %u,,,, TID: %ld, Message ID: %d, %s\n"

@@ -100,8 +100,7 @@ void CmpErrLog::renameBigLogFile(const char *fileName)
   {
     // Create the .old filename string
     char oldFileName[MAX_LOGFILE_NAME_LEN + 5];
-    strncpy(oldFileName, fileName, sizeof(oldFileName));
-    strncat(oldFileName, ".old", sizeof(oldFileName));
+    snprintf(oldFileName, sizeof(oldFileName), "%s.old", fileName);
 
     // Rename the old file name.
     rename(fileName, oldFileName);

@@ -70,7 +70,9 @@
 #include "ComExeTrace.h"
 #include "ComRtUtils.h"
 #include "ComSmallDefs.h"
+#ifndef TRAF_LOCAL_LITE
 #include "JavaObjectInterface.h"
+#endif
 
 class ContextCli;
 class Statement;  
@@ -240,9 +242,15 @@ public:
   inline void setUncProcess() { isUncProcess_ = TRUE; }
   inline NABoolean isUncProcess() {return isUncProcess_;}
   NAHeap *getCurrContextHeap();
+#ifndef TRAF_LOCAL_LITE
   void setJniErrorStr(NAString errorStr) { setSqlJniErrorStr(errorStr);  }
   void setJniErrorStr(const char *errorStr)  { setSqlJniErrorStr(errorStr); }
   const char* getJniErrorStr() { return getSqlJniErrorStr(); }
+#else
+  void setJniErrorStr(NAString) {}
+  void setJniErrorStr(const char *) {}
+  const char* getJniErrorStr() { return ""; }
+#endif
   void updateTransMode(TransMode *transMode);
 
 

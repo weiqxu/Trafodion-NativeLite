@@ -35,7 +35,7 @@ LIBMPI          = $(MPI_LIBEXPDIR)/libmtmpi.so
 
 #Monitor startup
 CCFLAGS += -Wno-long-long -fmessage-length=0
-INCLUDES  = -I$(INCEXPDIR)
+INCLUDES  = -I$(INCEXPDIR) -I$(MPI_INCEXPDIR) -I$(MPICH_ROOT)/include
 
 DEPENDENCIES =  $(MPI_BINEXPDIR)/mpicc \
 		$(MPI_INCEXPDIR)/mpi.h \
@@ -59,6 +59,13 @@ $(MPI_INCEXPDIR)/mpi.h: $(MPICH_ROOT)/include/mpi.h
 	./zfix $(MPICH_ROOT)/include/mpi.h $(MPI_INCEXPDIR)/mpi.h
 	rm -f $(INCEXPDIR)/mpi.h
 	ln -s $(MPI_INCEXPDIR)/mpi.h $(INCEXPDIR)/mpi.h
+	for hdr in $(MPICH_ROOT)/include/*; do \
+		test -f $$hdr || continue; \
+		base=$$(basename $$hdr); \
+		test "$$base" != "mpi.h" || continue; \
+		ln -sf $$hdr $(MPI_INCEXPDIR)/$$base; \
+		ln -sf $(MPI_INCEXPDIR)/$$base $(INCEXPDIR)/$$base; \
+	done
 
 $(BINEXPDIR)/mpirun: $(MPICH_ROOT)/bin/mpirun
 	rm -f $(BINEXPDIR)/mpirun

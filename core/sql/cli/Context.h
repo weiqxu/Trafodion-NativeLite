@@ -61,8 +61,13 @@
 #include "ExStats.h"
 #include "ExpSeqGen.h"
 #include "ssmpipc.h"
+#ifndef TRAF_LOCAL_LITE
 #include "hdfs.h"
 #include "HdfsClient_JNI.h"
+#else
+class HdfsClient;
+typedef void *hdfsFS;
+#endif
 
 class CliGlobals;
 class HashQueue;

@@ -167,7 +167,7 @@ void ComTdbSplitBottom::displayContents(Space * space,ULng32 flag)
   
   if(flag & 0x00000008)
   {
-    char buf[100];
+    char buf[256];
     
     str_sprintf(buf, "\nFor ComTdbSplitBottom :");
     space->allocateAndCopyToAlignedSpace(buf, str_len(buf), sizeof(short));

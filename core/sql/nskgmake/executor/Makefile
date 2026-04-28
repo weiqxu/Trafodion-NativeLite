@@ -122,13 +122,20 @@ CPPSRC := Allocator.cpp \
 
 ifeq ($(TRAF_LOCAL_LITE),1)
 CPPSRC := $(filter-out \
+	ExHbaseAccess.cpp \
+	ExHbaseDDL.cpp \
+	ExHbaseIUD.cpp \
+	ExHbaseSelect.cpp \
+	ExHdfsScan.cpp \
+	hiveHook.cpp \
 	JavaObjectInterface.cpp \
 	HdfsClient_JNI.cpp \
 	HiveClient_JNI.cpp \
 	HBaseClient_JNI.cpp \
 	SequenceFileReader.cpp \
 	OrcFileReader.cpp,$(CPPSRC))
-CPPSRC += LocalLiteStorageStubs.cpp
+CPPSRC += LocalLiteStorageStubs.cpp \
+	LocalLiteHiveHookStubs.cpp
 DEFS += -DTRAF_LOCAL_LITE
 endif
 
@@ -146,8 +153,14 @@ CPPSRC += vers_libexecutor.cpp \
 	ExSMEvent.cpp \
 	ExSMExitHandler.cpp \
 	ExSMShortMessage.cpp \
-	ExSMReadyList.cpp \
+	ExSMReadyList.cpp
+
+ifeq ($(TRAF_LOCAL_LITE),1)
+CPPSRC += LocalLiteFastTransportStubs.cpp
+else
+CPPSRC += \
 	ExFastTransport.cpp
+endif
 
 SYS_LIBS := -lrt -lpthread
 SRCPATH := bin executor runtimestats porting_layer qmscommon

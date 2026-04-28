@@ -130,6 +130,7 @@ typedef  wchar_t        WCHAR  ;
 
 #define __declspec(x)
 #define  _declspec(x)
+#define __pragma(x)
 #define _stricmp(a,b) strcasecmp(a,b)
 
 typedef struct _listEntry {
@@ -376,7 +377,17 @@ typedef struct _WSABUF {
 //
 
 
+#ifdef __cplusplus
+#include <type_traits>
+
+template <typename SQMinT1, typename SQMinT2>
+inline typename std::common_type<SQMinT1, SQMinT2>::type min(SQMinT1 a, SQMinT2 b)
+{
+    return ((a) < (b)) ? a : b;
+}
+#else
 #define min(a,b)            (((a) < (b)) ? (a) : (b))
+#endif
 
 
 #define TIME_ZONE_ID_UNKNOWN  0

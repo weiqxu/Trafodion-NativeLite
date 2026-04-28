@@ -66,6 +66,13 @@ linuxhelp help all::
 # Environment variables define: (see sqf/LocalSettingsTemplate.sh)
 #  BISON, FLEX, LLVM, AR, UDIS86
 
+ifeq ($(strip $(BISON)),)
+  BISON := bison
+endif
+ifeq ($(strip $(FLEX)),)
+  FLEX := flex
+endif
+
 YACC       = $(BISON) -p $(YACC_VAR_PREFIX)
 LEX        = $(FLEX) -P$(YACC_VAR_PREFIX)
 
@@ -136,7 +143,11 @@ LOG4CXX_SO=liblog4cxx*.so
 
 # for now, include these libs (copied to our local lib dir) everywhere
 ifeq ($(TRAF_LOCAL_LITE),1)
-GLOBAL_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB)
+GLOBAL_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) \
+	-lcrypto -lcommon -lcli -ltdm_sqlerrormsg \
+	-ltdm_sqlexp -ltdm_sqlexport -larkcmplib -lqmscommon \
+	-lsort -lstfs -lsm -ltdm_sqllangman -lsqauth -lsqstatesb \
+	-lsbutil -lsbfs -lsbms -lwin -lstmlib -luuid -lz
 else
 GLOBAL_SYS_LIBS := -L $(LOC_JVMLIBS) $(LIBHDFS_LIB) $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB)
 endif
@@ -144,6 +155,9 @@ endif
 # EXECUTABLES defines the executables that are built for release and debug
 # builds.  Any flavor-specific targets can be added later in this makefile.
 EXECUTABLES= arkcmp sqlci arkesp tdm_udrserv mxlobsrvr sscp ssmp clitestdriver
+ifeq ($(TRAF_LOCAL_LITE),1)
+EXECUTABLES := arkcmp sqlci
+endif
 	# mxCompileUserModule mxsqlcfe mxsqlcofe sqlfe
 
 # LIBS defines the libraries that are built for release and debug builds.
@@ -255,7 +269,9 @@ endif
 
 # -short-wchar: Have the compiler treat wchar_t as a 2-byte character. 
 SYS_CXXFLAGS += -fshort-wchar -std=c++0x
+ifneq ($(TRAF_LOCAL_LITE),1)
 SYS_CXXFLAGS += -Xlinker --copy-dt-needed-entries
+endif
 SYS_CXXFLAGS += -Wno-conversion-null
 SYS_CXXFLAGS += -fcheck-new
 CFLAGS += -fshort-wchar
@@ -291,6 +307,11 @@ SYS_WARNING_FLAG += -Wformat
 ifndef SQL_COMPILATION_WARNING_ACCEPTABLE
 # this will turn the compilation warnings to errors
 SYS_WARNING_FLAG += -Werror
+endif
+
+ifeq ($(TRAF_LOCAL_LITE),1)
+SYS_WARNING_FLAG += -Wno-format-overflow -Wno-format-truncation -Wno-stringop-overread
+SYS_WARNING_FLAG += -Wno-deprecated-declarations -Wno-format-security -Wno-pointer-arith
 endif
 
 # For building shared libraries, add the -fPIC flags

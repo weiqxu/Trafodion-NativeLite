@@ -44,7 +44,7 @@ static void *gp_sb_slotmgr_lock = reinterpret_cast<void *>(1);
 static void *gp_sb_slotmgr_unlock = NULL;
 
 static void print_str(FILE *pp_f, char *pp_str) {
-    fprintf(pp_f, pp_str);
+    fprintf(pp_f, "%s", pp_str);
 }
 
 SB_Slot_Mgr::SB_Slot_Mgr(const char *pp_name, Alloc_Type pv_alloc, int pv_cap)
@@ -234,4 +234,3 @@ void SB_Ts_Slot_Mgr::print(FILE *pp_f, Cb_Type pv_cb, int pv_print_type) {
     if (lp_lock == gp_sb_slotmgr_lock)
         unlock();
 }
-

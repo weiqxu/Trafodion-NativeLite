@@ -380,6 +380,3 @@ Lng32 ExpLOBInterfaceGetOffset(ExLobGlobals * exLobGlob,
 
 #endif
 
-
-
-

@@ -185,6 +185,7 @@ short ExControlTcb::work()
   if ((controlTdb().isSetStmt()) &&
       (controlTdb().isHiveSetSchema()))
     {
+#ifndef TRAF_LOCAL_LITE
       // set schema hive.<sch> stmt
       // Check that it exists in Hive.
       ComSchemaName csn(value[2]);
@@ -225,6 +226,7 @@ short ExControlTcb::work()
           
           return WORK_OK;
         }      
+#endif
     }
 
   // Only a STATIC compile will actually affect Arkcmp's context.
@@ -1346,4 +1348,3 @@ ex_tcb_private_state * ExControlPrivateState::allocate_new(const ex_tcb *tcb)
 // -----------------------------------------------------------------------
 
 #include "ExControlArea.cpp"
-

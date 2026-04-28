@@ -478,7 +478,7 @@ Int32 ComUser::getRoleList (char * roleList,
     pRoles = pRoles + strlen(roleName);
   }
 
-  pRoles = '\0'; // null terminate string
+  *pRoles = '\0'; // null terminate string
   pRoles = generatedRoleList;
   actualLen = strlen(pRoles);
   if (actualLen > maxLen) 
