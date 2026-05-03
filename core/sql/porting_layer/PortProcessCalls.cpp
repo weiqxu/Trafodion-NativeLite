@@ -146,19 +146,25 @@ short NAProcessHandle::decompose()
 short NAProcessHandle::getmine(SB_Phandle_Type *phandle)
 {
   Int32 err=0;
-  
+#ifdef TRAF_LOCAL_LITE
+  memset(&this->phandle_, 0, PhandleSize);
+#else
   err = XPROCESSHANDLE_GETMINE_( (SB_Phandle_Type *) &this->phandle_);
-  
-  memcpy (phandle, &this->phandle_, PhandleSize); 
-  
+#endif
+
+  memcpy (phandle, &this->phandle_, PhandleSize);
+
   return err;
 }
 
 short NAProcessHandle::getmine()
 {
   short  err=0;
-  
+#ifdef TRAF_LOCAL_LITE
+  memset(&this->phandle_, 0, PhandleSize);
+#else
   err = XPROCESSHANDLE_GETMINE_( (SB_Phandle_Type *) &this->phandle_);
+#endif
   return err;
 }
 

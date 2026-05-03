@@ -3473,8 +3473,10 @@ void IpcGuardianServer::stop()
     Int32 guaRetcode = phandle.decompose();
     
     if (!guaRetcode)
-    { 
+    {
+#ifndef TRAF_LOCAL_LITE
       msg_mon_stop_process_name(phandle.getPhandleString());
+#endif
     }
   }
 }
@@ -4214,9 +4216,13 @@ NABoolean IpcGuardianServer::serverDied()
   Int32 pnameLen = ph.toAscii(pname, PhandleStringLen);
   pname[pnameLen] = '\0';
   int nid, pid;
+#ifndef TRAF_LOCAL_LITE
   SB_Verif_Type verifier;
   int rc = msg_mon_get_process_info2(pname, &nid, &pid, &verifier);
   return rc != 0 ;
+#else
+  return FALSE;
+#endif
 }
 
 void IpcGuardianServer::populateDiagsAreaFromTPCError(ComDiagsArea *&diags,

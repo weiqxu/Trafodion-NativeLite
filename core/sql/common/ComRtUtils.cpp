@@ -690,6 +690,7 @@ Lng32 ComRtGetProgramInfo(char * pathName,    /* out */
 
   // Map the node number to cpu
   nodeNumber = cpu;
+#ifndef TRAF_LOCAL_LITE
   strcpy(processNameString, myPhandle.getPhandleString());
   MS_Mon_Process_Info_Type processInfo;
   if ((retcode = msg_mon_get_process_info_detail(
@@ -697,11 +698,15 @@ Lng32 ComRtGetProgramInfo(char * pathName,    /* out */
                         != XZFIL_ERR_OK)
      return retcode;
   processCreateTime = ComRtGetJulianFromUTC(processInfo.creation_time);
-  if (processInfo.parent_nid != -1 && 
+  if (processInfo.parent_nid != -1 &&
       processInfo.parent_pid != -1 && parentProcessNameString)
     strcpy(parentProcessNameString, processInfo.parent_name);
   else
     parentProcessNameString = NULL;
+#else
+  processCreateTime = 0;
+  parentProcessNameString = NULL;
+#endif
   return retcode;
 }
 
@@ -724,6 +729,7 @@ Lng32 ComRtGetProcessCreateTime(short  *cpu, /* cpu */
 {
   Lng32 retcode = 0;
 
+#ifndef TRAF_LOCAL_LITE
   MS_Mon_Process_Info_Type processInfo;
   char processName[MS_MON_MAX_PROCESS_NAME];
 
@@ -737,6 +743,9 @@ Lng32 ComRtGetProcessCreateTime(short  *cpu, /* cpu */
                         != XZFIL_ERR_OK)
      return retcode;
   processCreateTime = ComRtGetJulianFromUTC(processInfo.creation_time);
+#else
+  processCreateTime = 0;
+#endif
   return retcode;
 }
 
@@ -765,6 +774,7 @@ Int32 ComRtGetCPUArray(Int32 *&cpuArray, NAHeap *heap)
 
   cpuArray = NULL;
 
+#ifndef TRAF_LOCAL_LITE
   // Get the number of nodes to know how much info space to allocate
   Int32 error = msg_mon_get_node_info(&nodeCount, 0, NULL);
   if (error != 0)
@@ -783,7 +793,7 @@ Int32 ComRtGetCPUArray(Int32 *&cpuArray, NAHeap *heap)
   nodeMax = nodeCount;
   error = msg_mon_get_node_info(&nodeCount, nodeMax, nodeInfo);
   if (error != 0)
-  { 
+  {
      NADELETEBASIC(nodeInfo, heap);
      NADELETEBASIC(cpuArray, heap);
      cpuArray = NULL;
@@ -804,11 +814,20 @@ Int32 ComRtGetCPUArray(Int32 *&cpuArray, NAHeap *heap)
   }
 
   NADELETEBASIC(nodeInfo, heap);
+#else
+  // Local-lite: single node (node 0) only.
+  cpuArray = new(heap) Int32[1];
+  if (!cpuArray)
+     return 0;
+  cpuArray[0] = 0;
+  configuredNodeCount = 1;
+#endif
   return configuredNodeCount;
 }
 
 NABoolean ComRtGetCpuStatus(char *nodeName, short cpuNum)
 {
+#ifndef TRAF_LOCAL_LITE
   NABoolean retval = FALSE;   // assume cpu is down
   MS_Mon_Node_Info_Type nodeInfo;
   memset(&nodeInfo, 0, sizeof(nodeInfo));
@@ -817,12 +836,17 @@ NABoolean ComRtGetCpuStatus(char *nodeName, short cpuNum)
         if ( MS_Mon_State_Up == nodeInfo.node[0].state ) retval = TRUE;
   }
   return retval;
+#else
+  // Local-lite: only node 0 exists and it's always up.
+  return (cpuNum == 0);
+#endif
 }
 
 void genLinuxCorefile(const char *eventMsg)
 {
   if (eventMsg)
     SQLMXLoggingArea::logExecRtInfo(__FILE__, __LINE__, eventMsg, 0);
+#ifndef TRAF_LOCAL_LITE
   NAProcessHandle myPhandle;
   myPhandle.getmine();
   myPhandle.decompose();
@@ -832,10 +856,11 @@ void genLinuxCorefile(const char *eventMsg)
                               coreFile);
 
   char coreLocationMessage[PATH_MAX + 200];
-  sprintf(coreLocationMessage, 
+  sprintf(coreLocationMessage,
             "Core-file for this process created at %s.", coreFile);
   SQLMXLoggingArea::logExecRtInfo(__FILE__, __LINE__,
                                     coreLocationMessage, 0);
+#endif
 }
 
 #ifdef _DEBUG
@@ -1016,6 +1041,7 @@ void dumpTrafStack(LIST(TrafAddrStack*) *la, const char *header, bool toFile)
 
 Int16 getBDRClusterName(char *bdrClusterName)
 {
+#ifndef TRAF_LOCAL_LITE
   MS_Mon_Reg_Get_Type regList;
   Int16  error;
   strcpy(bdrClusterName, "UNKNOWN");
@@ -1037,6 +1063,10 @@ Int16 getBDRClusterName(char *bdrClusterName)
     }
   }
   return error;
+#else
+  strcpy(bdrClusterName, "local-lite");
+  return 0;
+#endif
 }
  
 int get_phandle_with_retry(char *pname, SB_Phandle_Type *phandle)

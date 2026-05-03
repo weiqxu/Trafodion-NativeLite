@@ -213,6 +213,17 @@ NAClusterInfo::NAClusterInfo(CollHeap * heap)
       Int32 nodeMax = 0;
       MS_Mon_Node_Info_Entry_Type *nodeInfo = NULL;
 
+#ifdef TRAF_LOCAL_LITE
+      // Single-node cluster: node 0 is both aggregation and storage.
+      cpuArray_.insertAt(0, 0);
+      {
+        NAString *nodeName = new (heap_) NAString("0", heap_);
+        Int32 *nodeId = new Int32(0);
+        nodeNameToNodeIdMap_->insert(nodeName, nodeId);
+        nodeIdToNodeNameMap_->insert(nodeId, nodeName);
+      }
+      break;
+#else
       // Get the number of nodes to know how much info space to allocate
       Int32 error = msg_mon_get_node_info(&nodeCount, 0, NULL);
       CMPASSERT(error == 0);
@@ -270,6 +281,7 @@ NAClusterInfo::NAClusterInfo(CollHeap * heap)
       }
 
       NADELETEBASIC(nodeInfo, heap);
+#endif
 
       break;
     }

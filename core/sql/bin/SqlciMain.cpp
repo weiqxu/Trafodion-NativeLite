@@ -63,8 +63,12 @@
 
 
 
+#ifndef TRAF_LOCAL_LITE
 #include "seabed/ms.h"
 #include "seabed/fs.h"
+#else
+#include "LocalLiteConfig.h"
+#endif
 #include "SCMBuildStr.h"
 #include "SCMVersHelp.h"
 #ifdef _DEBUG
@@ -234,6 +238,7 @@ Int32 main (Int32 argc, char *argv[])
   // check this before file_init_attach overwrites the user env
   NABoolean sync_with_stdio = (getenv("NO_SYNC_WITH_STDIO") == NULL);
 
+#ifndef TRAF_LOCAL_LITE
   try
   {
     file_init_attach(&argc, &argv, TRUE, (char *)"");
@@ -246,6 +251,13 @@ Int32 main (Int32 argc, char *argv[])
     cerr << "Error while initializing messaging system. Please make sure Trafodion is started and up. Exiting..." << endl;
     exit(1);
   }
+#else
+  atexit(my_mpi_fclose);
+  if (LocalLiteConfig_init() != 0) {
+    cerr << "Error: failed to initialize local-lite environment." << endl;
+    exit(1);
+  }
+#endif
 
   if (sync_with_stdio)
     ios::sync_with_stdio();

@@ -48,6 +48,7 @@ my_mpi_close()
 void
 my_mpi_fclose()
 {
+#ifndef TRAF_LOCAL_LITE
 static Int32 sv_called_count = 0;
 static Int32 sv_retcode = -999;
 #ifdef MPI_
@@ -55,6 +56,7 @@ static Int32 sv_retcode = -999;
          sv_called_count = 2000000000 ;  //keep the fact that it is very large.
   if (sv_called_count == 1)
     sv_retcode = file_mon_process_shutdown();
+#endif
 #endif
 }
 

@@ -1148,7 +1148,10 @@ void SMConnection::dumpAndStopOtherEnd(bool doDump, bool doStop) const
      if (doDump)
        msg_mon_dump_process_name(NULL, seqName, coreFile);
 
+#ifndef TRAF_LOCAL_LITE
      if (doStop)
        msg_mon_stop_process_name(seqName);
+#endif
+
   }
 }

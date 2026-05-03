@@ -55,7 +55,21 @@
 #include "sqlmxmsg_msg.h"
 
 #include "NLSConversion.h"
+#ifdef TRAF_LOCAL_LITE
+// In local-lite mode, the Seabed/ExSM messaging layer is not loaded.
+// Provide local stubs for the ExSM assertion macro and its buffer
+// so that GetErrorMessage can compile and link without libexecutor.so.
+#include <assert.h>
+__thread char ExSM_AssertBuf[32];
+#define exsm_assert_rc(rc, func) {          \
+  if (rc != 0) {                             \
+    sprintf(ExSM_AssertBuf, "rc = %d", (int) rc); \
+    assert(!"exsm_assert_rc failed");         \
+  }                                           \
+}
+#else
 #include "ExSMCommon.h"
+#endif
 
 #include <fcntl.h>
 #include <signal.h>	

@@ -164,13 +164,15 @@ NABoolean GuaProcessHandle::operator == (const GuaProcessHandle &other) const
 
 void GuaProcessHandle::dumpAndStop(bool doDump, bool doStop) const
 {
+#ifndef TRAF_LOCAL_LITE
   char coreFile[1024];
   NAProcessHandle phandle((SB_Phandle_Type *)&phandle_);
   phandle.decompose();
   if (doDump)
     msg_mon_dump_process_name(NULL, phandle.getPhandleString(), coreFile);
   if (doStop)
-    msg_mon_stop_process_name(phandle.getPhandleString()); 
+    msg_mon_stop_process_name(phandle.getPhandleString());
+#endif
 }
 
 // -----------------------------------------------------------------------

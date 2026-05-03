@@ -2289,8 +2289,12 @@ NAHeap::allocateBlock(size_t size, NABoolean failureIsFatal)
             char coreFile[1024];
             msg_mon_dump_process_name(NULL, ssmpName, coreFile);
           }
+#ifdef SQ_PHANDLE_VERIFIER
           Int32 ndRetcode = msg_mon_node_down2(nid,
                               "RMS shared segment is exhausted.");
+#else
+          msg_mon_node_down(nid);
+#endif
           sleep(30);
           NAExit(0);    // already made a core.
         }

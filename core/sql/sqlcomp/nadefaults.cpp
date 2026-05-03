@@ -4149,6 +4149,11 @@ void NADefaults::updateSystemParameters(NABoolean updateDefaultDefaults)
 void
 NADefaults::getNodeAndClusterNumbers(short& nodeNum, Int32& clusterNum)
 {
+#ifdef TRAF_LOCAL_LITE
+  nodeNum = 0;
+  clusterNum = 1;
+  return;
+#else
 
   SB_Phandle_Type pHandle;
   Int32 error = XPROCESSHANDLE_GETMINE_(&pHandle);
@@ -4160,6 +4165,7 @@ NADefaults::getNodeAndClusterNumbers(short& nodeNum, Int32& clusterNum)
 
 
  CMPASSERT(error == 0);
+#endif
 
 }
 

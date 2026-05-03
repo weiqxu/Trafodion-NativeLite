@@ -525,10 +525,17 @@ void SqlciEnv::sqlmxRegress()
 
 }
 
-static void SqlciEnv_prologue_to_run(SqlciEnv *sqlciEnv) 
+static void SqlciEnv_prologue_to_run(SqlciEnv *sqlciEnv)
 {
   if (sqlciEnv->doneWithPrologue())
     return;
+
+#ifdef TRAF_LOCAL_LITE
+  if (NOT sqlciEnv->noBanner())
+    sqlciEnv->welcomeMessage();
+  sqlciEnv->setDoneWithPrologue(TRUE);
+  return;
+#endif
 
   if (NOT sqlciEnv->noBanner())
     sqlciEnv->welcomeMessage();
@@ -624,9 +631,11 @@ void SqlciEnv::run()
   // that any errors will be fatal. Should an error occur,  exit MXCI.
    
    SqlciEnv_prologue_to_run(this);
-   
+
+#ifndef TRAF_LOCAL_LITE
     // tell CLI that this user session has started.
    SqlCmd::executeQuery("SET SESSION DEFAULT SQL_SESSION 'BEGIN';", this);
+#endif
    // Initialize lifetime objects
    InputStmt * input_stmt = NULL;
    Int32 retval;
@@ -652,14 +661,16 @@ void SqlciEnv::runWithInputString(char * input_string)
   // the querry being executed is invoke during MXCI's initialization phase and
   // that any errors will be fatal. Should an error occur,  exit MXCI.
    SqlciEnv_prologue_to_run(this);
- 
+
+#ifndef TRAF_LOCAL_LITE
    SqlCmd::executeQuery("SET SESSION DEFAULT SQL_SESSION 'BEGIN';", this);
+#endif
    // Initialize lifetime objects
    InputStmt * input_stmt;
    Int32 retval;
    void (*intHandler_addr) (Int32);
    intHandler_addr = interruptHandler;
-   
+
    InputStmt dummyIS(this);
    input_stmt = new InputStmt(&dummyIS, input_string);
    retval = executeCommands(input_stmt);
@@ -688,7 +699,9 @@ void SqlciEnv::run(char * in_filename, char * input_string)
   // that any errors will be fatal. Should an error occur,  exit MXCI.
   SqlciEnv_prologue_to_run(this);
 
+#ifndef TRAF_LOCAL_LITE
    SqlCmd::executeQuery("SET SESSION DEFAULT SQL_SESSION 'BEGIN';", this);
+#endif
   Int32 retval = 0;
   SqlciNode * sqlci_node = 0;
 
@@ -904,7 +917,10 @@ Int32 SqlciEnv::executeCommands(InputStmt *& input_stmt)
 // Optionally returns the transaction identifier, if transid is passed in.
 short SqlciEnv::statusTransaction(Int64 * transid)
 {
-  // if a transaction is active, get the transid by calling the CLI procedure. 
+#ifdef TRAF_LOCAL_LITE
+  return 0;
+#else
+  // if a transaction is active, get the transid by calling the CLI procedure.
   SQLDESC_ID transid_desc; // added for multi charset module names
   SQLMODULE_ID module;
 
@@ -939,7 +955,7 @@ short SqlciEnv::statusTransaction(Int64 * transid)
   SQL_EXEC_DeallocDesc(&transid_desc);
 	
   return (short)rc;
-	
+#endif
 }
 //
 void SqlciEnv::displayDiagnostics()

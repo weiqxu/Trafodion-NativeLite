@@ -143,13 +143,20 @@ LOG4CXX_SO=liblog4cxx*.so
 
 # for now, include these libs (copied to our local lib dir) everywhere
 ifeq ($(TRAF_LOCAL_LITE),1)
+# Internal SQL libraries included so BIND_NOW can resolve transitive
+# symbols in executables.  Not used in DLL links (see EXTERN_SYS_LIBS).
 GLOBAL_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) \
 	-lcrypto -lcommon -lcli -ltdm_sqlerrormsg \
 	-ltdm_sqlexp -ltdm_sqlexport -larkcmplib -lqmscommon \
 	-lsort -lstfs -lsm -ltdm_sqllangman -lsqauth -lsqstatesb \
 	-lsbutil -lsbfs -lsbms -lwin -lstmlib -luuid -lz
+# External/SQF libraries only — safe for DLL links (no build-ordering issues).
+EXTERN_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) \
+	-lcrypto -lstfs -lsm -lsqauth -lsqstatesb \
+	-lsbutil -lsbfs -lsbms -lwin -lstmlib -luuid -lz
 else
 GLOBAL_SYS_LIBS := -L $(LOC_JVMLIBS) $(LIBHDFS_LIB) $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB)
+EXTERN_SYS_LIBS := $(GLOBAL_SYS_LIBS)
 endif
 
 # EXECUTABLES defines the executables that are built for release and debug
@@ -347,7 +354,7 @@ ALL_DEFS = $(SYS_DEFS) $(DEFS)
 
 link_lib_rule = $(AR) crv $@ $(OBJ_PATHS)
 link_dll_rule = $(CXX) $(SO_OPTS) $(ALL_CXXFLAGS) -shared -o $@ $(LOC_LIBS) \
-	$(OBJ_PATHS) $(EXTERN_OBJS) $(DEP_LIBS:%=-l%) $(LINK_EXTERN_LIB) $(SYS_LIBS) $(GLOBAL_SYS_LIBS)
+	$(OBJ_PATHS) $(EXTERN_OBJS) $(DEP_LIBS:%=-l%) $(LINK_EXTERN_LIB) $(SYS_LIBS) $(EXTERN_SYS_LIBS)
 
 build_lib_rule = $(link_lib_rule)
 build_lib_dll_rule = $(link_lib_dll_rule) 
@@ -374,11 +381,7 @@ build_c_rule = $(compile_c_rule)
 
 ALL_EXE_LDFLAGS = $(ALL_CXXFLAGS) $(OPT_EXE_LDFLAGS)
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-LOCAL_LITE_EARLY_DLLS =
-else
 LOCAL_LITE_EARLY_DLLS = $(EARLY_DLLS)
-endif
 
 # link_exe defines how to link an executable for OSS
 link_exe = $(CXX) $(ALL_EXE_LDFLAGS) $(LOCAL_LITE_EARLY_DLLS) $(OBJ_PATHS) \

@@ -1402,7 +1402,9 @@ void CmpMessageStream::actOnSend(IpcConnection*)
     Int32 guaRetcode = phandle.decompose();
     if (XZFIL_ERR_OK == guaRetcode)
     {
+      #ifndef TRAF_LOCAL_LITE
       msg_mon_stop_process_name(phandle.getPhandleString());
+#endif
     }
     delete sqlcomp_->sqlcompMessage_;
     sqlcomp_->getDiags() ->setRollbackTransaction(-1);
@@ -1476,7 +1478,9 @@ void CmpMessageStream::actOnReceive(IpcConnection*)
               Int32 guaRetcode = phandle.decompose();
               if (XZFIL_ERR_OK == guaRetcode)
               {
-                msg_mon_stop_process_name(phandle.getPhandleString());
+                #ifndef TRAF_LOCAL_LITE
+      msg_mon_stop_process_name(phandle.getPhandleString());
+#endif
               }
               delete sqlcomp_->sqlcompMessage_;
               sqlcomp_->sqlcompMessage_ = NULL;
