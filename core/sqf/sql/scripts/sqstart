@@ -300,7 +300,7 @@ if [[ "$SQ_NAMESERVER_ENABLED" == "1" ]]; then
    fi
 fi
 
-if [[ ! -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
+if [[ "$TRAF_LOCAL_LITE" != "1" && ! -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
    checkKerberos
    if [[ $? -ne 0 ]]; then
       echo
@@ -418,29 +418,38 @@ if [[ -z ${TRAF_AGENT} ]]; then
     rm -f $MPI_TMPDIR/monitor.port.*
 
 
-    setup_sqpdsh
+    if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+        echoLog "Skipping distributed Hadoop/HBase cleanup for local-lite"
+        ( cd $TRAF_VAR && utilConfigDb -u )
+    else
+        setup_sqpdsh
 
-    # Clean HBase classpath cache file
-    echo "Clean up HBase classpath cache file: $TRAF_VAR/hbase_classpath"
-    $SQPDSHA "rm -rf $TRAF_VAR/hbase_classpath"
+        # Clean HBase classpath cache file
+        echo "Clean up HBase classpath cache file: $TRAF_VAR/hbase_classpath"
+        $SQPDSHA "rm -rf $TRAF_VAR/hbase_classpath"
 
-    # Clear unique strings
-    $SQPDSHA "cd $TRAF_VAR; utilConfigDb -u"
+        # Clear unique strings
+        $SQPDSHA "cd $TRAF_VAR; utilConfigDb -u"
+    fi
 
     echoLog "Executing sqipcrm (output to sqipcrm.out)"
     sqipcrm > $TRAF_LOG/sqipcrm.out 2>&1
 fi
 
-echoLog "Executing cleanZKNodes (output to cleanZKNodes.out)"
-cleanZKNodes > $TRAF_LOG/cleanZKNodes.out 2>&1
+if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+    echoLog "Skipping ZooKeeper cleanup and HBase availability check for local-lite"
+else
+    echoLog "Executing cleanZKNodes (output to cleanZKNodes.out)"
+    cleanZKNodes > $TRAF_LOG/cleanZKNodes.out 2>&1
 
-echoLog "Checking whether HBase is up"
-hbcheck 4 30
-if [ $? != 0 ]; then
-    lv_msg="It looks like HBase is not up, hbcheck utility failed."
-    echoLog "$lv_msg"
-    LogIt "End $script_name $sq_start, exit code: 1, $lv_msg"
-  exit 1
+    echoLog "Checking whether HBase is up"
+    hbcheck 4 30
+    if [ $? != 0 ]; then
+        lv_msg="It looks like HBase is not up, hbcheck utility failed."
+        echoLog "$lv_msg"
+        LogIt "End $script_name $sq_start, exit code: 1, $lv_msg"
+      exit 1
+    fi
 fi
 
 rm -f $SQSTART_EXIT_STATUS

@@ -120,6 +120,7 @@ if [ -n "$CHANGED_SQ_ENV_RESTART_SHELL" ]; then
 fi
 
 cd $TRAF_HOME/sql/scripts
+export PERL5LIB=$TRAF_HOME/sql/scripts${PERL5LIB:+:$PERL5LIB}
 
 # Check to make sure this is a real cluster configuration
 if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]  ; then
@@ -195,9 +196,10 @@ mkdir -p $MPI_TMPDIR/tmp
 # mkdir a dir for CBF data used by SQL IUS feature
 mkdir -p $HOME/cbfs
 
-# Clean HBase classpath cache file
-#echo "Clean up HBase classpath cache file: $TRAF_VAR/hbase_classpath"
-rm -rf $TRAF_VAR/hbase_classpath
+# Clean HBase classpath cache file (skip for local-lite)
+if [[ "$TRAF_LOCAL_LITE" != "1" ]]; then
+  rm -rf $TRAF_VAR/hbase_classpath
+fi
 
 # Bypass if in agent mode
 if [[ -z ${TRAF_AGENT} ]]; then

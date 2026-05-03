@@ -126,6 +126,49 @@ sqshell -help
 sqlci -help
 ```
 
+## Running SQLCI Standalone (No Scripts)
+
+sqlci can run as a single, self-contained process. No shell scripts, no monitor,
+no Java, no Hadoop — just the binary.
+
+**Build:**
+
+```bash
+TRAF_HOME=$(pwd)/core/sqf make -C core/sql/nskgmake TRAF_LOCAL_LITE=1 SQ_MTYPE=64 SQ_BTYPE=d SQ_MBTYPE=64d linuxdebug
+```
+
+**Run:**
+
+```bash
+SQL_LIBS=$(pwd)/core/sql/lib/linux/64bit/debug
+SQF_LIBS=$(pwd)/core/sqf/export/lib64d
+LD_LIBRARY_PATH=$SQL_LIBS:$SQF_LIBS $SQL_LIBS/sqlci
+```
+
+**Example session:**
+
+```
+ Conversational Interface
+Copyright (c)
+>>SELECT 1 FROM (VALUES(1)) AS t(x);
+
+(EXPR)
+------
+
+     1
+
+--- 1 row(s) selected.
+>>exit;
+
+End of MXCI Session
+```
+
+No `sqenv.sh`, no `sqgen`, no `sqstart`, no monitor. The binary discovers its
+own paths at runtime and requires only the two library directories on
+`LD_LIBRARY_PATH`.
+
+See `docs/local-lite-runtime.md` for details on what works and what doesn't.
+
 ## Starting SQF
 
 The legacy SQF scripts are still present. A minimal single-node attempt follows

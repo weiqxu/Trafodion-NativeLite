@@ -153,7 +153,11 @@ fi
 export TRAF_HOME=$PWD
 export TRAF_VAR=${TRAF_VAR:-$TRAF_HOME/tmp}
 export TRAF_LOG=${TRAF_LOG:-$TRAF_HOME/logs}
-export TRAF_CONF=${TRAF_CONF:-$TRAF_HOME/sql/local_hadoop/traf_conf}
+if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+  export TRAF_CONF=${TRAF_CONF:-$TRAF_HOME/conf}
+else
+  export TRAF_CONF=${TRAF_CONF:-$TRAF_HOME/sql/local_hadoop/traf_conf}
+fi
 
 # normal installed location, can be overridden in .trafodion
 export DCS_INSTALL_DIR=$TRAF_HOME/dcs-$TRAFODION_VER
@@ -286,24 +290,45 @@ unset USE_HADOOP_1
 # HIVE_CNF_DIR             directory with Hive config file hive-site.xml
 
 # ---+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
-if [[ "$SQ_MTYPE" == 64 ]]; then
-  export LOC_JVMLIBS=$JAVA_HOME/jre/lib/amd64/server
+if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+  export LOC_JVMLIBS=
 else
-  export LOC_JVMLIBS=$JAVA_HOME/jre/lib/i386/server
+  if [[ "$SQ_MTYPE" == 64 ]]; then
+    export LOC_JVMLIBS=$JAVA_HOME/jre/lib/amd64/server
+  else
+    export LOC_JVMLIBS=$JAVA_HOME/jre/lib/i386/server
+  fi
 fi
 
 # cache hbase classpath to a file to avoid running hbase command
 # every time when login as trafodion
 CACHED_HBASE_CP_FILE="$TRAF_VAR/hbase_classpath"
-if [[ ! -f $CACHED_HBASE_CP_FILE ]]; then
+if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+  [[ $SQ_VERBOSE == 1 ]] && echo "Skipping Hadoop/HBase classpath setup for local-lite"
+  lv_hbase_cp=
+elif [[ ! -f $CACHED_HBASE_CP_FILE ]]; then
   #hbase classpath captures all the right set of jars hbase is using.
   #this also includes the trx jar that gets installed as part of install.
   #Additional testing needed.Including it here for future validation.
   hbase classpath > $CACHED_HBASE_CP_FILE 2>/dev/null
+  lv_hbase_cp=`cat $CACHED_HBASE_CP_FILE`
+else
+  lv_hbase_cp=`cat $CACHED_HBASE_CP_FILE`
 fi
-lv_hbase_cp=`cat $CACHED_HBASE_CP_FILE`
 
-if [[ -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
+if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+  [[ $SQ_VERBOSE == 1 ]] && echo "Skipping Hadoop/HBase distro setup for local-lite"
+  HADOOP_JAR_DIRS=
+  HADOOP_JAR_FILES=
+  HBASE_JAR_FILES=
+  HIVE_JAR_DIRS=
+  HIVE_JAR_FILES=
+  HADOOP_CNF_DIR=
+  HBASE_CNF_DIR=
+  HIVE_CNF_DIR=
+  HADOOP_LIB_DIR=
+  HADOOP_INC_DIR=
+elif [[ -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
   # we are on a development system where install_local_hadoop has been
   # executed
   # ----------------------------------------------------------------
@@ -789,64 +814,74 @@ SQ_CLASSPATH=
 # log4j, commons-logging, commons-lang, and ZooKeeper jars in its CLASSPATH connecting to a cluster
 # Hortonworks seems to have a hadoop-client.jar
 
-# expand jar files in list of directories
-for d in $HADOOP_JAR_DIRS; do
-  HADOOP_JAR_FILES="$HADOOP_JAR_FILES $d/*.jar"
-done
+if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+  SQ_CLASSPATH=
+else
+  # expand jar files in list of directories
+  for d in $HADOOP_JAR_DIRS; do
+    HADOOP_JAR_FILES="$HADOOP_JAR_FILES $d/*.jar"
+  done
 
-for d in $HIVE_JAR_DIRS; do
-  HIVE_JAR_FILES="$HIVE_JAR_FILES $d/*.jar"
-done
+  for d in $HIVE_JAR_DIRS; do
+    HIVE_JAR_FILES="$HIVE_JAR_FILES $d/*.jar"
+  done
 
-SQ_CLASSPATH=$lv_hbase_cp;
+  SQ_CLASSPATH=$lv_hbase_cp;
 
-# assemble all of them into a classpath
-for j in $HBASE_JAR_FILES $HADOOP_JAR_FILES $HIVE_JAR_FILES; do
-  if [[ -f $j ]]; then
+  # assemble all of them into a classpath
+  for j in $HBASE_JAR_FILES $HADOOP_JAR_FILES $HIVE_JAR_FILES; do
+    if [[ -f $j ]]; then
 
-    # eliminate jars with unwanted suffixes
-    SUPPRESS_FILE=0
-    for s in $SUFFIXES_TO_SUPPRESS; do
-      if [[ ${j%${s}} != $j ]]; then
-        SUPPRESS_FILE=1
+      # eliminate jars with unwanted suffixes
+      SUPPRESS_FILE=0
+      for s in $SUFFIXES_TO_SUPPRESS; do
+        if [[ ${j%${s}} != $j ]]; then
+          SUPPRESS_FILE=1
+        fi
+      done
+      # also eliminate ant jar that may be
+      # incompatible with system ant command
+      [[ $j =~ /ant- ]] && SUPPRESS_FILE=1
+
+      # finally, add the jar to the classpath
+      if [[ $SUPPRESS_FILE -eq 0 ]]; then
+        SQ_CLASSPATH=$SQ_CLASSPATH:$j
       fi
-    done
-    # also eliminate ant jar that may be
-    # incompatible with system ant command
-    [[ $j =~ /ant- ]] && SUPPRESS_FILE=1
-
-    # finally, add the jar to the classpath
-    if [[ $SUPPRESS_FILE -eq 0 ]]; then
-      SQ_CLASSPATH=$SQ_CLASSPATH:$j
     fi
-  fi
-done
+  done
+fi
 
 # remove the leading colon from the classpath
 SQ_CLASSPATH=${SQ_CLASSPATH#:}
 
 # add Hadoop and HBase config dirs to classpath, if they exist
-if [[ -n "$HADOOP_CNF_DIR" ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HADOOP_CNF_DIR"; fi
-if [[ -n "$HBASE_CNF_DIR"  ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HBASE_CNF_DIR";  fi
-if [[ -n "$HIVE_CNF_DIR"   ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HIVE_CNF_DIR";   fi
-if [[ -n "$SQ_CLASSPATH"   ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:";   fi
+if [[ "$TRAF_LOCAL_LITE" != "1" ]]; then
+  if [[ -n "$HADOOP_CNF_DIR" ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HADOOP_CNF_DIR"; fi
+  if [[ -n "$HBASE_CNF_DIR"  ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HBASE_CNF_DIR";  fi
+  if [[ -n "$HIVE_CNF_DIR"   ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HIVE_CNF_DIR";   fi
+  if [[ -n "$SQ_CLASSPATH"   ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:";   fi
+fi
 
 # set Trx in classpath only incase of workstation env.
 # In case of cluster, correct version of trx is already installed by
 # installer and hbase classpath already contains the correct trx jar.
 # In future, installer can put additional hints in bashrc to cleanup
 # and fine tune these adjustments for many other jars.
-if [[ -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
+if [[ "$TRAF_LOCAL_LITE" != "1" && -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
         SQ_CLASSPATH=${SQ_CLASSPATH}:${HBASE_TRXDIR}/${HBASE_TRX_JAR}
 fi
 
 
-SQ_CLASSPATH=${SQ_CLASSPATH}:\
+if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+  SQ_CLASSPATH=
+else
+  SQ_CLASSPATH=${SQ_CLASSPATH}:\
 $TRAF_HOME/export/lib/${DTM_COMMON_JAR}:\
 $TRAF_HOME/export/lib/${SQL_JAR}:\
 $TRAF_HOME/export/lib/${UTIL_JAR}:\
 $TRAF_HOME/export/lib/${JDBCT4_JAR}:\
 $TRAF_HOME/export/lib/jdbcT2.jar
+fi
 
 
 # Check whether the current shell environment changed from a previous execution of this
@@ -1052,5 +1087,3 @@ export SQ_PIDMAP=1
 #################################
 # End - Trafodion monitor process
 #################################
-
-
