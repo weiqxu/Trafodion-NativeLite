@@ -2,7 +2,7 @@
 
 > **Goal:** Make sqlci a single, self-contained process. The user runs `sqlci` and nothing else — no shell scripts, no companion processes, no generated config files.
 
-**Status:** Phase C complete — `SELECT 1 FROM (VALUES(1)) AS t(x);` works. C1, C2, C3 functionally done (commits pending). Next: Phase D verification.
+**Status:** Phases A/B/C complete and committed. `SELECT 1 FROM (VALUES(1)) AS t(x);` works. Next: Phase D verification.
 
 ---
 
@@ -176,7 +176,7 @@ This replaces what `sqenvcom.sh` does — but entirely in C++, no shell script i
 
 - [x] Step A1.1: Implement `LocalLiteConfig::init()` with executable-path-based discovery
 - [x] Step A1.2: Wire into main() before any path-dependent init
-- [ ] Step A1.3: Commit
+- [x] Step A1.3: Commit
 
 ---
 
@@ -204,7 +204,7 @@ Key defaults:
 - [x] Step A2.1: Identify all config keys accessed at sqlci startup
 - [x] Step A2.2: Add hardcoded defaults for each behind `#ifdef TRAF_LOCAL_LITE`
 - [x] Step A2.3: Verify with strace — no config file I/O
-- [ ] Step A2.4: Commit
+- [x] Step A2.4: Commit
 
 ---
 
@@ -222,7 +222,7 @@ Key defaults:
 - [x] Step B1.1: Guard file_init_attach behind TRAF_LOCAL_LITE
 - [x] Step B1.2: Guard file_mon_process_startup2 behind TRAF_LOCAL_LITE
 - [x] Step B1.3: Audit sqlci code path for any other MPI/monitor calls
-- [ ] Step B1.4: Commit (included with existing changes)
+- [x] Step B1.4: Commit (included with existing changes)
 
 ---
 
@@ -252,7 +252,7 @@ Build a list of all findings and classify as: already-guarded / needs-guard / ne
 - [x] Step B2.2: Grep for config file references (ms.env, sqconfig) in sqlci + cli code
 - [x] Step B2.3: Trace SqlciEnv constructor and init methods for hidden deps
 - [x] Step B2.4: Classify all findings into: benign / already-guarded / needs-fix
-- [ ] Step B2.5: Commit audit findings (or document them in a tracking issue)
+- [x] Step B2.5: Commit audit findings (or document them in a tracking issue)
 
 ---
 
@@ -272,7 +272,7 @@ sqlci starts without trying to open network connections. `strace -e network sqlc
 - [x] Step B3.1: Identify all service connection attempts at sqlci startup
 - [x] Step B3.2: Guard each behind TRAF_LOCAL_LITE with a no-op or early return
 - [x] Step B3.3: Verify with strace — no unexpected network calls
-- [ ] Step B3.4: Commit
+- [x] Step B3.4: Commit
 
 ---
 
@@ -293,7 +293,7 @@ sqlci -v    # prints version, exits 0
 
 - [x] Step C1.1: Verify sqlci -v works
 - [x] Step C1.2: Fix any crash/hang issues found
-- [ ] Step C1.3: Commit
+- [x] Step C1.3: Commit
 
 **Changes for C1:**
 
@@ -327,7 +327,7 @@ This exercises: SqlciEnv construction, CLI initialization, the main loop, and cl
 - [x] Step C2.1: Run `echo "exit;" | sqlci`
 - [x] Step C2.2: Fix any initialization failures
 - [x] Step C2.3: Verify clean shutdown (no atexit crashes)
-- [ ] Step C2.4: Commit
+- [x] Step C2.4: Commit
 
 **Changes for C2:**
 
@@ -362,7 +362,7 @@ If the optimizer/executor still has hard dependencies that aren't yet stubbed, t
 
 - [x] Step C3.1: Attempt a trivial SELECT
 - [x] Step C3.2: Diagnose and fix any failures
-- [ ] Step C3.3: Commit
+- [x] Step C3.3: Commit
 
 **Changes for C3:**
 
