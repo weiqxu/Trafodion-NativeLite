@@ -293,8 +293,12 @@ handler recognizes:
 - `INSERT INTO <name> VALUES (...)`
 - `INSERT INTO <name> VALUES (...), (...)`
 - `SELECT * FROM <name>`
-- `CREATE INDEX`, `UPDATE`, `DELETE`, `MERGE`, and `UPSERT` as explicit
-  unsupported statements
+- `CREATE INDEX`, `CREATE VIEW`, `CREATE SEQUENCE`, `CREATE SCHEMA`,
+  `CREATE SYNONYM`, `ALTER TABLE`, `TRUNCATE TABLE`, `UPDATE`, `DELETE`,
+  `MERGE`, and `UPSERT` as explicit unsupported statements
+- Native HBase/Hive/volatile table DDL as explicit unsupported statements
+- Table constraints/default/generated/identity column definitions as explicit
+  unsupported syntax
 
 Unqualified table names default to `TRAFODION.SEABASE.<name>`. Unquoted
 identifiers are uppercased; quoted identifiers preserve case.
@@ -388,12 +392,17 @@ above.
   - Acceptance check: `SELECT a FROM t WHERE a = 1;` runs through the normal
     SQL compiler/executor path and returns only matching projected columns.
 
-- [ ] **Define and enforce v1 unsupported object/type rules in the compiler.**
-  - Required unsupported cases include Hive/HBase native DDL, LOB columns,
-    indexes, constraints that require enforcement, transactions, `UPDATE`,
-    `DELETE`, and `MERGE`.
-  - Acceptance check: each unsupported case returns a stable local-lite
-    diagnostic before reaching HBase, HDFS, Java, or TMF code.
+- [x] **Define and enforce v1 unsupported object/type rules before CLI
+  prepare.**
+  - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp`.
+  - Current checks cover Hive/HBase/volatile table DDL, LOB-like column types,
+    indexes, views, sequences, schemas, synonyms, table constraints/defaults/
+    generated/identity columns, `ALTER TABLE`, `TRUNCATE TABLE`, `UPDATE`,
+    `DELETE`, `MERGE`, and `UPSERT`.
+  - This is intentionally enforced in the SQLCI pre-prepare handler while the
+    local table path is still an SQLCI-local bypass. When local table DDL moves
+    into the compiler DDL path, move these rules with it and keep the same
+    diagnostics before reaching HBase, HDFS, Java, or TMF code.
 
 - [x] **Add a focused regression test suite for local-lite RocksDB SQLCI.**
   - Implemented by extending `scripts/test-local-lite-rocksdb-sqlci.sh`.

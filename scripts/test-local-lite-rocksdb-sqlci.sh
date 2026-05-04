@@ -74,12 +74,22 @@ grep -q -- '--- 2 row(s) selected.' <<<"$select_output" ||
   fail "SELECT did not report two selected rows"
 
 unsupported_output=$(
-  printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nexit;\n" |
+  printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT PRIMARY KEY);\nexit;\n" |
     run_sqlci
 )
 grep -q 'UPDATE, DELETE, and MERGE are not supported in local-lite' <<<"$unsupported_output" ||
   fail "UPDATE/DELETE unsupported diagnostic missing"
 grep -q 'CREATE INDEX is not supported in local-lite' <<<"$unsupported_output" ||
   fail "CREATE INDEX unsupported diagnostic missing"
+grep -q 'UPSERT is not supported in local-lite v1; use INSERT' <<<"$unsupported_output" ||
+  fail "UPSERT unsupported diagnostic missing"
+grep -q 'CREATE VIEW is not supported in local-lite' <<<"$unsupported_output" ||
+  fail "CREATE VIEW unsupported diagnostic missing"
+grep -q 'ALTER TABLE is not supported in local-lite' <<<"$unsupported_output" ||
+  fail "ALTER TABLE unsupported diagnostic missing"
+grep -q 'TRUNCATE TABLE is not supported in local-lite' <<<"$unsupported_output" ||
+  fail "TRUNCATE TABLE unsupported diagnostic missing"
+grep -q 'local-lite table constraints are not supported' <<<"$unsupported_output" ||
+  fail "constraint unsupported diagnostic missing"
 
 echo "local-lite RocksDB sqlci smoke passed"

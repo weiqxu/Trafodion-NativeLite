@@ -284,6 +284,23 @@ static bool containsUnsupportedType(const std::string &type)
          u.find("ARRAY") != std::string::npos;
 }
 
+static bool containsUnsupportedConstraint(const std::string &definition)
+{
+  std::string u = upper(definition);
+  return startsWithWord(u, "CONSTRAINT") ||
+         startsWithWord(u, "PRIMARY KEY") ||
+         startsWithWord(u, "FOREIGN KEY") ||
+         startsWithWord(u, "UNIQUE") ||
+         startsWithWord(u, "CHECK") ||
+         u.find(" PRIMARY KEY") != std::string::npos ||
+         u.find(" UNIQUE") != std::string::npos ||
+         u.find(" REFERENCES") != std::string::npos ||
+         u.find(" CHECK") != std::string::npos ||
+         u.find(" DEFAULT") != std::string::npos ||
+         u.find(" GENERATED") != std::string::npos ||
+         u.find(" IDENTITY") != std::string::npos;
+}
+
 static uint64_t newObjectUid()
 {
   uint64_t uid = static_cast<uint64_t>(time(NULL));
@@ -311,6 +328,8 @@ static short processCreate(const std::string &sql, SqlciEnv *env)
   for (size_t i = 0; i < cols.size(); i++)
     {
       std::string col = trim(cols[i]);
+      if (containsUnsupportedConstraint(col))
+        return reportError(env, "local-lite table constraints are not supported");
       size_t sp = col.find_first_of(" \t\r\n");
       if (sp == std::string::npos)
         return reportError(env, "invalid column definition: " + col);
@@ -461,6 +480,43 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
   if (startsWithWord(sql, "CREATE INDEX"))
     {
       *retcode = reportError(sqlciEnv, "CREATE INDEX is not supported in local-lite");
+      return true;
+    }
+  if (startsWithWord(sql, "CREATE VIEW"))
+    {
+      *retcode = reportError(sqlciEnv, "CREATE VIEW is not supported in local-lite");
+      return true;
+    }
+  if (startsWithWord(sql, "CREATE SEQUENCE"))
+    {
+      *retcode = reportError(sqlciEnv, "CREATE SEQUENCE is not supported in local-lite");
+      return true;
+    }
+  if (startsWithWord(sql, "CREATE SCHEMA"))
+    {
+      *retcode = reportError(sqlciEnv, "CREATE SCHEMA is not supported in local-lite");
+      return true;
+    }
+  if (startsWithWord(sql, "CREATE SYNONYM"))
+    {
+      *retcode = reportError(sqlciEnv, "CREATE SYNONYM is not supported in local-lite");
+      return true;
+    }
+  if (startsWithWord(sql, "CREATE EXTERNAL TABLE") ||
+      startsWithWord(sql, "CREATE HBASE TABLE") ||
+      startsWithWord(sql, "CREATE VOLATILE TABLE"))
+    {
+      *retcode = reportError(sqlciEnv, "native HBase/Hive/volatile table DDL is not supported in local-lite");
+      return true;
+    }
+  if (startsWithWord(sql, "ALTER TABLE"))
+    {
+      *retcode = reportError(sqlciEnv, "ALTER TABLE is not supported in local-lite");
+      return true;
+    }
+  if (startsWithWord(sql, "TRUNCATE TABLE"))
+    {
+      *retcode = reportError(sqlciEnv, "TRUNCATE TABLE is not supported in local-lite");
       return true;
     }
   if (startsWithWord(sql, "UPDATE") ||
