@@ -10,10 +10,11 @@ The current useful runtime target is `sqlci` in local-lite mode. It can start as
 a single local process and execute SQL that stays inside the compiler/executor,
 for example `SELECT` statements over `VALUES` clauses.
 
-Local-lite is not a complete standalone database. It does not include a local
-storage engine. DDL, INSERT/UPDATE/DELETE, HBase-backed tables, HDFS, Hive,
-distributed execution, JDBC/ODBC connectivity, and transaction-service behavior
-remain outside the supported runtime surface.
+Local-lite is not a complete standalone database yet. It now includes a minimal
+RocksDB-backed local table path for `sqlci` table smoke tests, but the full
+Trafodion catalog, NATable loading path, optimizer integration, executor TCBs,
+transactions, indexes, privileges, JDBC/ODBC connectivity, and distributed
+execution remain outside the supported runtime surface.
 
 ## Current State
 
@@ -40,6 +41,23 @@ Implemented:
 - Script guards in `sqenvcom.sh`, `sqgen`, and `sqstart` when
   `TRAF_LOCAL_LITE=1`, so those legacy scripts skip Hadoop/HBase/ZooKeeper
   setup checks if they are used.
+- RocksDB development dependency detection for local-lite SQL builds. Missing
+  headers produce an explicit build error that names `librocksdb-dev`,
+  `rocksdb-devel`, and `ROCKSDB_INC_DIR`.
+- Minimal `sqlci` local table handler compiled into `libsqlcilib.so` only when
+  `TRAF_LOCAL_LITE=1`.
+- Minimal RocksDB catalog and table data store under
+  `TRAF_LOCAL_STORE_DIR` or `TRAF_VAR/localstore/rocksdb`.
+- Basic local table SQL in `sqlci`: `CREATE TABLE`, `DROP TABLE`,
+  `INSERT INTO ... VALUES (...)`, multi-tuple `INSERT INTO ... VALUES (...),
+  (...)`, and `SELECT * FROM <table>`.
+- Unsupported local table SQL diagnostics for `UPDATE`, `DELETE`, `MERGE`,
+  `UPSERT`, and `CREATE INDEX`.
+- HBase access TDBs reached through the old executor path now build a TCB that
+  emits an unsupported diagnostic instead of returning `NULL`.
+- Local-lite `make local-lite` no longer builds `make_monitor` or top-level SQF
+  `tools`, because the supported runtime is single-process `sqlci`, not the SQF
+  service stack.
 
 Known limits:
 
@@ -50,6 +68,15 @@ Known limits:
 - Local-lite `sqlci` still links internal Trafodion shared libraries and a small
   Seabed baseline. Monitor-specific paths are skipped or guarded, but Seabed
   libraries remain transitive dependencies.
+- The current RocksDB table path is an SQLCI-local bypass. It does not yet use
+  Trafodion's real DDL compiler, Seabase metadata bootstrap, NATable loader,
+  optimizer table descriptors, or executor row-expression machinery.
+- Local table rows are stored as text field values encoded by the SQLCI handler.
+  Type enforcement and expression evaluation are not yet equivalent to
+  Trafodion table execution.
+- `SELECT` over local RocksDB tables currently supports only
+  `SELECT * FROM <table>` without predicates, projection lists, joins,
+  grouping, ordering, or expressions.
 - Some disabled storage paths still exist as compatibility stubs. They should
   fail with unsupported-operation diagnostics when reached; they do not provide
   HDFS/Hive/HBase functionality.
@@ -68,9 +95,9 @@ scripts/install-local-lite-deps.sh -y
 ```
 
 The installer covers C/C++ build tools, MPICH, Thrift, log4cxx, protobuf,
-SQLite, curl, OpenSSL, readline, ncurses, bison, flex, Perl, Python, and native
-development headers. It intentionally does not install Java, Maven, Hadoop,
-HBase, or Hive.
+RocksDB, SQLite, curl, OpenSSL, readline, ncurses, bison, flex, Perl, Python,
+and native development headers. It intentionally does not install Java, Maven,
+Hadoop, HBase, or Hive.
 
 On systems where MPICH headers are not laid out like Trafodion's legacy tools
 tree, the installer creates a repository-local compatibility directory:
@@ -138,6 +165,7 @@ explicitly:
 ```bash
 export TRAF_HOME=$(pwd)/core/sqf
 export TRAF_LOCAL_LITE=1
+export TRAF_LOCAL_STORE_DIR=${TRAF_LOCAL_STORE_DIR:-/tmp/traf-local-lite-store}
 
 SQL_LIBS=$(pwd)/core/sql/lib/linux/64bit/debug
 SQF_LIBS=$(pwd)/core/sqf/export/lib64d
@@ -160,6 +188,33 @@ Example:
 >>exit;
 ```
 
+RocksDB local table example:
+
+```sql
+>>CREATE TABLE t(a INT, b VARCHAR(20));
+
+--- SQL operation complete.
+>>INSERT INTO t VALUES (1, 'one');
+
+--- 1 row(s) inserted.
+>>SELECT * FROM t;
+
+A B
+- -
+
+1 one
+
+--- 1 row(s) selected.
+>>DROP TABLE t;
+
+--- SQL operation complete.
+>>exit;
+```
+
+To verify persistence, use the same `TRAF_LOCAL_STORE_DIR` across two separate
+`sqlci` processes. Create and insert in the first process, then run
+`SELECT * FROM t;` in the second process.
+
 No `sqenv.sh`, `sqgen`, `sqstart`, monitor, DCS, REST, ZooKeeper, HBase, Hadoop,
 or Java process is required for this `sqlci` path.
 
@@ -167,17 +222,190 @@ Supported local-lite `sqlci` behavior:
 
 - SQL parsing, binding, normalization, optimization, and executor startup.
 - `SELECT` queries against `VALUES` clauses.
+- Minimal RocksDB local table DDL/DML handled directly by SQLCI:
+  `CREATE TABLE`, `DROP TABLE`, single-row and multi-row
+  `INSERT INTO ... VALUES (...)`, and `SELECT * FROM <table>`.
 - Basic scalar expressions, arithmetic, and string operations.
 - `exit;` and `quit;`.
 
 Unsupported behavior:
 
-- `CREATE TABLE`, `INSERT`, `UPDATE`, `DELETE`, and HBase-backed metadata/storage
-  operations.
+- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`,
+  predicates, projection lists, joins, grouping, ordering, expression
+  evaluation, type coercion, constraints, privileges, and transactions.
+- HBase-backed metadata/storage operations.
 - HDFS, HBase, Hive, ORC, bulk load/unload, and LOB storage access.
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
 - Distributed query execution.
 - Full transaction service behavior through TM/DTM/RMS.
+
+## RocksDB Local Store Implementation
+
+This section records the implementation state as of the current
+`local-lite-rocksdb` branch. Keep this section current when completing the plan
+items below.
+
+### Build Wiring
+
+- `core/sql/nskgmake/Makerules.linux` defines local-lite-only `ROCKSDB_INC`,
+  `ROCKSDB_LIB`, and a header probe for `rocksdb/c.h`.
+- `core/sql/nskgmake/executor/Makefile` compiles
+  `core/sql/localstore/LocalLiteRocksDBStore.cpp` into the executor library for
+  local-lite builds.
+- `core/sql/nskgmake/sqlcilib/Makefile` compiles
+  `core/sql/sqlci/LocalLiteSqlTable.cpp` and the RocksDB store into
+  `libsqlcilib.so` for local-lite builds.
+- `scripts/install-local-lite-deps.sh` installs `librocksdb-dev` on apt-based
+  systems and `rocksdb-devel` on rpm-based systems.
+- `core/sqf/Makefile` excludes `make_monitor` and top-level `tools` from
+  `LOCAL_LITE_COMPONENTS`.
+
+### Storage Layout
+
+The local store root is selected in this order:
+
+```text
+TRAF_LOCAL_STORE_DIR
+TRAF_VAR/localstore/rocksdb
+./localstore/rocksdb
+```
+
+The RocksDB directories are:
+
+```text
+<root>/catalog
+<root>/data/<catalog>/<schema>/<object_uid>
+```
+
+The catalog DB stores table metadata by fully qualified name and object UID.
+Each table has a dedicated RocksDB DB. Heap table keys are big-endian `uint64`
+row IDs. Values currently contain a simple version byte, a big-endian payload
+length, and the SQLCI-local encoded field payload.
+
+### SQLCI Handler
+
+`core/sql/sqlci/SqlCmd.cpp` calls
+`LocalLiteSqlTable_process()` before CLI prepare in local-lite builds. The
+handler recognizes:
+
+- `CREATE TABLE <name>(<column> <type>, ...)`
+- `DROP TABLE <name>`
+- `INSERT INTO <name> VALUES (...)`
+- `INSERT INTO <name> VALUES (...), (...)`
+- `SELECT * FROM <name>`
+- `CREATE INDEX`, `UPDATE`, `DELETE`, `MERGE`, and `UPSERT` as explicit
+  unsupported statements
+
+Unqualified table names default to `TRAFODION.SEABASE.<name>`. Unquoted
+identifiers are uppercased; quoted identifiers preserve case.
+
+### Executor Guard
+
+`core/sql/executor/LocalLiteStorageStubs.cpp` now builds
+`LocalLiteUnsupportedHbaseTcb` for `ExHbaseAccessTdb::build()` in local-lite
+instead of returning `NULL`. This prevents a vague crash if an old HBase access
+TDB path is reached before the full RocksDB executor path exists.
+
+## RocksDB Local Store Plan
+
+Use this list as the implementation tracker. When a task is completed, change
+its checkbox to `[x]` and add the implementation details to the relevant section
+above.
+
+- [x] **Build RocksDB dependency detection and link flags.**
+  - Implemented in `core/sql/nskgmake/Makerules.linux`.
+  - Verified by `scripts/test-local-lite-runtime.sh` and `make local-lite`.
+
+- [x] **Add native RocksDB catalog/table store module.**
+  - Implemented in `core/sql/localstore/LocalLiteRocksDBStore.h` and
+    `core/sql/localstore/LocalLiteRocksDBStore.cpp`.
+  - Current store supports create, drop, metadata lookup, row ID allocation,
+    row insert, and full row scan.
+
+- [x] **Wire SQLCI local table statements to RocksDB.**
+  - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp` and
+    `core/sql/sqlci/SqlCmd.cpp`.
+  - Current SQL support is `CREATE TABLE`, `DROP TABLE`,
+    single-row and multi-row `INSERT INTO ... VALUES (...)`, and
+    `SELECT * FROM <table>`.
+
+- [x] **Return explicit unsupported diagnostics for known unsupported local
+  table SQL.**
+  - Implemented for `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, and `CREATE INDEX`
+    in `core/sql/sqlci/LocalLiteSqlTable.cpp`.
+
+- [x] **Prevent old HBase access TDB build from returning `NULL`.**
+  - Implemented as `LocalLiteUnsupportedHbaseTcb` in
+    `core/sql/executor/LocalLiteStorageStubs.cpp`.
+
+- [x] **Avoid building unsupported SQF monitor/tools targets in local-lite.**
+  - Implemented by removing `make_monitor` and top-level `tools` from
+    `LOCAL_LITE_COMPONENTS` in `core/sqf/Makefile`.
+
+- [x] **Add automated smoke coverage for the current SQLCI RocksDB path.**
+  - Implemented in `scripts/test-local-lite-rocksdb-sqlci.sh`.
+  - The script verifies `librocksdb` linkage, absence of Java/Hadoop/HBase/
+    ZooKeeper dynamic library names, local table create/insert/select/drop, and
+    persistence across two `sqlci` processes.
+
+- [ ] **Move local table DDL from SQLCI string parsing into the compiler DDL
+  path.**
+  - Target files to investigate first:
+    `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp`,
+    `core/sql/sqlcomp/CmpSeabaseDDLcommon.cpp`, and
+    `core/sql/sqlci/LocalLiteSqlTable.cpp`.
+  - Acceptance check: `CREATE TABLE` in local-lite does not start TMF or touch
+    Seabase/HBase metadata, and catalog metadata is written through a compiler
+    local catalog interface instead of SQLCI ad hoc parsing.
+
+- [ ] **Add NATable loading from the local catalog.**
+  - Target files to investigate first: `core/sql/sqlcat/TrafDesc.cpp`,
+    `core/sql/sqlcat/desc.h`, `core/sql/sqlcomp/CmpSeabaseDDL.h`, and the
+    NATable construction path in `core/sql/sqlcomp`.
+  - Acceptance check: local-lite can bind a local RocksDB table through the
+    regular compiler metadata path instead of the SQLCI pre-prepare bypass.
+
+- [ ] **Replace the SQLCI `SELECT *` bypass with an executor TCB for local table
+  scans.**
+  - Target files to investigate first:
+    `core/sql/executor/ExHbaseAccess.cpp`,
+    `core/sql/executor/LocalLiteStorageStubs.cpp`,
+    `core/sql/comexe/ComTdbHbaseAccess.h`, and
+    `core/sql/generator/GenRelScan.cpp`.
+  - Acceptance check: generated table access plans instantiate a local RocksDB
+    scan TCB and return rows through normal executor queues.
+
+- [ ] **Use Trafodion expression evaluation and binary row layout for local
+  table inserts/scans.**
+  - Target files to investigate first: `core/sql/exp`, `core/sql/comexe`, and
+    row conversion code used by existing HBase access.
+  - Acceptance check: integer, decimal, floating point, `CHAR`, `VARCHAR`,
+    `DATE`, `TIME`, and `TIMESTAMP` values are encoded with a versioned binary
+    row format and decoded through executor expressions.
+
+- [ ] **Implement predicates and projection for local RocksDB scans.**
+  - Depends on the local scan TCB and expression-backed row format.
+  - Acceptance check: `SELECT a FROM t WHERE a = 1;` runs through the normal
+    SQL compiler/executor path and returns only matching projected columns.
+
+- [ ] **Define and enforce v1 unsupported object/type rules in the compiler.**
+  - Required unsupported cases include Hive/HBase native DDL, LOB columns,
+    indexes, constraints that require enforcement, transactions, `UPDATE`,
+    `DELETE`, and `MERGE`.
+  - Acceptance check: each unsupported case returns a stable local-lite
+    diagnostic before reaching HBase, HDFS, Java, or TMF code.
+
+- [x] **Add a focused regression test suite for local-lite RocksDB SQLCI.**
+  - Implemented by extending `scripts/test-local-lite-rocksdb-sqlci.sh`.
+  - Current coverage includes create/drop, duplicate table errors, missing
+    table errors, insert column count errors, unsupported LOB type diagnostics,
+    multi-row inserts, restart persistence, unsupported SQL, `librocksdb`
+    linkage, and Java/Hadoop/HBase/ZooKeeper dynamic dependency checks.
+
+- [ ] **Document operational usage after the full local table path is stable.**
+  - Update this document with final environment variables, supported SQL matrix,
+    data directory cleanup procedure, and troubleshooting for accidentally
+    running an old `sqlci` or old `libsqlcilib.so`.
 
 ## Legacy Scripts
 
@@ -251,14 +479,20 @@ printf 'exit;\n' | TRAF_HOME=$(pwd)/core/sqf TRAF_LOCAL_LITE=1 LD_LIBRARY_PATH=$
 printf 'SELECT 1 FROM (VALUES(1)) AS t(x);\nexit;\n' | TRAF_HOME=$(pwd)/core/sqf TRAF_LOCAL_LITE=1 LD_LIBRARY_PATH=$SQL_LIBS:$SQF_LIBS $SQL_LIBS/sqlci
 ```
 
+Current local-lite static and RocksDB SQLCI smoke checks:
+
+```bash
+bash scripts/test-local-lite-runtime.sh
+bash scripts/test-local-lite-rocksdb-sqlci.sh
+```
+
 ## Design Rules
 
 - Keep the full Trafodion build unchanged unless `TRAF_LOCAL_LITE=1` is set.
 - Keep all local-lite behavior compile-time gated by `TRAF_LOCAL_LITE`.
 - Prefer small native stubs over compiling Java/Hadoop-backed code.
-- Do not add a local storage engine under the local-lite name until that work is
-  intentionally designed.
+- Keep the RocksDB local store native-only and single-process until the
+  compiler, executor, and transaction boundaries are explicitly designed.
 - Disabled HDFS/Hive/HBase paths must fail explicitly.
 - Treat `sqlci` standalone as the first supported runtime milestone; do not
   imply `mxosrvr`, DCS, REST, or the full SQF service stack is standalone.
-

@@ -62,6 +62,9 @@
 #include "SqlciError.h"
 #include "SQLCLIdev.h"
 #include "sqlcmd.h"
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteSqlTable.h"
+#endif
 #include "sql_id.h"
 #include "ComSqlId.h"
 #include "ComRtUtils.h"
@@ -2985,6 +2988,15 @@ short DML::process(SqlciEnv * sqlci_env)
   if (!isResultSet)
     HandleCLIErrorInit();
 
+#ifdef TRAF_LOCAL_LITE
+  if (!isResultSet)
+    {
+      short localLiteRetcode = 0;
+      if (LocalLiteSqlTable_process(get_sql_stmt(), sqlci_env, &localLiteRetcode))
+        return localLiteRetcode;
+    }
+#endif
+
   char dml_stmt_name[50];
   // if this_stmt_name is not NULL, then this method was invoked by
   // an sqlci internal method (like stats...etc).
@@ -4169,4 +4181,3 @@ short Quiesce::process(SqlciEnv *sqlci_env)
        << endl << endl;
   return 0;
 }
-

@@ -136,6 +136,7 @@ install_packages() {
         libssl-dev zlib1g-dev libevent-dev libboost-dev libsqlite3-dev sqlite3
         libprotobuf-dev protobuf-compiler
         liblog4cxx-dev libthrift-dev thrift-compiler
+        librocksdb-dev
         mpich libmpich-dev
       )
       echo "Package manager: apt-get"
@@ -153,6 +154,7 @@ install_packages() {
         zlib-devel libevent-devel boost-devel sqlite-devel sqlite
         protobuf-devel protobuf-compiler
         log4cxx-devel thrift-devel thrift
+        rocksdb-devel
         mpich mpich-devel
       )
       echo "Package manager: $manager"
@@ -161,7 +163,7 @@ install_packages() {
       run "${sudo_prefix[@]}" "$manager" install -y "${packages[@]}"
       ;;
     *)
-      echo "ERROR: unsupported package manager. Install MPICH, Thrift, log4cxx, protobuf, SQLite, curl, OpenSSL, readline, ncurses, bison, flex, and C/C++ build tools manually." >&2
+      echo "ERROR: unsupported package manager. Install MPICH, Thrift, log4cxx, protobuf, RocksDB, SQLite, curl, OpenSSL, readline, ncurses, bison, flex, and C/C++ build tools manually." >&2
       exit 1
       ;;
   esac

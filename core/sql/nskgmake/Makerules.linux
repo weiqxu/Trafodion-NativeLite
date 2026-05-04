@@ -141,17 +141,30 @@ LOG4CXX_INC=-I$(LOG4CXX_INC_DIR) -I$(LOG4CXX_INC_DIR)/log4cxx
 LOG4CXX_LIB=-llog4cxx
 LOG4CXX_SO=liblog4cxx*.so
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+ROCKSDB_INC_DIR ?= /usr/include
+ROCKSDB_LIB_DIR ?=
+ROCKSDB_INC := -I$(ROCKSDB_INC_DIR)
+ROCKSDB_LIB := $(if $(ROCKSDB_LIB_DIR),-L$(ROCKSDB_LIB_DIR)) -lrocksdb
+ROCKSDB_HEADER := $(firstword \
+	$(wildcard $(ROCKSDB_INC_DIR)/rocksdb/c.h) \
+	$(wildcard /usr/local/include/rocksdb/c.h))
+ifeq ($(ROCKSDB_HEADER),)
+$(error TRAF_LOCAL_LITE RocksDB local store requires RocksDB development headers. Install librocksdb-dev/rocksdb-devel or set ROCKSDB_INC_DIR=/path/to/include)
+endif
+endif
+
 # for now, include these libs (copied to our local lib dir) everywhere
 ifeq ($(TRAF_LOCAL_LITE),1)
 # Internal SQL libraries included so BIND_NOW can resolve transitive
 # symbols in executables.  Not used in DLL links (see EXTERN_SYS_LIBS).
-GLOBAL_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) \
+GLOBAL_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) $(ROCKSDB_LIB) \
 	-lcrypto -lcommon -lcli -ltdm_sqlerrormsg \
 	-ltdm_sqlexp -ltdm_sqlexport -larkcmplib -lqmscommon \
 	-lsort -lstfs -lsm -ltdm_sqllangman -lsqauth -lsqstatesb \
 	-lsbutil -lsbfs -lsbms -lwin -lstmlib -luuid -lz
 # External/SQF libraries only — safe for DLL links (no build-ordering issues).
-EXTERN_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) \
+EXTERN_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) $(ROCKSDB_LIB) \
 	-lcrypto -lstfs -lsm -lsqauth -lsqstatesb \
 	-lsbutil -lsbfs -lsbms -lwin -lstmlib -luuid -lz
 else
@@ -225,6 +238,10 @@ SYS_INCLUDES += -I$(TRAF_HOME)/inc \
 	-I$(TRAF_HOME)/export/include \
 	-I$(PROTOBUFS_INC) \
 	$(THRIFT_INC) $(LOG4CXX_INC) $(LIBCURL_INC)
+
+ifeq ($(TRAF_LOCAL_LITE),1)
+SYS_INCLUDES += $(ROCKSDB_INC)
+endif
 
 ifneq ($(TRAF_LOCAL_LITE),1)
 SYS_INCLUDES += -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux

@@ -42,7 +42,7 @@ SQL_W=$(TRAF_HOME)/../sql
 
 MISC = win misc_sec
 SQ_COMPONENTS := make_sqevlog seabed stfs trafconf $(MISC) tm $(SEAMONSTER_TARGET) make_sql make_monitor tools hbase_utilities
-LOCAL_LITE_COMPONENTS := make_sqevlog seabed stfs trafconf $(MISC) tm $(SEAMONSTER_TARGET) make_sql_local_lite make_monitor tools
+LOCAL_LITE_COMPONENTS := make_sqevlog seabed stfs trafconf $(MISC) tm $(SEAMONSTER_TARGET) make_sql_local_lite
 
 .PHONY: $(SQ_COMPONENTS) local-lite make_sql_local_lite
 

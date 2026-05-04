@@ -135,7 +135,8 @@ CPPSRC := $(filter-out \
 	SequenceFileReader.cpp \
 	OrcFileReader.cpp,$(CPPSRC))
 CPPSRC += LocalLiteStorageStubs.cpp \
-	LocalLiteHiveHookStubs.cpp
+	LocalLiteHiveHookStubs.cpp \
+	LocalLiteRocksDBStore.cpp
 DEFS += -DTRAF_LOCAL_LITE
 endif
 
@@ -164,3 +165,6 @@ endif
 
 SYS_LIBS := -lrt -lpthread
 SRCPATH := bin executor runtimestats porting_layer qmscommon
+ifeq ($(TRAF_LOCAL_LITE),1)
+SRCPATH += localstore
+endif
