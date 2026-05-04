@@ -218,6 +218,62 @@ To verify persistence, use the same `TRAF_LOCAL_STORE_DIR` across two separate
 No `sqenv.sh`, `sqgen`, `sqstart`, monitor, DCS, REST, ZooKeeper, HBase, Hadoop,
 or Java process is required for this `sqlci` path.
 
+## Operational Usage
+
+Use the built `sqlci` and matching local-lite SQL libraries from the same
+worktree. In a development build, prefer an explicit shell setup:
+
+```bash
+cd /path/to/trafodion
+
+export SQL_LIBS=$PWD/core/sql/lib/linux/64bit/debug
+export SQF_LIBS=$PWD/core/sqf/export/lib64d
+export TRAF_HOME=$PWD/core/sqf
+export TRAF_LOCAL_LITE=1
+export TRAF_LOCAL_STORE_DIR=${TRAF_LOCAL_STORE_DIR:-/tmp/traf-local-lite-store}
+export LD_LIBRARY_PATH=$SQL_LIBS:$SQF_LIBS:${LD_LIBRARY_PATH:-}
+
+$SQL_LIBS/sqlci
+```
+
+The local RocksDB catalog and table data can be removed by deleting the selected
+store directory when no `sqlci` process is using it:
+
+```bash
+rm -rf "$TRAF_LOCAL_STORE_DIR"
+```
+
+If `TRAF_LOCAL_STORE_DIR` is unset, local-lite uses
+`$TRAF_VAR/localstore/rocksdb` when `TRAF_VAR` is set, otherwise
+`./localstore/rocksdb` relative to the process working directory.
+
+### Troubleshooting
+
+If `CREATE TABLE` reports a TMF error such as:
+
+```text
+ERROR[8604] Transaction subsystem TMF returned error 82 while starting a transaction.
+```
+
+then SQLCI did not use the local-lite RocksDB handler. The usual causes are:
+
+- Running `sqlci` from a workspace that does not contain this implementation.
+- Loading an older `libsqlcilib.so` because `LD_LIBRARY_PATH` points at another
+  build first.
+- Rebuilding without `TRAF_LOCAL_LITE=1`.
+
+Check the binary and library resolution:
+
+```bash
+which sqlci || true
+ldd "$SQL_LIBS/sqlci" | grep libsqlcilib
+ldd "$SQL_LIBS/sqlci" | grep librocksdb
+```
+
+The resolved `libsqlcilib.so` should come from the same
+`core/sql/lib/linux/64bit/debug` directory as `$SQL_LIBS/sqlci`, and `librocksdb`
+should be present.
+
 Supported local-lite `sqlci` behavior:
 
 - SQL parsing, binding, normalization, optimization, and executor startup.
@@ -411,10 +467,12 @@ above.
     multi-row inserts, restart persistence, unsupported SQL, `librocksdb`
     linkage, and Java/Hadoop/HBase/ZooKeeper dynamic dependency checks.
 
-- [ ] **Document operational usage after the full local table path is stable.**
-  - Update this document with final environment variables, supported SQL matrix,
-    data directory cleanup procedure, and troubleshooting for accidentally
-    running an old `sqlci` or old `libsqlcilib.so`.
+- [x] **Document operational usage for the current SQLCI RocksDB path.**
+  - Added environment setup, supported SQL examples, data directory cleanup, and
+    troubleshooting for accidentally running an old `sqlci` or old
+    `libsqlcilib.so`.
+  - Revisit this section after the full compiler/NATable/executor table path is
+    stable.
 
 ## Legacy Scripts
 
