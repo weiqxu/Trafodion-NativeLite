@@ -420,6 +420,36 @@ Use this list as the implementation tracker. When a task is completed, change
 its checkbox to `[x]` and add the implementation details to the relevant section
 above.
 
+### Current Task Status
+
+Last updated after commit `96f55bcaa` on the `local-lite-rocksdb` branch.
+
+Completed:
+
+- RocksDB dependency detection and local-lite link flags.
+- Native RocksDB catalog/table store module.
+- SQLCI local table DML/scan bypass for `INSERT INTO ... VALUES (...)` and
+  `SELECT * FROM <table>`.
+- Explicit unsupported diagnostics for known local-lite unsupported SQL.
+- HBase access TDB guard that returns an unsupported TCB instead of `NULL`.
+- Local-lite SQF monitor/tools build trimming.
+- SQLCI RocksDB smoke/regression coverage.
+- Compiler-routed local table `CREATE TABLE` and `DROP TABLE`, including TMF
+  avoidance and visible compiler DDL diagnostics.
+- v1 unsupported object/type rules split between SQLCI pre-prepare checks and
+  compiler DDL checks.
+- Operational usage documentation for the current SQLCI/RocksDB path.
+
+Remaining, in suggested implementation order:
+
+1. Add NATable loading from the local catalog.
+2. Replace the SQLCI `SELECT *` bypass with a local RocksDB executor scan TCB.
+3. Use Trafodion expression evaluation and a binary row layout for local table
+   inserts/scans.
+4. Implement predicates and projection for local RocksDB scans.
+
+The next task to start is **Add NATable loading from the local catalog**.
+
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
   - Verified by `scripts/test-local-lite-runtime.sh` and `make local-lite`.
@@ -433,9 +463,10 @@ above.
 - [x] **Wire SQLCI local table statements to RocksDB.**
   - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp` and
     `core/sql/sqlci/SqlCmd.cpp`.
-  - Current SQL support is `CREATE TABLE`, `DROP TABLE`,
-    single-row and multi-row `INSERT INTO ... VALUES (...)`, and
-    `SELECT * FROM <table>`.
+  - Current SQLCI-local support is single-row and multi-row
+    `INSERT INTO ... VALUES (...)` and `SELECT * FROM <table>`.
+  - `CREATE TABLE` and `DROP TABLE` were moved out of this SQLCI handler and
+    now use the compiler DDL path.
 
 - [x] **Return explicit unsupported diagnostics for known unsupported local
   table SQL.**
@@ -504,15 +535,17 @@ above.
 
 - [x] **Define and enforce v1 unsupported object/type rules before CLI
   prepare.**
-  - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp`.
+  - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp` for statements that
+    still use the SQLCI pre-prepare bypass, and in
+    `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp` for compiler-routed local table
+    DDL.
   - Current checks cover Hive/HBase/volatile table DDL, LOB-like column types,
     indexes, views, sequences, schemas, synonyms, table constraints/defaults/
     generated/identity columns, `ALTER TABLE`, `TRUNCATE TABLE`, `UPDATE`,
     `DELETE`, `MERGE`, and `UPSERT`.
-  - This is intentionally enforced in the SQLCI pre-prepare handler while the
-    local table path is still an SQLCI-local bypass. When local table DDL moves
-    into the compiler DDL path, move these rules with it and keep the same
-    diagnostics before reaching HBase, HDFS, Java, or TMF code.
+  - The DDL-related rules for local `CREATE TABLE` and `DROP TABLE` now live in
+    the compiler path, so they are enforced before reaching HBase, HDFS, Java,
+    or TMF code.
 
 - [x] **Add a focused regression test suite for local-lite RocksDB SQLCI.**
   - Implemented by extending `scripts/test-local-lite-rocksdb-sqlci.sh`.
