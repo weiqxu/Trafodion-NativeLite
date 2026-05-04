@@ -247,6 +247,20 @@ short ExDDLTcb::work()
  	    }
 	}
 
+#ifdef TRAF_LOCAL_LITE
+      if (!currContext->isEmbeddedArkcmpInitialized())
+        {
+          Int32 embeddedArkcmpSetup = currContext->switchToCmpContext((Int32)0);
+          if (embeddedArkcmpSetup == 0)
+            currContext->setEmbeddedArkcmpIsInitialized(TRUE);
+          else
+            currContext->setEmbeddedArkcmpIsInitialized(FALSE);
+        }
+      if (currContext->isEmbeddedArkcmpInitialized() &&
+          currContext->getEmbeddedArkcmpContext())
+        cmpCurrentContext = currContext->getEmbeddedArkcmpContext();
+#endif
+
       // Call either the embedded arkcmp, if exists, or external arkcmp
       // but not both
       if ( currContext->isEmbeddedArkcmpInitialized() &&
@@ -274,11 +288,27 @@ short ExDDLTcb::work()
             currContext->exHeap()->deallocateMemory((void*)dummyReply);
           if (cpStatus == ExSqlComp::SUCCESS)
             {
+#ifdef TRAF_LOCAL_LITE
+              if (currContext->getDiagsArea())
+                currContext->getDiagsArea()->clear();
+              if (cpDiagsArea &&
+                  (cpDiagsArea->getNumber(DgSqlCode::WARNING_) == 0) &&
+                  (cpDiagsArea->getNumber(DgSqlCode::ERROR_) == 0))
+                {
+                  cpDiagsArea->decrRefCount();
+                  cpDiagsArea = NULL;
+                }
+#endif
               goto endOfData;
             }
           else
             {
               handleErrors(pentry_down, cpDiagsArea, cpStatus);
+              if (cpDiagsArea)
+                {
+                  cpDiagsArea->decrRefCount();
+                  cpDiagsArea = NULL;
+                }
               //Don't proceed if its an error.
               if (cpStatus == ExSqlComp::ERROR) 
                  goto endOfData;
@@ -2076,4 +2106,3 @@ ExProcessInMemoryTablePrivateState::ExProcessInMemoryTablePrivateState()
 ExProcessInMemoryTablePrivateState::~ExProcessInMemoryTablePrivateState()
 {
 };
-

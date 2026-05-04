@@ -2905,6 +2905,14 @@ RelExpr * DDLExpr::preCodeGen(Generator * generator,
   else
     xnNeeded() = FALSE;
 
+#ifdef TRAF_LOCAL_LITE
+  ExprNode * ddlNode = getDDLNode();
+  if (ddlNode &&
+      ((ddlNode->getOperatorType() == DDL_CREATE_TABLE) ||
+       (ddlNode->getOperatorType() == DDL_DROP_TABLE)))
+    xnNeeded() = FALSE;
+#endif
+
   markAsPreCodeGenned();
   
   // Done.

@@ -8682,9 +8682,19 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   ExeCliInterface cliInterface(STMTHEAP, 0, NULL,
     CmpCommon::context()->sqlSession()->getParentQid());
 
+#ifdef TRAF_LOCAL_LITE
+  NABoolean localLiteLocalTableDDL =
+    (ddlNode &&
+     ((ddlNode->getOperatorType() == DDL_CREATE_TABLE) ||
+      (ddlNode->getOperatorType() == DDL_DROP_TABLE)));
+#else
+  NABoolean localLiteLocalTableDDL = FALSE;
+#endif
+
   // error accessing hbase. Return.
   if ((CmpCommon::context()->isUninitializedSeabase()) &&
-      (CmpCommon::context()->uninitializedSeabaseErrNum() == -TRAF_HBASE_ACCESS_ERROR))
+      (CmpCommon::context()->uninitializedSeabaseErrNum() == -TRAF_HBASE_ACCESS_ERROR) &&
+      (NOT localLiteLocalTableDDL))
     {
       *CmpCommon::diags() << DgSqlCode(CmpCommon::context()->uninitializedSeabaseErrNum())
                           << DgInt0(CmpCommon::context()->hbaseErrNum())
@@ -8717,6 +8727,9 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   if (dws && dws->getInitTraf())
     ignoreUninitTrafErr = TRUE;
 
+  if (localLiteLocalTableDDL)
+    ignoreUninitTrafErr = TRUE;
+
   if ((CmpCommon::context()->isUninitializedSeabase()) &&
       (NOT ignoreUninitTrafErr))
     {
@@ -8724,7 +8737,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
       return -1;
     }
 
-  if (sendAllControlsAndFlags())
+  if ((NOT localLiteLocalTableDDL) && sendAllControlsAndFlags())
     {
       CMPASSERT(0);
       return -1;
@@ -8734,6 +8747,9 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   NABoolean ddlXns = FALSE;
   if (ddlExpr && ddlExpr->ddlXnsInfo(ddlXns, startXn))
     return -1;
+
+  if (localLiteLocalTableDDL)
+    startXn = FALSE;
   
   if (startXn)
     {
@@ -8888,7 +8904,10 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
           // create hbase table
           StmtDDLCreateTable * createTableParseNode =
             ddlNode->castToStmtDDLNode()->castToStmtDDLCreateTable();
-          
+
+#ifdef TRAF_LOCAL_LITE
+          createSeabaseTable(createTableParseNode, currCatName, currSchName);
+#else
           if ((createTableParseNode->getAddConstraintUniqueArray().entries() > 0) ||
                    (createTableParseNode->getAddConstraintRIArray().entries() > 0) ||
                    (createTableParseNode->getAddConstraintCheckArray().entries() > 0))
@@ -8948,6 +8967,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                     }
                 }     
             }
+#endif
         }
       else if (ddlNode->getOperatorType() == DDL_CREATE_HBASE_TABLE)
         {

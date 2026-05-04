@@ -48,9 +48,9 @@ Implemented:
   `TRAF_LOCAL_LITE=1`.
 - Minimal RocksDB catalog and table data store under
   `TRAF_LOCAL_STORE_DIR` or `TRAF_VAR/localstore/rocksdb`.
-- Basic local table SQL in `sqlci`: `CREATE TABLE`, `DROP TABLE`,
-  `INSERT INTO ... VALUES (...)`, multi-tuple `INSERT INTO ... VALUES (...),
-  (...)`, and `SELECT * FROM <table>`.
+- Basic local table SQL in `sqlci`: compiler-routed `CREATE TABLE` and
+  `DROP TABLE`, plus SQLCI-local `INSERT INTO ... VALUES (...)`, multi-tuple
+  `INSERT INTO ... VALUES (...), (...)`, and `SELECT * FROM <table>`.
 - Unsupported local table SQL diagnostics for `UPDATE`, `DELETE`, `MERGE`,
   `UPSERT`, and `CREATE INDEX`.
 - HBase access TDBs reached through the old executor path now build a TCB that
@@ -68,9 +68,10 @@ Known limits:
 - Local-lite `sqlci` still links internal Trafodion shared libraries and a small
   Seabed baseline. Monitor-specific paths are skipped or guarded, but Seabed
   libraries remain transitive dependencies.
-- The current RocksDB table path is an SQLCI-local bypass. It does not yet use
-  Trafodion's real DDL compiler, Seabase metadata bootstrap, NATable loader,
-  optimizer table descriptors, or executor row-expression machinery.
+- The current RocksDB DDL path uses the compiler DDL entry point for
+  `CREATE TABLE` and `DROP TABLE`, but local table DML and scans are still an
+  SQLCI-local bypass. It does not yet use Trafodion's NATable loader, optimizer
+  table descriptors, or executor row-expression machinery.
 - Local table rows are stored as text field values encoded by the SQLCI handler.
   Type enforcement and expression evaluation are not yet equivalent to
   Trafodion table execution.
@@ -278,9 +279,10 @@ Supported local-lite `sqlci` behavior:
 
 - SQL parsing, binding, normalization, optimization, and executor startup.
 - `SELECT` queries against `VALUES` clauses.
-- Minimal RocksDB local table DDL/DML handled directly by SQLCI:
-  `CREATE TABLE`, `DROP TABLE`, single-row and multi-row
-  `INSERT INTO ... VALUES (...)`, and `SELECT * FROM <table>`.
+- Minimal RocksDB local table support: `CREATE TABLE` and `DROP TABLE` route
+  through the compiler DDL path; single-row and multi-row
+  `INSERT INTO ... VALUES (...)` and `SELECT * FROM <table>` are still handled
+  by the SQLCI-local table path.
 - Basic scalar expressions, arithmetic, and string operations.
 - `exit;` and `quit;`.
 
@@ -311,6 +313,9 @@ items below.
 - `core/sql/nskgmake/sqlcilib/Makefile` compiles
   `core/sql/sqlci/LocalLiteSqlTable.cpp` and the RocksDB store into
   `libsqlcilib.so` for local-lite builds.
+- `core/sql/nskgmake/sqlcomp/Makefile` compiles the RocksDB store into
+  `libsqlcomp.so` for local-lite builds, so compiler DDL can write local
+  catalog metadata without linking Java, HBase, or HDFS code.
 - `scripts/install-local-lite-deps.sh` installs `librocksdb-dev` on apt-based
   systems and `rocksdb-devel` on rpm-based systems.
 - `core/sqf/Makefile` excludes `make_monitor` and top-level `tools` from
@@ -338,14 +343,54 @@ Each table has a dedicated RocksDB DB. Heap table keys are big-endian `uint64`
 row IDs. Values currently contain a simple version byte, a big-endian payload
 length, and the SQLCI-local encoded field payload.
 
+### Compiler DDL Path
+
+`CREATE TABLE` and `DROP TABLE` now use the compiler DDL path in local-lite
+builds instead of SQLCI string parsing.
+
+- `core/sql/sqlci/LocalLiteSqlTable.cpp` no longer intercepts `CREATE TABLE`
+  or `DROP TABLE`. Those statements proceed to CLI prepare/execute.
+- `core/sql/generator/GenPreCode.cpp` marks local-lite table CREATE/DROP as not
+  needing a transaction.
+- `core/sql/generator/GenRelMisc.cpp` marks local-lite table CREATE/DROP DDL
+  TDBs as HBase DDL. This reuses the existing embedded compiler
+  `PROCESSDDL` executor path without starting TMF.
+- `core/sql/executor/ex_ddl.cpp` initializes embedded arkcmp when needed in
+  local-lite mode, restores the embedded compiler context before `PROCESSDDL`,
+  and drops stale empty diagnostics after successful local DDL.
+- `core/sql/arkcmp/CmpStatement.cpp` binds the direct
+  `StmtDDLCreateTable`/`StmtDDLDropTable` node for local-lite table DDL and
+  calls `CmpSeabaseDDL::executeSeabaseDDL()` directly. This avoids the full
+  `DDLExpr::bindNode()` wrapper path that expects initialized Seabase/HBase
+  services. Local-lite DDL business errors are returned as embedded compiler
+  diagnostics on the SUCCESS return path because the ERROR return path is
+  wrapped by the generic compiler-server failure before SQLCI displays the
+  original diagnostic.
+- `core/sql/sqlcomp/CmpSeabaseDDLcommon.cpp` recognizes local-lite local table
+  DDL, skips the uninitialized Seabase/HBase guard, skips
+  `sendAllControlsAndFlags()`, suppresses DDL transaction start, and dispatches
+  CREATE TABLE directly to the local table branch.
+- `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp` implements local-lite
+  `localLiteCreateTable()` and `localLiteDropTable()` helpers. They apply
+  catalog/schema defaults, reject unsupported constraints, defaults, physical
+  attributes, Hive options, LOB-like types, and `DROP TABLE CASCADE`, and then
+  write or remove table metadata through `LocalLiteRocksDBStore`.
+
+The acceptance symptom fixed by this path is:
+
+```text
+ERROR[8604] Transaction subsystem TMF returned error 82 while starting a transaction.
+```
+
+Local-lite table DDL should now complete without TMF, Seabase metadata bootstrap,
+HBase, Hadoop, ZooKeeper, or Java runtime services.
+
 ### SQLCI Handler
 
 `core/sql/sqlci/SqlCmd.cpp` calls
 `LocalLiteSqlTable_process()` before CLI prepare in local-lite builds. The
 handler recognizes:
 
-- `CREATE TABLE <name>(<column> <type>, ...)`
-- `DROP TABLE <name>`
 - `INSERT INTO <name> VALUES (...)`
 - `INSERT INTO <name> VALUES (...), (...)`
 - `SELECT * FROM <name>`
@@ -358,6 +403,9 @@ handler recognizes:
 
 Unqualified table names default to `TRAFODION.SEABASE.<name>`. Unquoted
 identifiers are uppercased; quoted identifiers preserve case.
+
+`CREATE TABLE` and `DROP TABLE` intentionally fall through this handler and use
+the compiler DDL path described above.
 
 ### Executor Guard
 
@@ -408,15 +456,21 @@ above.
     ZooKeeper dynamic library names, local table create/insert/select/drop, and
     persistence across two `sqlci` processes.
 
-- [ ] **Move local table DDL from SQLCI string parsing into the compiler DDL
+- [x] **Move local table DDL from SQLCI string parsing into the compiler DDL
   path.**
-  - Target files to investigate first:
-    `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp`,
+  - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp`,
+    `core/sql/generator/GenPreCode.cpp`, `core/sql/generator/GenRelMisc.cpp`,
+    `core/sql/executor/ex_ddl.cpp`, `core/sql/arkcmp/CmpStatement.cpp`,
     `core/sql/sqlcomp/CmpSeabaseDDLcommon.cpp`, and
-    `core/sql/sqlci/LocalLiteSqlTable.cpp`.
-  - Acceptance check: `CREATE TABLE` in local-lite does not start TMF or touch
-    Seabase/HBase metadata, and catalog metadata is written through a compiler
-    local catalog interface instead of SQLCI ad hoc parsing.
+    `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp`.
+  - CREATE/DROP now fall through SQLCI, execute through embedded compiler
+    `PROCESSDDL`, avoid TMF startup, and write/drop RocksDB catalog metadata
+    from sqlcomp.
+  - Duplicate CREATE, unsupported constraints/defaults, unsupported LOB-like
+    types, and unsupported DROP CASCADE are compiler DDL diagnostics.
+  - Embedded compiler context restoration and SUCCESS-with-error-diagnostics
+    propagation keep local-lite DDL errors visible in SQLCI instead of being
+    masked by generic `-2013`/`-8822` compiler-server errors.
 
 - [ ] **Add NATable loading from the local catalog.**
   - Target files to investigate first: `core/sql/sqlcat/TrafDesc.cpp`,

@@ -13,10 +13,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <unistd.h>
 
 #include <string>
 #include <vector>
@@ -275,94 +272,6 @@ static short reportError(SqlciEnv *env, const std::string &message)
   return 1;
 }
 
-static bool containsUnsupportedType(const std::string &type)
-{
-  std::string u = upper(type);
-  return u.find("LOB") != std::string::npos ||
-         u.find("BLOB") != std::string::npos ||
-         u.find("CLOB") != std::string::npos ||
-         u.find("ARRAY") != std::string::npos;
-}
-
-static bool containsUnsupportedConstraint(const std::string &definition)
-{
-  std::string u = upper(definition);
-  return startsWithWord(u, "CONSTRAINT") ||
-         startsWithWord(u, "PRIMARY KEY") ||
-         startsWithWord(u, "FOREIGN KEY") ||
-         startsWithWord(u, "UNIQUE") ||
-         startsWithWord(u, "CHECK") ||
-         u.find(" PRIMARY KEY") != std::string::npos ||
-         u.find(" UNIQUE") != std::string::npos ||
-         u.find(" REFERENCES") != std::string::npos ||
-         u.find(" CHECK") != std::string::npos ||
-         u.find(" DEFAULT") != std::string::npos ||
-         u.find(" GENERATED") != std::string::npos ||
-         u.find(" IDENTITY") != std::string::npos;
-}
-
-static uint64_t newObjectUid()
-{
-  uint64_t uid = static_cast<uint64_t>(time(NULL));
-  uid = (uid << 24) ^ static_cast<uint64_t>(getpid() & 0xffff);
-  uid = (uid << 8) ^ static_cast<uint64_t>(rand() & 0xff);
-  return uid ? uid : 1;
-}
-
-static short processCreate(const std::string &sql, SqlciEnv *env)
-{
-  size_t open = sql.find('(');
-  size_t close = sql.rfind(')');
-  if (open == std::string::npos || close == std::string::npos || close <= open)
-    return reportError(env, "invalid CREATE TABLE syntax");
-
-  std::string name = trim(sql.substr(strlen("CREATE TABLE"), open - strlen("CREATE TABLE")));
-  LocalLiteTableDef table = tableFromName(name);
-  table.objectUid = newObjectUid();
-  table.nextRowId = 1;
-
-  std::vector<std::string> cols = splitCommaList(sql.substr(open + 1, close - open - 1));
-  if (cols.empty())
-    return reportError(env, "CREATE TABLE requires at least one column");
-
-  for (size_t i = 0; i < cols.size(); i++)
-    {
-      std::string col = trim(cols[i]);
-      if (containsUnsupportedConstraint(col))
-        return reportError(env, "local-lite table constraints are not supported");
-      size_t sp = col.find_first_of(" \t\r\n");
-      if (sp == std::string::npos)
-        return reportError(env, "invalid column definition: " + col);
-      LocalLiteColumnDef c;
-      c.name = unquoteIdent(col.substr(0, sp));
-      c.type = trim(col.substr(sp + 1));
-      c.nullable = (upper(c.type).find("NOT NULL") == std::string::npos);
-      if (containsUnsupportedType(c.type))
-        return reportError(env, "unsupported local-lite column type: " + c.type);
-      table.columns.push_back(c);
-    }
-
-  LocalLiteRocksDBStore store;
-  std::string error;
-  if (!store.createTable(table, &error))
-    return reportError(env, error);
-
-  writeLine(env, "--- SQL operation complete.");
-  return 0;
-}
-
-static short processDrop(const std::string &sql, SqlciEnv *env)
-{
-  std::string name = trim(sql.substr(strlen("DROP TABLE")));
-  LocalLiteTableDef table = tableFromName(name);
-  LocalLiteRocksDBStore store;
-  std::string error;
-  if (!store.dropTable(table.catalog, table.schema, table.name, &error))
-    return reportError(env, error);
-  writeLine(env, "--- SQL operation complete.");
-  return 0;
-}
-
 static short processInsert(const std::string &sql, SqlciEnv *env)
 {
   std::string u = upper(sql);
@@ -532,16 +441,6 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       return true;
     }
 
-  if (startsWithWord(sql, "CREATE TABLE"))
-    {
-      *retcode = processCreate(sql, sqlciEnv);
-      return true;
-    }
-  if (startsWithWord(sql, "DROP TABLE"))
-    {
-      *retcode = processDrop(sql, sqlciEnv);
-      return true;
-    }
   if (startsWithWord(sql, "INSERT INTO"))
     {
       *retcode = processInsert(sql, sqlciEnv);

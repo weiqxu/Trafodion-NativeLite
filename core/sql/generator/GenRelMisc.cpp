@@ -498,6 +498,14 @@ short DDLExpr::codeGen(Generator * generator)
       if (hbaseDDLNoUserXn_)
         ddl_tdb->setHbaseDDLNoUserXn(TRUE);
     }
+
+#ifdef TRAF_LOCAL_LITE
+  ExprNode * localLiteDDLNode = getDDLNode();
+  if (localLiteDDLNode &&
+      ((localLiteDDLNode->getOperatorType() == DDL_CREATE_TABLE) ||
+       (localLiteDDLNode->getOperatorType() == DDL_DROP_TABLE)))
+    ddl_tdb->setHbaseDDL(TRUE);
+#endif
   
   generator->initTdbFields(ddl_tdb);
       
@@ -5320,4 +5328,3 @@ short ControlRunningQuery::codeGen(Generator * generator)
 
   return 0;
 }
-

@@ -60,6 +60,17 @@
 #include "TrafDDLdesc.h"
 
 #include "CmpDescribe.h"
+
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+
+#include <ctype.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <string>
+#endif
                   
 static bool checkSpecifiedPrivs(
    ElemDDLPrivActArray & privActsArray,  
@@ -90,6 +101,184 @@ static bool isMDGrantRevokeOK(
 static bool isValidPrivTypeForObject(
    ComObjectType objectType,
    PrivType privType);                               
+
+#ifdef TRAF_LOCAL_LITE
+static std::string localLiteUpper(const std::string &s)
+{
+  std::string out = s;
+  for (size_t i = 0; i < out.size(); i++)
+    out[i] = static_cast<char>(toupper(static_cast<unsigned char>(out[i])));
+  return out;
+}
+
+static bool localLiteUnsupportedType(const std::string &type)
+{
+  std::string u = localLiteUpper(type);
+  return u.find("LOB") != std::string::npos ||
+         u.find("BLOB") != std::string::npos ||
+         u.find("CLOB") != std::string::npos ||
+         u.find("ARRAY") != std::string::npos;
+}
+
+static uint64_t localLiteNewObjectUid()
+{
+  uint64_t uid = static_cast<uint64_t>(time(NULL));
+  uid = (uid << 24) ^ static_cast<uint64_t>(getpid() & 0xffff);
+  uid = (uid << 8) ^ static_cast<uint64_t>(rand() & 0xff);
+  return uid ? uid : 1;
+}
+
+static void localLiteDDLDiag(const std::string &reason)
+{
+  *CmpCommon::diags() << DgSqlCode(-3242)
+                      << DgString0((char *)reason.c_str());
+}
+
+static bool localLiteFillTableName(const ComObjectName &objectName,
+                                   LocalLiteTableDef *table)
+{
+  table->catalog = objectName.getCatalogNamePartAsAnsiString().data();
+  table->schema = objectName.getSchemaNamePartAsAnsiString(TRUE).data();
+  table->name = objectName.getObjectNamePartAsAnsiString(TRUE).data();
+  return !table->catalog.empty() && !table->schema.empty() && !table->name.empty();
+}
+
+static bool localLiteRejectUnsupportedCreate(StmtDDLCreateTable *createTableNode)
+{
+  if (createTableNode->getIsLikeOptionSpecified())
+    {
+      localLiteDDLDiag("CREATE TABLE LIKE is not supported in local-lite");
+      return true;
+    }
+  if (createTableNode->getIsConstraintPKSpecified() ||
+      createTableNode->getAddConstraintPK() ||
+      createTableNode->getAddConstraintUniqueArray().entries() > 0 ||
+      createTableNode->getAddConstraintRIArray().entries() > 0 ||
+      createTableNode->getAddConstraintCheckArray().entries() > 0)
+    {
+      localLiteDDLDiag("local-lite table constraints are not supported");
+      return true;
+    }
+  if (createTableNode->isPartitionSpecified() ||
+      createTableNode->isPartitionBySpecified() ||
+      createTableNode->isDivisionClauseSpecified() ||
+      createTableNode->isStoreBySpecified() ||
+      createTableNode->isHbaseOptionsSpecified() ||
+      createTableNode->isAttributeSpecified() ||
+      createTableNode->isTableFeatureSpecified())
+    {
+      localLiteDDLDiag("local-lite table physical attributes are not supported");
+      return true;
+    }
+  if (!createTableNode->getHiveOptions().isNull())
+    {
+      localLiteDDLDiag("Hive options are not supported in local-lite");
+      return true;
+    }
+  return false;
+}
+
+static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
+                                 const ComObjectName &objectName)
+{
+  if (localLiteRejectUnsupportedCreate(createTableNode))
+    return false;
+
+  ElemDDLColDefArray &colArray = createTableNode->getColDefArray();
+  if (colArray.entries() == 0)
+    {
+      localLiteDDLDiag("CREATE TABLE requires at least one column");
+      return false;
+    }
+
+  LocalLiteTableDef table;
+  if (!localLiteFillTableName(objectName, &table))
+    {
+      localLiteDDLDiag("invalid local-lite table name");
+      return false;
+    }
+  table.objectUid = localLiteNewObjectUid();
+  table.nextRowId = 1;
+
+  for (CollIndex i = 0; i < colArray.entries(); i++)
+    {
+      ElemDDLColDef *col = colArray[i];
+      if (!col || !col->getColumnDataType())
+        {
+          localLiteDDLDiag("invalid local-lite column definition");
+          return false;
+        }
+      if (col->getConstraintPK() ||
+          col->getConstraintArray().entries() > 0 ||
+          col->getDefaultClauseStatus() != ElemDDLColDef::DEFAULT_CLAUSE_NOT_SPEC)
+        {
+          localLiteDDLDiag("local-lite table constraints are not supported");
+          return false;
+        }
+
+      NAString typeText;
+      col->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
+      std::string type(typeText.data());
+      if (localLiteUnsupportedType(type))
+        {
+          localLiteDDLDiag("unsupported local-lite column type: " + type);
+          return false;
+        }
+
+      LocalLiteColumnDef localCol;
+      localCol.name = col->getColumnName().data();
+      localCol.type = type;
+      localCol.nullable = !col->isNotNullConstraintSpecified();
+      table.columns.push_back(localCol);
+    }
+
+  LocalLiteRocksDBStore store;
+  std::string error;
+  if (!store.createTable(table, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+
+  return true;
+}
+
+static bool localLiteDropTable(StmtDDLDropTable *dropTableNode,
+                               const ComObjectName &objectName)
+{
+  if (dropTableNode->getDropBehavior() == COM_CASCADE_DROP_BEHAVIOR)
+    {
+      localLiteDDLDiag("DROP TABLE CASCADE is not supported in local-lite");
+      return false;
+    }
+
+  LocalLiteTableDef table;
+  if (!localLiteFillTableName(objectName, &table))
+    {
+      localLiteDDLDiag("invalid local-lite table name");
+      return false;
+    }
+
+  LocalLiteRocksDBStore store;
+  std::string error;
+  bool exists = false;
+  if (!store.tableExists(table.catalog, table.schema, table.name, &exists, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  if (!exists && dropTableNode->dropIfExists())
+    return true;
+
+  if (!store.dropTable(table.catalog, table.schema, table.name, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+
+  return true;
+}
+#endif
 
 void CmpSeabaseDDL::convertVirtTableColumnInfoToDescStruct( 
      const ComTdbVirtTableColumnInfo * colInfo,
@@ -2974,6 +3163,15 @@ void CmpSeabaseDDL::createSeabaseTable(
   const NAString catalogNamePart = tableName.getCatalogNamePartAsAnsiString();
   const NAString schemaNamePart = tableName.getSchemaNamePartAsAnsiString(TRUE);
   const NAString objectNamePart = tableName.getObjectNamePartAsAnsiString(TRUE);
+
+#ifdef TRAF_LOCAL_LITE
+  if (localLiteCreateTable(createTableNode, tableName))
+    {
+      if (retObjUID)
+        *retObjUID = 0;
+    }
+  return;
+#endif
   
   if (beginXnIfNotInProgress(&cliInterface, xnWasStartedHere))
     return;
@@ -4479,6 +4677,15 @@ void CmpSeabaseDDL::dropSeabaseTable(
   NABoolean xnWasStartedHere = FALSE;
   ExeCliInterface cliInterface(STMTHEAP, 0, NULL, 
   CmpCommon::context()->sqlSession()->getParentQid());
+
+#ifdef TRAF_LOCAL_LITE
+  ComObjectName tableName(dropTableNode->getTableName());
+  ComAnsiNamePart currCatAnsiName(currCatName);
+  ComAnsiNamePart currSchAnsiName(currSchName);
+  tableName.applyDefaults(currCatAnsiName, currSchAnsiName);
+  localLiteDropTable(dropTableNode, tableName);
+  return;
+#endif
 
   if (beginXnIfNotInProgress(&cliInterface, xnWasStartedHere))
     return;
@@ -14499,4 +14706,3 @@ static bool isValidPrivTypeForObject(
 
 }
 //********************* End of isValidPrivTypeForObject ************************
-

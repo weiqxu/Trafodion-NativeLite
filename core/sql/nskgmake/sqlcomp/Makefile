@@ -55,6 +55,11 @@ CPPSRC := CmpDescribe.cpp \
 	QCache.cpp \
 	vers_libsqlcomp.cpp
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+CPPSRC += LocalLiteRocksDBStore.cpp
+SRCPATH += localstore
+endif
+
 ifeq ($(strip $(TRAFODION_VER_MAJOR)),)
   TRAFODION_VER_MAJOR := 2
 endif

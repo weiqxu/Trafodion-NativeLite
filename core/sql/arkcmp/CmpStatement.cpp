@@ -797,6 +797,47 @@ CmpStatement::process (const CmpMessageDDL& statement)
 	}
       
       CMPASSERT(rRoot);
+#ifdef TRAF_LOCAL_LITE
+      DDLExpr *localLiteDDLExpr = NULL;
+      ExprNode *localLiteDDLNode = NULL;
+      if (rRoot->getChild(0))
+        {
+          localLiteDDLExpr = (DDLExpr *)rRoot->getChild(0);
+          localLiteDDLNode = localLiteDDLExpr->getDDLNode();
+        }
+      if (localLiteDDLNode &&
+          localLiteDDLNode->castToStmtDDLNode() &&
+          (localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLCreateTable() ||
+           localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLDropTable()))
+        {
+          ExprNode *boundLocalDDL =
+            localLiteDDLNode->castToStmtDDLNode()->bindNode(&bindWA);
+          CMPASSERT(boundLocalDDL);
+          if (CmpCommon::diags()->getNumber(DgSqlCode::ERROR_))
+            return CmpStatement_ERROR;
+
+          CmpSeabaseDDL cmpSBD(heap_);
+          short localLiteDDLRC =
+            cmpSBD.executeSeabaseDDL(localLiteDDLExpr, boundLocalDDL,
+                                     currCatName, currSchName);
+          // ExDDLTcb preserves embedded compiler diagnostics on the SUCCESS
+          // path. Returning ERROR here masks local-lite DDL diagnostics with a
+          // generic compiler-server failure before SQLCI can display them.
+          if (localLiteDDLRC)
+            {
+              Set_SqlParser_Flags(0);
+              return CmpStatement_SUCCESS;
+            }
+          if (CmpCommon::diags()->getNumber(DgSqlCode::ERROR_))
+            {
+              Set_SqlParser_Flags(0);
+              return CmpStatement_SUCCESS;
+            }
+          Set_SqlParser_Flags(0);
+
+          return CmpStatement_SUCCESS;
+        }
+#endif
 
       ExprNode *boundDDL = rRoot->bindNode(&bindWA);
       CMPASSERT(boundDDL);
