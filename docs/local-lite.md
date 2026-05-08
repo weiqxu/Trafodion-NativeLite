@@ -12,9 +12,11 @@ for example `SELECT` statements over `VALUES` clauses.
 
 Local-lite is not a complete standalone database yet. It now includes a minimal
 RocksDB-backed local table path for `sqlci` table smoke tests, but the full
-Trafodion catalog, NATable loading path, optimizer integration, executor TCBs,
+Trafodion catalog, optimizer integration, RocksDB executor scan TCBs,
 transactions, indexes, privileges, JDBC/ODBC connectivity, and distributed
-execution remain outside the supported runtime surface.
+execution remain outside the supported runtime surface. The current local
+NATable loader is intentionally narrow and only synthesizes enough compiler
+metadata to bind local catalog tables.
 
 ## Current State
 
@@ -51,6 +53,10 @@ Implemented:
 - Basic local table SQL in `sqlci`: compiler-routed `CREATE TABLE` and
   `DROP TABLE`, plus SQLCI-local `INSERT INTO ... VALUES (...)`, multi-tuple
   `INSERT INTO ... VALUES (...), (...)`, and `SELECT * FROM <table>`.
+- Local catalog NATable loading for local-lite RocksDB tables. Non-`SELECT *`
+  queries can now bind local table metadata through the regular compiler path;
+  generated table access still reaches the local-lite unsupported executor TCB
+  until the RocksDB scan TCB is implemented.
 - Unsupported local table SQL diagnostics for `UPDATE`, `DELETE`, `MERGE`,
   `UPSERT`, and `CREATE INDEX`.
 - HBase access TDBs reached through the old executor path now build a TCB that
@@ -69,9 +75,9 @@ Known limits:
   Seabed baseline. Monitor-specific paths are skipped or guarded, but Seabed
   libraries remain transitive dependencies.
 - The current RocksDB DDL path uses the compiler DDL entry point for
-  `CREATE TABLE` and `DROP TABLE`, but local table DML and scans are still an
-  SQLCI-local bypass. It does not yet use Trafodion's NATable loader, optimizer
-  table descriptors, or executor row-expression machinery.
+  `CREATE TABLE` and `DROP TABLE`, and local tables can now be loaded as
+  NATables from the local catalog. Local table DML and successful scans are
+  still an SQLCI-local bypass until the RocksDB executor scan TCB exists.
 - Local table rows are stored as text field values encoded by the SQLCI handler.
   Type enforcement and expression evaluation are not yet equivalent to
   Trafodion table execution.
@@ -282,15 +288,18 @@ Supported local-lite `sqlci` behavior:
 - Minimal RocksDB local table support: `CREATE TABLE` and `DROP TABLE` route
   through the compiler DDL path; single-row and multi-row
   `INSERT INTO ... VALUES (...)` and `SELECT * FROM <table>` are still handled
-  by the SQLCI-local table path.
+  by the SQLCI-local table path. Other local table `SELECT` forms now fall
+  through to the compiler and bind the local catalog NATable, then fail at the
+  current unsupported executor storage guard.
 - Basic scalar expressions, arithmetic, and string operations.
 - `exit;` and `quit;`.
 
 Unsupported behavior:
 
 - Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`,
-  predicates, projection lists, joins, grouping, ordering, expression
-  evaluation, type coercion, constraints, privileges, and transactions.
+  executed predicates, executed projection lists, joins, grouping, ordering,
+  expression evaluation, type coercion, constraints, privileges, and
+  transactions.
 - HBase-backed metadata/storage operations.
 - HDFS, HBase, Hive, ORC, bulk load/unload, and LOB storage access.
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
@@ -316,6 +325,9 @@ items below.
 - `core/sql/nskgmake/sqlcomp/Makefile` compiles the RocksDB store into
   `libsqlcomp.so` for local-lite builds, so compiler DDL can write local
   catalog metadata without linking Java, HBase, or HDFS code.
+- `core/sql/nskgmake/optimizer/Makefile` compiles the RocksDB store into
+  `liboptimizer.so` for local-lite builds, so NATable loading can read the
+  local catalog before falling back to Seabase/HBase metadata.
 - `scripts/install-local-lite-deps.sh` installs `librocksdb-dev` on apt-based
   systems and `rocksdb-devel` on rpm-based systems.
 - `core/sqf/Makefile` excludes `make_monitor` and top-level `tools` from
@@ -385,6 +397,37 @@ ERROR[8604] Transaction subsystem TMF returned error 82 while starting a transac
 Local-lite table DDL should now complete without TMF, Seabase metadata bootstrap,
 HBase, Hadoop, ZooKeeper, or Java runtime services.
 
+### Local Catalog NATable Loading
+
+`core/sql/optimizer/NATable.cpp` now has a `TRAF_LOCAL_LITE` metadata path for
+local RocksDB tables. During `NATableDB::get()`, local-lite checks
+`LocalLiteRocksDBStore` before calling `CmpSeabaseDDL::getSeabaseTableDesc()`
+for regular Seabase table names. If the table exists in the local catalog, the
+optimizer synthesizes a minimal `TrafDesc` tree on the NATable heap:
+
+- `DESC_TABLE_TYPE` with the local object UID, aligned row format, no
+  partitioning, regular insert mode, and droppable table flag.
+- Audited table and index `DESC_FILES_TYPE` nodes, so normal DML binding does
+  not reject the table as non-audited before it reaches the local-lite executor
+  guard.
+- User column descriptors from catalog column metadata.
+- A minimal primary index descriptor and key descriptor, reusing the existing
+  HBase/Seabase scan TDB shape until the dedicated RocksDB scan TCB exists.
+
+The current type mapper covers the local DDL v1 scalar surface needed for
+binding: signed tiny/small/int/large integers, real/float, double, `CHAR`,
+`VARCHAR`, `DATE`, `TIME`, and `TIMESTAMP`. Character columns are represented as
+ISO88591 descriptors because the current SQLCI-local row path stores text field
+payloads.
+
+`core/sql/sqlci/LocalLiteSqlTable.cpp` now intercepts only
+`SELECT * FROM <table>` for the SQLCI-local scan bypass. Other local table
+`SELECT` forms, such as `SELECT a FROM t`, fall through to CLI prepare and bind
+through the local catalog NATable path. Until the RocksDB executor scan TCB is
+implemented, those compiled table access plans deliberately reach
+`LocalLiteUnsupportedHbaseTcb` and return the explicit local-lite unsupported
+storage diagnostic.
+
 ### SQLCI Handler
 
 `core/sql/sqlci/SqlCmd.cpp` calls
@@ -414,6 +457,10 @@ the compiler DDL path described above.
 instead of returning `NULL`. This prevents a vague crash if an old HBase access
 TDB path is reached before the full RocksDB executor path exists.
 
+The unsupported TCB also implements the standard private-state allocator. This
+keeps compiled local table `SELECT` statements from tripping the generic
+executor queue assertion before they can emit the unsupported diagnostic.
+
 ## RocksDB Local Store Plan
 
 Use this list as the implementation tracker. When a task is completed, change
@@ -422,7 +469,7 @@ above.
 
 ### Current Task Status
 
-Last updated after commit `96f55bcaa` on the `local-lite-rocksdb` branch.
+Last updated after completing local catalog NATable loading on `master`.
 
 Completed:
 
@@ -436,19 +483,20 @@ Completed:
 - SQLCI RocksDB smoke/regression coverage.
 - Compiler-routed local table `CREATE TABLE` and `DROP TABLE`, including TMF
   avoidance and visible compiler DDL diagnostics.
+- Local catalog NATable loading for compiler-bound local table references.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
 - Operational usage documentation for the current SQLCI/RocksDB path.
 
 Remaining, in suggested implementation order:
 
-1. Add NATable loading from the local catalog.
-2. Replace the SQLCI `SELECT *` bypass with a local RocksDB executor scan TCB.
-3. Use Trafodion expression evaluation and a binary row layout for local table
+1. Replace the SQLCI `SELECT *` bypass with a local RocksDB executor scan TCB.
+2. Use Trafodion expression evaluation and a binary row layout for local table
    inserts/scans.
-4. Implement predicates and projection for local RocksDB scans.
+3. Implement predicates and projection for local RocksDB scans.
 
-The next task to start is **Add NATable loading from the local catalog**.
+The next task to start is **Replace the SQLCI `SELECT *` bypass with a local
+RocksDB executor scan TCB**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -503,12 +551,21 @@ The next task to start is **Add NATable loading from the local catalog**.
     propagation keep local-lite DDL errors visible in SQLCI instead of being
     masked by generic `-2013`/`-8822` compiler-server errors.
 
-- [ ] **Add NATable loading from the local catalog.**
-  - Target files to investigate first: `core/sql/sqlcat/TrafDesc.cpp`,
-    `core/sql/sqlcat/desc.h`, `core/sql/sqlcomp/CmpSeabaseDDL.h`, and the
-    NATable construction path in `core/sql/sqlcomp`.
-  - Acceptance check: local-lite can bind a local RocksDB table through the
-    regular compiler metadata path instead of the SQLCI pre-prepare bypass.
+- [x] **Add NATable loading from the local catalog.**
+  - Implemented in `core/sql/optimizer/NATable.cpp` with local-lite-only
+    catalog lookup and synthesized `TrafDesc` table/column/index descriptors.
+  - `core/sql/nskgmake/optimizer/Makefile` now compiles
+    `LocalLiteRocksDBStore.cpp` into `liboptimizer.so` for local-lite builds.
+  - `core/sql/sqlci/LocalLiteSqlTable.cpp` now leaves non-`SELECT *` table
+    queries for the normal compiler path instead of rejecting them in the SQLCI
+    bypass.
+  - `core/sql/executor/LocalLiteStorageStubs.cpp` allocates queue private state
+    for the unsupported HBase TCB so compiled local table plans return a clear
+    unsupported diagnostic instead of asserting.
+  - Acceptance check: `SELECT a FROM t` against a local RocksDB table no longer
+    reports table-not-found or SQLCI bypass errors; it binds through NATable and
+    reaches the local-lite unsupported storage TCB until the scan TCB task is
+    implemented.
 
 - [ ] **Replace the SQLCI `SELECT *` bypass with an executor TCB for local table
   scans.**

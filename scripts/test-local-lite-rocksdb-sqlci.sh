@@ -51,6 +51,16 @@ duplicate_output=$(
 grep -q 'local-lite table already exists' <<<"$duplicate_output" ||
   fail "duplicate CREATE TABLE diagnostic missing"
 
+bind_output=$(
+  printf "SELECT a FROM t;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'HDFS, Hive, and HBase are not supported in local-lite builds' <<<"$bind_output" ||
+  fail "local catalog NATable bind did not reach local-lite table scan stub"
+if grep -q 'does not exist or is inaccessible' <<<"$bind_output"; then
+  fail "local catalog NATable bind reported table missing"
+fi
+
 error_output=$(
   printf "SELECT * FROM missing_table;\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
     run_sqlci

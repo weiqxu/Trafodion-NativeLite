@@ -44,6 +44,12 @@ public:
   Int32 numChildren() const { return 0; }
   const ex_tcb *getChild(Int32) const { return NULL; }
 
+  ex_tcb_private_state *allocatePstates(Lng32 &numElems, Lng32 &pstateLength)
+  {
+    PstateAllocator<ex_tcb_private_state> pa;
+    return pa.allocatePstates(this, numElems, pstateLength);
+  }
+
   void registerSubtasks()
   {
     ex_tcb::registerSubtasks();

@@ -450,7 +450,8 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
     {
       std::string u = upper(sql);
       if (u.find(" FROM ") != std::string::npos &&
-          u.find("VALUES") == std::string::npos)
+          u.find("VALUES") == std::string::npos &&
+          upper(trim(sql.substr(0, u.find(" FROM ")))) == "SELECT *")
         {
           *retcode = processSelect(sql, sqlciEnv);
           return true;

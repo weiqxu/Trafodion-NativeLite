@@ -151,3 +151,7 @@ CPPSRC := \
 	HbaseSearchSpec.cpp \
 	vers_liboptimizer.cpp
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+CPPSRC += LocalLiteRocksDBStore.cpp
+SRCPATH += localstore
+endif

@@ -84,6 +84,12 @@
 #include "TrafDDLdesc.h"
 #include "CmpSeabaseDDL.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#include <ctype.h>
+#include <stdlib.h>
+#endif
+
 #define MAX_NODE_NAME 9
 
 #include "SqlParserGlobals.h"
@@ -2842,6 +2848,261 @@ static NAString makeColumnName(const NATable *table,
   nam += column_desc->colname;
   return nam;
 }
+
+#ifdef TRAF_LOCAL_LITE
+static char *localLiteCopyToHeap(const std::string &s, NAMemory *heap)
+{
+  char *out = new (heap) char[s.size() + 1];
+  strcpy(out, s.c_str());
+  return out;
+}
+
+static std::string localLiteUpper(const std::string &s)
+{
+  std::string out = s;
+  for (size_t i = 0; i < out.size(); i++)
+    out[i] = static_cast<char>(toupper(static_cast<unsigned char>(out[i])));
+  return out;
+}
+
+static bool localLiteStartsWithWord(const std::string &s, const char *word)
+{
+  size_t len = strlen(word);
+  return s.size() >= len &&
+         s.compare(0, len, word) == 0 &&
+         (s.size() == len || !isalnum(static_cast<unsigned char>(s[len])));
+}
+
+static Lng32 localLiteTypeArg(const std::string &type, Lng32 defaultValue)
+{
+  size_t lparen = type.find('(');
+  if (lparen == std::string::npos)
+    return defaultValue;
+  const char *p = type.c_str() + lparen + 1;
+  char *end = NULL;
+  long value = strtol(p, &end, 10);
+  return value > 0 ? static_cast<Lng32>(value) : defaultValue;
+}
+
+static bool localLiteMapType(const std::string &typeText,
+                             Int32 *datatype,
+                             Lng32 *length,
+                             Lng32 *precision,
+                             Lng32 *scale,
+                             rec_datetime_field *dtStart,
+                             rec_datetime_field *dtEnd,
+                             Int16 *dtFractPrec)
+{
+  std::string type = localLiteUpper(typeText);
+  *precision = 0;
+  *scale = 0;
+  *dtStart = REC_DATE_UNKNOWN;
+  *dtEnd = REC_DATE_UNKNOWN;
+  *dtFractPrec = 0;
+
+  if (localLiteStartsWithWord(type, "TINYINT"))
+    {
+      *datatype = REC_BIN8_SIGNED;
+      *length = 1;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "SMALLINT"))
+    {
+      *datatype = REC_BIN16_SIGNED;
+      *length = 2;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "INT") ||
+      localLiteStartsWithWord(type, "INTEGER"))
+    {
+      *datatype = REC_BIN32_SIGNED;
+      *length = 4;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "LARGEINT") ||
+      localLiteStartsWithWord(type, "BIGINT"))
+    {
+      *datatype = REC_BIN64_SIGNED;
+      *length = 8;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "REAL") ||
+      localLiteStartsWithWord(type, "FLOAT"))
+    {
+      *datatype = REC_FLOAT32;
+      *length = 4;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "DOUBLE"))
+    {
+      *datatype = REC_FLOAT64;
+      *length = 8;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "VARCHAR") ||
+      localLiteStartsWithWord(type, "CHARACTER VARYING"))
+    {
+      *datatype = REC_BYTE_V_ASCII;
+      *length = localLiteTypeArg(type, 1);
+      *precision = *length;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "CHAR") ||
+      localLiteStartsWithWord(type, "CHARACTER"))
+    {
+      *datatype = REC_BYTE_F_ASCII;
+      *length = localLiteTypeArg(type, 1);
+      *precision = *length;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "DATE"))
+    {
+      *datatype = REC_DATETIME;
+      *length = 4;
+      *dtStart = REC_DATE_YEAR;
+      *dtEnd = REC_DATE_DAY;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "TIME"))
+    {
+      *datatype = REC_DATETIME;
+      *length = 8;
+      *dtStart = REC_DATE_HOUR;
+      *dtEnd = REC_DATE_SECOND;
+      *dtFractPrec = static_cast<Int16>(localLiteTypeArg(type, 0));
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "TIMESTAMP"))
+    {
+      *datatype = REC_DATETIME;
+      *length = 11;
+      *dtStart = REC_DATE_YEAR;
+      *dtEnd = REC_DATE_SECOND;
+      *dtFractPrec = static_cast<Int16>(localLiteTypeArg(type, 6));
+      return true;
+    }
+
+  return false;
+}
+
+static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
+                                                     NAMemory *heap,
+                                                     bool *found,
+                                                     std::string *error)
+{
+  *found = false;
+
+  const QualifiedName &qn = corrName.getQualifiedNameObj();
+  std::string catalog(qn.getCatalogName().data());
+  std::string schema(qn.getSchemaName().data());
+  std::string object(qn.getObjectName().data());
+
+  LocalLiteRocksDBStore store;
+  bool exists = false;
+  if (!store.tableExists(catalog, schema, object, &exists, error))
+    return NULL;
+  if (!exists)
+    return NULL;
+
+  LocalLiteTableDef table;
+  if (!store.loadTable(catalog, schema, object, &table, error))
+    return NULL;
+  *found = true;
+
+  TrafDesc *tableDesc = TrafAllocateDDLdesc(DESC_TABLE_TYPE, heap);
+  tableDesc->tableDesc()->tablename = localLiteCopyToHeap(table.name, heap);
+  tableDesc->tableDesc()->createTime = 0;
+  tableDesc->tableDesc()->redefTime = 0;
+  tableDesc->tableDesc()->cacheTime = 0;
+  tableDesc->tableDesc()->catUID = 0;
+  tableDesc->tableDesc()->schemaUID = 0;
+  tableDesc->tableDesc()->objectUID = static_cast<Int64>(table.objectUid);
+  tableDesc->tableDesc()->setObjectType(COM_BASE_TABLE_OBJECT);
+  tableDesc->tableDesc()->setRowFormat(COM_ALIGNED_FORMAT_TYPE);
+  tableDesc->tableDesc()->setPartitioningScheme(COM_NO_PARTITIONING);
+  tableDesc->tableDesc()->setInsertMode(COM_REGULAR_TABLE_INSERT_MODE);
+  tableDesc->tableDesc()->setDroppable(TRUE);
+
+  TrafDesc *filesDesc = TrafAllocateDDLdesc(DESC_FILES_TYPE, heap);
+  filesDesc->filesDesc()->setAudited(TRUE);
+  tableDesc->tableDesc()->files_desc = filesDesc;
+
+  Lng32 colNumber = 0;
+  Lng32 offset = 0;
+  TrafDesc *firstColumnDesc = NULL;
+  TrafDesc *lastColumnDesc = NULL;
+
+  for (size_t i = 0; i < table.columns.size(); i++)
+    {
+      Int32 datatype = REC_UNKNOWN;
+      Lng32 length = 0;
+      Lng32 precision = 0;
+      Lng32 scale = 0;
+      rec_datetime_field dtStart = REC_DATE_UNKNOWN;
+      rec_datetime_field dtEnd = REC_DATE_UNKNOWN;
+      Int16 dtFractPrec = 0;
+      if (!localLiteMapType(table.columns[i].type, &datatype, &length,
+                            &precision, &scale, &dtStart, &dtEnd,
+                            &dtFractPrec))
+        {
+          *error = "unsupported local-lite column type in catalog: " +
+                   table.columns[i].type;
+          return NULL;
+        }
+
+      char *columnName = localLiteCopyToHeap(table.columns[i].name, heap);
+      TrafDesc *columnDesc = TrafMakeColumnDesc(
+          tableDesc->tableDesc()->tablename,
+          columnName,
+          colNumber,
+          datatype,
+          length,
+          offset,
+          table.columns[i].nullable,
+          SQLCHARSETCODE_ISO88591,
+          heap);
+      columnDesc->columnsDesc()->precision = precision;
+      columnDesc->columnsDesc()->scale = scale;
+      columnDesc->columnsDesc()->datetimestart = dtStart;
+      columnDesc->columnsDesc()->datetimeend = dtEnd;
+      columnDesc->columnsDesc()->datetimefractprec = dtFractPrec;
+      columnDesc->columnsDesc()->character_set = CharInfo::ISO88591;
+      columnDesc->columnsDesc()->encoding_charset = CharInfo::ISO88591;
+      columnDesc->columnsDesc()->collation_sequence = CharInfo::DefaultCollation;
+
+      if (!firstColumnDesc)
+        firstColumnDesc = columnDesc;
+      else
+        lastColumnDesc->next = columnDesc;
+      lastColumnDesc = columnDesc;
+    }
+
+  tableDesc->tableDesc()->columns_desc = firstColumnDesc;
+  tableDesc->tableDesc()->colcount = colNumber;
+  tableDesc->tableDesc()->record_length = offset;
+
+  TrafDesc *indexDesc = TrafAllocateDDLdesc(DESC_INDEXES_TYPE, heap);
+  indexDesc->indexesDesc()->tablename = tableDesc->tableDesc()->tablename;
+  indexDesc->indexesDesc()->indexname = tableDesc->tableDesc()->tablename;
+  indexDesc->indexesDesc()->keytag = 0;
+  indexDesc->indexesDesc()->record_length = tableDesc->tableDesc()->record_length;
+  indexDesc->indexesDesc()->colcount = tableDesc->tableDesc()->colcount;
+  indexDesc->indexesDesc()->blocksize = 4096;
+
+  TrafDesc *indexFilesDesc = TrafAllocateDDLdesc(DESC_FILES_TYPE, heap);
+  indexFilesDesc->filesDesc()->setAudited(TRUE);
+  indexDesc->indexesDesc()->files_desc = indexFilesDesc;
+
+  TrafDesc *keyDesc = TrafAllocateDDLdesc(DESC_KEYS_TYPE, heap);
+  keyDesc->keysDesc()->keyseqnumber = 1;
+  keyDesc->keysDesc()->tablecolnumber = 0;
+  keyDesc->keysDesc()->setDescending(FALSE);
+  indexDesc->indexesDesc()->keys_desc = keyDesc;
+  tableDesc->tableDesc()->indexes_desc = indexDesc;
+
+  return tableDesc;
+}
+#endif
 
 // -----------------------------------------------------------------------
 // Method for creating NAType from TrafDesc.
@@ -8341,6 +8602,23 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
         {
           ComObjectType objectType = COM_BASE_TABLE_OBJECT;
           isSeabase = TRUE;
+#ifdef TRAF_LOCAL_LITE
+          bool localLiteFound = false;
+          std::string localLiteError;
+          if (!corrName.isSpecialTable())
+            tableDesc = localLiteCreateTableDescFromCatalog(
+                corrName, naTableHeap, &localLiteFound, &localLiteError);
+          if (!tableDesc && !localLiteError.empty())
+            {
+              *CmpCommon::diags()
+                << DgSqlCode(-3242)
+                << DgString0((char *)localLiteError.c_str());
+              bindWA->setErrStatus();
+              return NULL;
+            }
+          if (!localLiteFound)
+            {
+#endif
           if (corrName.isSpecialTable())
           {
             switch (corrName.getSpecialType())
@@ -8373,6 +8651,9 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
                                 corrName.getQualifiedNameObj().getSchemaName(),
                                 corrName.getQualifiedNameObj().getObjectName(),
                                 objectType);
+#ifdef TRAF_LOCAL_LITE
+            }
+#endif
         }
 
       if (inTableDescStruct)
