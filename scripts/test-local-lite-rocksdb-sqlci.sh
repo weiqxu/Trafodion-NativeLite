@@ -55,19 +55,34 @@ bind_output=$(
   printf "SELECT a FROM t;\nexit;\n" |
     run_sqlci
 )
-grep -q 'HDFS, Hive, and HBase are not supported in local-lite builds' <<<"$bind_output" ||
-  fail "local catalog NATable bind did not reach local-lite table scan stub"
+grep -Eq '^ *1 *$' <<<"$bind_output" ||
+  fail "executor scan did not return projected local-lite row"
+grep -Eq '^ *2 *$' <<<"$bind_output" ||
+  fail "executor scan did not return second projected local-lite row"
+grep -q -- '--- 2 row(s) selected.' <<<"$bind_output" ||
+  fail "executor scan did not report two selected rows"
 if grep -q 'does not exist or is inaccessible' <<<"$bind_output"; then
   fail "local catalog NATable bind reported table missing"
 fi
 
-error_output=$(
-  printf "SELECT * FROM missing_table;\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
+projection_output=$(
+  printf "SELECT b FROM t;\nSELECT a, b FROM t;\nexit;\n" |
     run_sqlci
 )
-grep -q 'local-lite table does not exist' <<<"$error_output" ||
+grep -q 'one' <<<"$projection_output" ||
+  fail "executor scan did not return projected VARCHAR row"
+grep -q 'two' <<<"$projection_output" ||
+  fail "executor scan did not return second projected VARCHAR row"
+grep -q -- '--- 2 row(s) selected.' <<<"$projection_output" ||
+  fail "executor scan projection did not report selected rows"
+
+error_output=$(
+  printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
+    run_sqlci
+)
+grep -q 'ERROR\[4082\]' <<<"$error_output" ||
   fail "missing table diagnostic missing"
-grep -q 'INSERT value count does not match local-lite table column count' <<<"$error_output" ||
+grep -q 'ERROR\[4023\]' <<<"$error_output" ||
   fail "INSERT column count diagnostic missing"
 grep -q 'unsupported local-lite column type' <<<"$error_output" ||
   fail "unsupported column type diagnostic missing"
@@ -76,9 +91,9 @@ select_output=$(
   printf "SELECT * FROM t;\nDROP TABLE t;\nexit;\n" |
     run_sqlci
 )
-grep -q '1 one' <<<"$select_output" ||
+grep -q '1  one' <<<"$select_output" ||
   fail "SELECT did not return persisted row after reopening sqlci"
-grep -q '2 two' <<<"$select_output" ||
+grep -q '2  two' <<<"$select_output" ||
   fail "SELECT did not return second persisted row after reopening sqlci"
 grep -q -- '--- 2 row(s) selected.' <<<"$select_output" ||
   fail "SELECT did not report two selected rows"

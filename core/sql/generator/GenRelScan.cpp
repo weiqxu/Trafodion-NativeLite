@@ -2647,6 +2647,17 @@ short HbaseAccess::codeGen(Generator * generator)
 	}
      }
 
+#ifdef TRAF_LOCAL_LITE
+  for (Lng32 i = 0; i < retColumnList.entries(); i++)
+    {
+      ValueId retValId = retColumnList[i];
+      OperatorTypeEnum op = retValId.getItemExpr()->getOperatorType();
+      if ((op == ITM_BASECOLUMN || op == ITM_INDEXCOLUMN) &&
+          !columnList.contains(retValId))
+        columnList.insert(retValId);
+    }
+#endif
+
   ValueIdList hbTsVIDlist;
   ValueIdList hbVersVIDlist;
   for (CollIndex hi = 0; hi < retColumnList.entries(); hi++)
@@ -2860,6 +2871,47 @@ short HbaseAccess::codeGen(Generator * generator)
       Attributes * castAttr = (generator->getMapInfo(castValId))->getAttr();
 
       colAttr->copyLocationAttrs(castAttr);
+
+#ifdef TRAF_LOCAL_LITE
+      ItemExpr *colExpr = colValId.getItemExpr();
+      NAColumn *colNAColumn = NULL;
+      if (colExpr->getOperatorType() == ITM_BASECOLUMN)
+        colNAColumn = ((BaseColumn *)colExpr)->getNAColumn();
+      else if (colExpr->getOperatorType() == ITM_INDEXCOLUMN)
+        colNAColumn = ((IndexColumn *)colExpr)->getNAColumn();
+
+      if (colNAColumn)
+        {
+          for (CollIndex j = 0; j < retColumnList.entries(); j++)
+            {
+              ValueId retValId = retColumnList[j];
+              ItemExpr *retExpr = retValId.getItemExpr();
+              NAColumn *retNAColumn = NULL;
+              if (retExpr->getOperatorType() == ITM_BASECOLUMN)
+                retNAColumn = ((BaseColumn *)retExpr)->getNAColumn();
+              else if (retExpr->getOperatorType() == ITM_INDEXCOLUMN)
+                retNAColumn = ((IndexColumn *)retExpr)->getNAColumn();
+
+              NABoolean sameLocalLiteColumn =
+                (retNAColumn &&
+                 ((*retNAColumn == *colNAColumn) ||
+                  ((retNAColumn->getPosition() == colNAColumn->getPosition()) &&
+                   (retNAColumn->getColName() == colNAColumn->getColName()))));
+              if ((!sameLocalLiteColumn) &&
+                  retExpr->getOperatorType() == ITM_BASECOLUMN &&
+                  ((BaseColumn *)retExpr)->getEIC().contains(colValId))
+                sameLocalLiteColumn = TRUE;
+
+              if (sameLocalLiteColumn)
+                {
+                  MapInfo *retMapInfo = generator->getMapInfoAsIs(retValId);
+                  if (!retMapInfo)
+                    retMapInfo = generator->addMapInfo(retValId, 0);
+                  retMapInfo->getAttr()->copyLocationAttrs(castAttr);
+                }
+            }
+        }
+#endif
 
     } // for
 

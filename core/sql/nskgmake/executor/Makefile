@@ -136,7 +136,8 @@ CPPSRC := $(filter-out \
 	OrcFileReader.cpp,$(CPPSRC))
 CPPSRC += LocalLiteStorageStubs.cpp \
 	LocalLiteHiveHookStubs.cpp \
-	LocalLiteRocksDBStore.cpp
+	LocalLiteRocksDBStore.cpp \
+	LocalLiteRowCodec.cpp
 DEFS += -DTRAF_LOCAL_LITE
 endif
 

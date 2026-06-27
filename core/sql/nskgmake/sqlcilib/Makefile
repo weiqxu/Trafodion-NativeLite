@@ -44,7 +44,8 @@ CPPSRC := Define.cpp \
 
 ifeq ($(TRAF_LOCAL_LITE),1)
 CPPSRC += LocalLiteSqlTable.cpp \
-	LocalLiteRocksDBStore.cpp
+	LocalLiteRocksDBStore.cpp \
+	LocalLiteRowCodec.cpp
 endif
 
 YINC := tdm_sqlmxmsg_intl

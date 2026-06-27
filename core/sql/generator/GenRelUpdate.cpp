@@ -1339,7 +1339,11 @@ short HbaseDelete::codeGen(Generator * generator)
   if (preCondExpr)
     hbasescan_tdb->setInsDelPreCondExpr(preCondExpr);
 
+#ifdef TRAF_LOCAL_LITE
+  if (FALSE)
+#else
   if (generator->isTransactionNeeded())
+#endif
     setTransactionRequired(generator);
   else if (noDTMxn())
     hbasescan_tdb->setUseHbaseXn(TRUE);

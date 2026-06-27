@@ -3069,6 +3069,12 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       columnDesc->columnsDesc()->character_set = CharInfo::ISO88591;
       columnDesc->columnsDesc()->encoding_charset = CharInfo::ISO88591;
       columnDesc->columnsDesc()->collation_sequence = CharInfo::DefaultCollation;
+      columnDesc->columnsDesc()->hbaseColFam =
+        localLiteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
+      char qual[32];
+      snprintf(qual, sizeof(qual), "%lu", static_cast<unsigned long>(i + 1));
+      columnDesc->columnsDesc()->hbaseColQual =
+        localLiteCopyToHeap(qual, heap);
 
       if (!firstColumnDesc)
         firstColumnDesc = columnDesc;

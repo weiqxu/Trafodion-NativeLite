@@ -7,16 +7,16 @@ engine development. It removes Java, Maven, Hadoop, HDFS, HBase, Hive, DCS,
 REST, TrafCI, and Java client modules from the selected build path.
 
 The current useful runtime target is `sqlci` in local-lite mode. It can start as
-a single local process and execute SQL that stays inside the compiler/executor,
-for example `SELECT` statements over `VALUES` clauses.
+a single local process, execute SQL that stays inside the compiler/executor
+such as `SELECT` statements over `VALUES` clauses, and run a narrow
+RocksDB-backed local table smoke path.
 
 Local-lite is not a complete standalone database yet. It now includes a minimal
 RocksDB-backed local table path for `sqlci` table smoke tests, but the full
-Trafodion catalog, optimizer integration, RocksDB executor scan TCBs,
-transactions, indexes, privileges, JDBC/ODBC connectivity, and distributed
-execution remain outside the supported runtime surface. The current local
-NATable loader is intentionally narrow and only synthesizes enough compiler
-metadata to bind local catalog tables.
+Trafodion catalog, complete table integration, transactions, indexes,
+privileges, JDBC/ODBC connectivity, and distributed execution remain outside
+the supported runtime surface. The current local NATable loader and executor
+scan TCB are intentionally narrow and only cover the v1 local table smoke path.
 
 ## Current State
 
@@ -50,13 +50,18 @@ Implemented:
   `TRAF_LOCAL_LITE=1`.
 - Minimal RocksDB catalog and table data store under
   `TRAF_LOCAL_STORE_DIR` or `TRAF_VAR/localstore/rocksdb`.
-- Basic local table SQL in `sqlci`: compiler-routed `CREATE TABLE` and
-  `DROP TABLE`, plus SQLCI-local `INSERT INTO ... VALUES (...)`, multi-tuple
-  `INSERT INTO ... VALUES (...), (...)`, and `SELECT * FROM <table>`.
-- Local catalog NATable loading for local-lite RocksDB tables. Non-`SELECT *`
-  queries can now bind local table metadata through the regular compiler path;
-  generated table access still reaches the local-lite unsupported executor TCB
-  until the RocksDB scan TCB is implemented.
+- Basic local table SQL in `sqlci`: compiler-routed `CREATE TABLE`,
+  `DROP TABLE`, and executor-routed single-row and multi-row
+  `INSERT INTO ... VALUES (...)`.
+- Local catalog NATable loading for local-lite RocksDB tables.
+- Local RocksDB executor scan TCB for compiler-generated local table `SELECT`
+  plans. It scans RocksDB rows, maps the compiler projection through the
+  fetched-column list, writes projected values into the compiler-generated
+  binary aligned executor row, and returns rows through normal executor queues.
+- Local RocksDB executor insert TCB for compiler-generated local table `INSERT`
+  plans. It evaluates the compiler-generated insert expression, normalizes the
+  executor row into the local canonical binary aligned row layout, and persists
+  the `LLBR1` payload through RocksDB.
 - Unsupported local table SQL diagnostics for `UPDATE`, `DELETE`, `MERGE`,
   `UPSERT`, and `CREATE INDEX`.
 - HBase access TDBs reached through the old executor path now build a TCB that
@@ -76,14 +81,12 @@ Known limits:
   libraries remain transitive dependencies.
 - The current RocksDB DDL path uses the compiler DDL entry point for
   `CREATE TABLE` and `DROP TABLE`, and local tables can now be loaded as
-  NATables from the local catalog. Local table DML and successful scans are
-  still an SQLCI-local bypass until the RocksDB executor scan TCB exists.
-- Local table rows are stored as text field values encoded by the SQLCI handler.
-  Type enforcement and expression evaluation are not yet equivalent to
-  Trafodion table execution.
-- `SELECT` over local RocksDB tables currently supports only
-  `SELECT * FROM <table>` without predicates, projection lists, joins,
-  grouping, ordering, or expressions.
+  NATables from the local catalog. Local table inserts also fall through CLI
+  prepare and execute through the local executor insert TCB. Type coverage is
+  still intentionally narrow.
+- `SELECT` over local RocksDB tables uses the local executor scan TCB. The scan
+  TCB projects from persisted binary aligned rows into the compiler-generated
+  executor row layout.
 - Some disabled storage paths still exist as compatibility stubs. They should
   fail with unsupported-operation diagnostics when reached; they do not provide
   HDFS/Hive/HBase functionality.
@@ -206,10 +209,10 @@ RocksDB local table example:
 --- 1 row(s) inserted.
 >>SELECT * FROM t;
 
-A B
-- -
+A  B
+-  ---
 
-1 one
+1  one
 
 --- 1 row(s) selected.
 >>DROP TABLE t;
@@ -287,19 +290,17 @@ Supported local-lite `sqlci` behavior:
 - `SELECT` queries against `VALUES` clauses.
 - Minimal RocksDB local table support: `CREATE TABLE` and `DROP TABLE` route
   through the compiler DDL path; single-row and multi-row
-  `INSERT INTO ... VALUES (...)` and `SELECT * FROM <table>` are still handled
-  by the SQLCI-local table path. Other local table `SELECT` forms now fall
-  through to the compiler and bind the local catalog NATable, then fail at the
-  current unsupported executor storage guard.
+  `INSERT INTO ... VALUES (...)` bind and execute through the local RocksDB
+  executor insert TCB; local table `SELECT` statements bind through the local
+  catalog NATable and run through the local RocksDB executor scan TCB.
 - Basic scalar expressions, arithmetic, and string operations.
 - `exit;` and `quit;`.
 
 Unsupported behavior:
 
-- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`,
-  executed predicates, executed projection lists, joins, grouping, ordering,
-  expression evaluation, type coercion, constraints, privileges, and
-  transactions.
+- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`, joins,
+  grouping, ordering, broad type coverage, constraints, privileges,
+  and transactions.
 - HBase-backed metadata/storage operations.
 - HDFS, HBase, Hive, ORC, bulk load/unload, and LOB storage access.
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
@@ -308,20 +309,20 @@ Unsupported behavior:
 
 ## RocksDB Local Store Implementation
 
-This section records the implementation state as of the current
-`local-lite-rocksdb` branch. Keep this section current when completing the plan
-items below.
+This section records the implementation state of the current local-lite
+RocksDB path. Keep this section current when completing the plan items below.
 
 ### Build Wiring
 
 - `core/sql/nskgmake/Makerules.linux` defines local-lite-only `ROCKSDB_INC`,
   `ROCKSDB_LIB`, and a header probe for `rocksdb/c.h`.
 - `core/sql/nskgmake/executor/Makefile` compiles
-  `core/sql/localstore/LocalLiteRocksDBStore.cpp` into the executor library for
+  `core/sql/localstore/LocalLiteRocksDBStore.cpp` and
+  `core/sql/localstore/LocalLiteRowCodec.cpp` into the executor library for
   local-lite builds.
 - `core/sql/nskgmake/sqlcilib/Makefile` compiles
-  `core/sql/sqlci/LocalLiteSqlTable.cpp` and the RocksDB store into
-  `libsqlcilib.so` for local-lite builds.
+  `core/sql/sqlci/LocalLiteSqlTable.cpp`, the RocksDB store, and the shared row
+  codec into `libsqlcilib.so` for local-lite builds.
 - `core/sql/nskgmake/sqlcomp/Makefile` compiles the RocksDB store into
   `libsqlcomp.so` for local-lite builds, so compiler DDL can write local
   catalog metadata without linking Java, HBase, or HDFS code.
@@ -352,8 +353,8 @@ The RocksDB directories are:
 
 The catalog DB stores table metadata by fully qualified name and object UID.
 Each table has a dedicated RocksDB DB. Heap table keys are big-endian `uint64`
-row IDs. Values currently contain a simple version byte, a big-endian payload
-length, and the SQLCI-local encoded field payload.
+row IDs. Values contain a store-level row wrapper around a `LLBR1` versioned
+binary aligned row payload.
 
 ### Compiler DDL Path
 
@@ -412,21 +413,40 @@ optimizer synthesizes a minimal `TrafDesc` tree on the NATable heap:
   guard.
 - User column descriptors from catalog column metadata.
 - A minimal primary index descriptor and key descriptor, reusing the existing
-  HBase/Seabase scan TDB shape until the dedicated RocksDB scan TCB exists.
+  HBase/Seabase scan TDB shape as the carrier for the local RocksDB scan TCB.
 
 The current type mapper covers the local DDL v1 scalar surface needed for
 binding: signed tiny/small/int/large integers, real/float, double, `CHAR`,
 `VARCHAR`, `DATE`, `TIME`, and `TIMESTAMP`. Character columns are represented as
-ISO88591 descriptors because the current SQLCI-local row path stores text field
-payloads.
+ISO88591 descriptors.
 
-`core/sql/sqlci/LocalLiteSqlTable.cpp` now intercepts only
-`SELECT * FROM <table>` for the SQLCI-local scan bypass. Other local table
-`SELECT` forms, such as `SELECT a FROM t`, fall through to CLI prepare and bind
-through the local catalog NATable path. Until the RocksDB executor scan TCB is
-implemented, those compiled table access plans deliberately reach
-`LocalLiteUnsupportedHbaseTcb` and return the explicit local-lite unsupported
-storage diagnostic.
+`core/sql/sqlci/LocalLiteSqlTable.cpp` no longer intercepts local table
+`SELECT`. Local table scans fall through to CLI prepare, bind through the local
+catalog NATable path, and execute through `LocalLiteHbaseScanTcb`.
+
+### Executor Scan TCB
+
+`core/sql/executor/LocalLiteStorageStubs.cpp` now builds
+`LocalLiteHbaseScanTcb` for local-lite `ExHbaseAccessTdb::SELECT_` plans. The
+TCB loads table metadata and rows from `LocalLiteRocksDBStore`, uses
+`LocalLiteRowCodec` to project the persisted binary aligned payload through the
+fetched-column list, writes those values into the compiler-generated binary
+aligned row descriptor, and returns rows through the normal executor up queue.
+
+This replaces the previous SQLCI `SELECT *` bypass.
+
+### Executor Insert TCB
+
+`core/sql/executor/LocalLiteStorageStubs.cpp` also builds
+`LocalLiteHbaseInsertTcb` for local-lite `ExHbaseAccessTdb::INSERT_` plans. The
+TCB evaluates the compiler-generated `convertExpr_`, then
+`LocalLiteRowCodec` normalizes that executor-produced row into the local
+canonical binary aligned table layout and persists the `LLBR1` payload through
+`LocalLiteRocksDBStore`.
+
+This replaces the previous SQLCI `INSERT INTO ... VALUES` bypass. INSERT type
+conversion and expression evaluation now come from the compiler/executor path
+for the supported v1 local table types.
 
 ### SQLCI Handler
 
@@ -434,9 +454,6 @@ storage diagnostic.
 `LocalLiteSqlTable_process()` before CLI prepare in local-lite builds. The
 handler recognizes:
 
-- `INSERT INTO <name> VALUES (...)`
-- `INSERT INTO <name> VALUES (...), (...)`
-- `SELECT * FROM <name>`
 - `CREATE INDEX`, `CREATE VIEW`, `CREATE SEQUENCE`, `CREATE SCHEMA`,
   `CREATE SYNONYM`, `ALTER TABLE`, `TRUNCATE TABLE`, `UPDATE`, `DELETE`,
   `MERGE`, and `UPSERT` as explicit unsupported statements
@@ -447,19 +464,19 @@ handler recognizes:
 Unqualified table names default to `TRAFODION.SEABASE.<name>`. Unquoted
 identifiers are uppercased; quoted identifiers preserve case.
 
-`CREATE TABLE` and `DROP TABLE` intentionally fall through this handler and use
-the compiler DDL path described above.
+`CREATE TABLE`, `DROP TABLE`, `INSERT`, and `SELECT` intentionally fall through
+this handler and use the compiler/executor paths described above.
 
 ### Executor Guard
 
-`core/sql/executor/LocalLiteStorageStubs.cpp` now builds
-`LocalLiteUnsupportedHbaseTcb` for `ExHbaseAccessTdb::build()` in local-lite
-instead of returning `NULL`. This prevents a vague crash if an old HBase access
-TDB path is reached before the full RocksDB executor path exists.
+`core/sql/executor/LocalLiteStorageStubs.cpp` still builds
+`LocalLiteUnsupportedHbaseTcb` for HBase access TDB plans other than local-lite
+`SELECT_` and `INSERT_` instead of returning `NULL`. This prevents a vague
+crash if an old unsupported HBase access TDB path is reached.
 
-The unsupported TCB also implements the standard private-state allocator. This
-keeps compiled local table `SELECT` statements from tripping the generic
-executor queue assertion before they can emit the unsupported diagnostic.
+The unsupported TCB also implements the standard private-state allocator, so
+unsupported compiled storage plans can emit a diagnostic instead of tripping a
+generic executor queue assertion.
 
 ## RocksDB Local Store Plan
 
@@ -469,14 +486,13 @@ above.
 
 ### Current Task Status
 
-Last updated after completing local catalog NATable loading on `master`.
+Last updated after moving local table INSERT to executor expression evaluation
+and persisting normalized `LLBR1` binary aligned row payloads.
 
 Completed:
 
 - RocksDB dependency detection and local-lite link flags.
 - Native RocksDB catalog/table store module.
-- SQLCI local table DML/scan bypass for `INSERT INTO ... VALUES (...)` and
-  `SELECT * FROM <table>`.
 - Explicit unsupported diagnostics for known local-lite unsupported SQL.
 - HBase access TDB guard that returns an unsupported TCB instead of `NULL`.
 - Local-lite SQF monitor/tools build trimming.
@@ -484,19 +500,21 @@ Completed:
 - Compiler-routed local table `CREATE TABLE` and `DROP TABLE`, including TMF
   avoidance and visible compiler DDL diagnostics.
 - Local catalog NATable loading for compiler-bound local table references.
+- Local RocksDB executor scan TCB for compiler-bound local table SELECTs.
+- Local RocksDB executor insert TCB for compiler-bound local table INSERTs.
+- Binary aligned executor row materialization and fetched-column projection
+  mapping for local table SELECTs.
+- Versioned binary aligned row persistence for executor INSERT values.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
 - Operational usage documentation for the current SQLCI/RocksDB path.
 
 Remaining, in suggested implementation order:
 
-1. Replace the SQLCI `SELECT *` bypass with a local RocksDB executor scan TCB.
-2. Use Trafodion expression evaluation and a binary row layout for local table
-   inserts/scans.
-3. Implement predicates and projection for local RocksDB scans.
+1. Harden predicates for local RocksDB scans, including predicate columns that
+   are not part of the final projection.
 
-The next task to start is **Replace the SQLCI `SELECT *` bypass with a local
-RocksDB executor scan TCB**.
+The next task to start is **Harden predicates for local RocksDB scans**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -512,9 +530,11 @@ RocksDB executor scan TCB**.
   - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp` and
     `core/sql/sqlci/SqlCmd.cpp`.
   - Current SQLCI-local support is single-row and multi-row
-    `INSERT INTO ... VALUES (...)` and `SELECT * FROM <table>`.
+    `INSERT INTO ... VALUES (...)`.
   - `CREATE TABLE` and `DROP TABLE` were moved out of this SQLCI handler and
     now use the compiler DDL path.
+  - `SELECT` was also moved out of this SQLCI handler and now uses the
+    compiler/executor scan path.
 
 - [x] **Return explicit unsupported diagnostics for known unsupported local
   table SQL.**
@@ -556,38 +576,68 @@ RocksDB executor scan TCB**.
     catalog lookup and synthesized `TrafDesc` table/column/index descriptors.
   - `core/sql/nskgmake/optimizer/Makefile` now compiles
     `LocalLiteRocksDBStore.cpp` into `liboptimizer.so` for local-lite builds.
-  - `core/sql/sqlci/LocalLiteSqlTable.cpp` now leaves non-`SELECT *` table
-    queries for the normal compiler path instead of rejecting them in the SQLCI
-    bypass.
+  - `core/sql/sqlci/LocalLiteSqlTable.cpp` now leaves table SELECT queries for
+    the normal compiler path instead of handling them in the SQLCI bypass.
   - `core/sql/executor/LocalLiteStorageStubs.cpp` allocates queue private state
     for the unsupported HBase TCB so compiled local table plans return a clear
     unsupported diagnostic instead of asserting.
-  - Acceptance check: `SELECT a FROM t` against a local RocksDB table no longer
-    reports table-not-found or SQLCI bypass errors; it binds through NATable and
-    reaches the local-lite unsupported storage TCB until the scan TCB task is
-    implemented.
+  - Acceptance check: `SELECT * FROM t` against a local RocksDB table no longer
+    reports table-not-found or SQLCI bypass errors; it binds through NATable.
 
-- [ ] **Replace the SQLCI `SELECT *` bypass with an executor TCB for local table
+- [x] **Replace the SQLCI `SELECT *` bypass with an executor TCB for local table
   scans.**
-  - Target files to investigate first:
-    `core/sql/executor/ExHbaseAccess.cpp`,
-    `core/sql/executor/LocalLiteStorageStubs.cpp`,
-    `core/sql/comexe/ComTdbHbaseAccess.h`, and
-    `core/sql/generator/GenRelScan.cpp`.
-  - Acceptance check: generated table access plans instantiate a local RocksDB
-    scan TCB and return rows through normal executor queues.
+  - Implemented in `core/sql/executor/LocalLiteStorageStubs.cpp` as
+    `LocalLiteHbaseScanTcb`, using the existing HBase access TDB shape only as
+    a carrier for local table scan metadata.
+  - `core/sql/comexe/ComTdbHbaseAccess.h` grants the local-lite scan TCB access
+    to the compiler-generated work CRI, tuple indexes, and expressions without
+    changing the TDB layout.
+  - Acceptance check: generated table access plans instantiate the local
+    RocksDB scan TCB and return rows through normal executor queues.
 
-- [ ] **Use Trafodion expression evaluation and binary row layout for local
-  table inserts/scans.**
-  - Target files to investigate first: `core/sql/exp`, `core/sql/comexe`, and
-    row conversion code used by existing HBase access.
-  - Acceptance check: integer, decimal, floating point, `CHAR`, `VARCHAR`,
-    `DATE`, `TIME`, and `TIMESTAMP` values are encoded with a versioned binary
-    row format and decoded through executor expressions.
+- [x] **Materialize projected scan rows in the binary aligned executor row
+  layout.**
+  - Implemented in `core/sql/generator/GenRelScan.cpp`,
+    `core/sql/optimizer/NATable.cpp`, and
+    `core/sql/executor/LocalLiteStorageStubs.cpp`.
+  - Local NATable column descriptors now carry synthetic HBase qualifiers so
+    the existing HBase access TDB can expose a fetched-column list for local
+    table columns.
+  - The generator keeps projected base/index columns mapped to the scan tuple
+    attributes needed by the local-lite TCB.
+  - The scan TCB maps fetched columns from the persisted binary aligned row
+    payload to the requested projection and writes supported values into the
+    compiler-generated binary aligned row descriptor.
+  - Runtime validation covers `SELECT b`, `SELECT a, b`, and `SELECT *` for
+    an `INT, VARCHAR` local table.
 
-- [ ] **Implement predicates and projection for local RocksDB scans.**
-  - Depends on the local scan TCB and expression-backed row format.
-  - Acceptance check: `SELECT a FROM t WHERE a = 1;` runs through the normal
+- [x] **Persist local table rows as versioned binary aligned payloads.**
+  - Implemented in `core/sql/localstore/LocalLiteRowCodec.cpp` and
+    `core/sql/localstore/LocalLiteRowCodec.h`.
+  - Executor `INSERT INTO ... VALUES` now evaluates the compiler-generated
+    insert expression and persists the complete table row as `LLBR1` binary
+    aligned row data through `LocalLiteRocksDBStore`.
+  - Executor scans project directly from the binary payload; the older
+    SQLCI-local text-field row payload is no longer used for new rows.
+  - Runtime validation covers persisted `INT, VARCHAR` rows across separate
+    `sqlci` processes.
+
+- [x] **Move local table inserts to executor expressions.**
+  - Implemented in `core/sql/executor/LocalLiteStorageStubs.cpp` as
+    `LocalLiteHbaseInsertTcb`.
+  - `core/sql/sqlci/LocalLiteSqlTable.cpp` no longer intercepts `INSERT`.
+  - `core/sql/generator/GenRelMisc.cpp` disables root transaction startup in
+    local-lite, since this runtime does not start TMF.
+  - `core/sql/localstore/LocalLiteRowCodec.cpp` normalizes the
+    executor-produced insert row into the local canonical binary aligned row
+    layout before persistence.
+  - Runtime validation covers single-row and multi-row `INSERT INTO ... VALUES`
+    followed by projected executor scans.
+
+- [ ] **Harden predicates for local RocksDB scans.**
+  - Ensure predicate-only columns are available to expression evaluation even
+    when they are not part of the final projection.
+  - Acceptance check: `SELECT b FROM t WHERE a = 1;` runs through the normal
     SQL compiler/executor path and returns only matching projected columns.
 
 - [x] **Define and enforce v1 unsupported object/type rules before CLI

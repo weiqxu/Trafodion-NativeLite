@@ -5158,6 +5158,10 @@ RelExpr * HbaseDelete::preCodeGen(Generator * generator,
   // Use hbase or region transactions. 
   // Hbase guarantees single row consistency.
   Int64 transId = -1;
+#ifdef TRAF_LOCAL_LITE
+  noDTMxn() = TRUE;
+  generator->resetTransactionFlag();
+#else
   if (CmpCommon::getDefault(TRAF_NO_DTM_XN) == DF_ON)
     {
       // no transaction needed
@@ -5187,6 +5191,7 @@ RelExpr * HbaseDelete::preCodeGen(Generator * generator,
 	  (generator->oltOptInfo()->multipleRowsReturned()))
 	generator->setUpdAbortOnError(TRUE);
     }
+#endif
 
   // flag for hbase tables
   generator->setHdfsAccess(TRUE);
@@ -5444,6 +5449,10 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
   // Use hbase or region transactions. 
   // Hbase guarantees single row consistency.
   Int64 transId = -1;
+#ifdef TRAF_LOCAL_LITE
+  noDTMxn() = TRUE;
+  generator->resetTransactionFlag();
+#else
   if (CmpCommon::getDefault(TRAF_NO_DTM_XN) == DF_ON)
     {
       // no transaction needed
@@ -5475,6 +5484,7 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
 	  (generator->oltOptInfo()->multipleRowsReturned()))
 	generator->setUpdAbortOnError(TRUE);
     }
+#endif
 
   // flag for hbase tables
   generator->setHdfsAccess(TRUE);

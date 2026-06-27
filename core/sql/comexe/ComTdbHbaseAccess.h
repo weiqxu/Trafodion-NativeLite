@@ -107,6 +107,10 @@ class ComTdbHbaseAccess : public ComTdb
   friend class ExMetadataUpgradeTcb;
   friend class ExHbaseAccessBulkLoadPrepSQTcb;
   friend class ExHbaseAccessBulkLoadTaskTcb;
+#ifdef TRAF_LOCAL_LITE
+  friend class LocalLiteHbaseScanTcb;
+  friend class LocalLiteHbaseInsertTcb;
+#endif
 
 public:
   enum ComTdbAccessType

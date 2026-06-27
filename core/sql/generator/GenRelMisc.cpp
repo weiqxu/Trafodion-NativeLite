@@ -2634,6 +2634,9 @@ short RelRoot::codeGen(Generator * generator)
   // at runtime.
   // After parser support for REPEATABLE ACCESS, etc, is in, this
   // information will come from the parse tree for scans.
+#ifdef TRAF_LOCAL_LITE
+  root_tdb->setTransactionNotReqd();
+#else
   if (generator->isTransactionNeeded())
     {
       root_tdb->setTransactionReqd();
@@ -2671,6 +2674,7 @@ short RelRoot::codeGen(Generator * generator)
 	  root_tdb->setUpdErrorOnError(-1);
 	}
     } // transactionNeeded
+#endif
 
   if ((oltOptLean()) &&
       (doOltQryOpt))

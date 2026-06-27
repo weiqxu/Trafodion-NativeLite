@@ -46,10 +46,28 @@ grep -q 'ROCKSDB_LIB' "$makerules" || fail "SQL makerules must define RocksDB li
 grep -q -- '-lrocksdb' "$makerules" || fail "local-lite SQL link flags must include librocksdb"
 grep -q 'localstore' "$executor_makefile" || fail "executor build must include the localstore source path"
 grep -q 'LocalLiteRocksDBStore.cpp' "$executor_makefile" || fail "executor build must compile the RocksDB local store"
+grep -q 'LocalLiteRowCodec.cpp' "$executor_makefile" || fail "executor build must compile the local-lite row codec"
 grep -q 'LocalLiteUnsupportedHbaseTcb' "$storage_stubs" ||
   fail "local-lite HBase access build must create an executor TCB instead of returning NULL"
+grep -q 'LocalLiteHbaseScanTcb' "$storage_stubs" ||
+  fail "local-lite SELECT must use an executor scan TCB"
+grep -q 'LocalLiteHbaseInsertTcb' "$storage_stubs" ||
+  fail "local-lite INSERT must use an executor insert TCB"
+grep -q 'LocalLiteProjectBinaryRow' "$storage_stubs" ||
+  fail "local-lite executor scan must project from binary persisted rows"
+grep -q 'LocalLiteNormalizeBinaryRow' "$storage_stubs" ||
+  fail "local-lite executor insert must persist normalized executor binary aligned rows"
+if grep -q 'LocalLiteDecodeFields' "$storage_stubs"; then
+  fail "local-lite executor scan must not decode SQLCI text field rows"
+fi
 grep -q 'LocalLiteSqlTable.cpp' "$sqlcilib_makefile" ||
   fail "sqlcilib build must compile the local-lite SQL table handler"
+if grep -q 'processInsert' "$local_sql_handler"; then
+  fail "SQLCI handler must not intercept INSERT after executor insert migration"
+fi
+if grep -q 'LocalLiteEncodeBinaryRow' "$local_sql_handler"; then
+  fail "SQLCI handler must not encode INSERT rows after executor insert migration"
+fi
 grep -q 'LocalLiteRocksDBStore.cpp' "$sqlcomp_makefile" ||
   fail "sqlcomp build must compile the RocksDB local store"
 grep -q 'localstore' "$sqlcomp_makefile" ||
@@ -73,6 +91,9 @@ if grep -q 'startsWithWord(sql, "CREATE TABLE")' "$local_sql_handler"; then
 fi
 if grep -q 'startsWithWord(sql, "DROP TABLE")' "$local_sql_handler"; then
   fail "SQLCI handler must not intercept DROP TABLE after compiler DDL migration"
+fi
+if grep -q 'processSelect' "$local_sql_handler"; then
+  fail "SQLCI handler must not intercept SELECT after executor scan migration"
 fi
 grep -q 'executeSeabaseDDL(localLiteDDLExpr, boundLocalDDL' "$cmp_stmt" ||
   fail "embedded compiler DDL path must dispatch local table DDL directly"
