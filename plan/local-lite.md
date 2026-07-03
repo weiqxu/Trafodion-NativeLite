@@ -46,8 +46,9 @@ Implemented:
 - RocksDB development dependency detection for local-lite SQL builds. Missing
   headers produce an explicit build error that names `librocksdb-dev`,
   `rocksdb-devel`, and `ROCKSDB_INC_DIR`.
-- Minimal `sqlci` local table handler compiled into `libsqlcilib.so` only when
-  `TRAF_LOCAL_LITE=1`.
+- Minimal `sqlci` local table gate compiled into `libsqlcilib.so` only when
+  `TRAF_LOCAL_LITE=1`. It reports known unsupported statements before prepare;
+  supported local table queries are not executed by SQLCI.
 - Minimal RocksDB catalog and table data store under
   `TRAF_LOCAL_STORE_DIR` or `TRAF_VAR/localstore/rocksdb`.
 - Basic local table SQL in `sqlci`: compiler-routed `CREATE TABLE`,
@@ -265,7 +266,8 @@ If `CREATE TABLE` reports a TMF error such as:
 ERROR[8604] Transaction subsystem TMF returned error 82 while starting a transaction.
 ```
 
-then SQLCI did not use the local-lite RocksDB handler. The usual causes are:
+then the local-lite compiler/executor table path was not selected. The usual
+causes are:
 
 - Running `sqlci` from a workspace that does not contain this implementation.
 - Loading an older `libsqlcilib.so` because `LD_LIBRARY_PATH` points at another
@@ -320,9 +322,10 @@ RocksDB path. Keep this section current when completing the plan items below.
   `core/sql/localstore/LocalLiteRocksDBStore.cpp` and
   `core/sql/localstore/LocalLiteRowCodec.cpp` into the executor library for
   local-lite builds.
-- `core/sql/nskgmake/sqlcilib/Makefile` compiles
-  `core/sql/sqlci/LocalLiteSqlTable.cpp`, the RocksDB store, and the shared row
-  codec into `libsqlcilib.so` for local-lite builds.
+- `core/sql/nskgmake/sqlcilib/Makefile` compiles only
+  `core/sql/sqlci/LocalLiteSqlTable.cpp` into `libsqlcilib.so` for
+  local-lite builds. SQLCI does not link the RocksDB store or row codec for
+  local table IO.
 - `core/sql/nskgmake/sqlcomp/Makefile` compiles the RocksDB store into
   `libsqlcomp.so` for local-lite builds, so compiler DDL can write local
   catalog metadata without linking Java, HBase, or HDFS code.
@@ -421,8 +424,10 @@ binding: signed tiny/small/int/large integers, real/float, double, `CHAR`,
 ISO88591 descriptors.
 
 `core/sql/sqlci/LocalLiteSqlTable.cpp` no longer intercepts local table
-`SELECT`. Local table scans fall through to CLI prepare, bind through the local
-catalog NATable path, and execute through `LocalLiteHbaseScanTcb`.
+`SELECT`. All supported queries, including `VALUES` queries and local table
+queries, fall through to CLI prepare and executor execution. Local table scans
+bind through the local catalog NATable path and execute through
+`LocalLiteHbaseScanTcb`.
 
 ### Executor Scan TCB
 
@@ -467,6 +472,10 @@ identifiers are uppercased; quoted identifiers preserve case.
 `CREATE TABLE`, `DROP TABLE`, `INSERT`, and `SELECT` intentionally fall through
 this handler and use the compiler/executor paths described above.
 
+All supported query execution must use executor TCBs. The SQLCI local-lite hook
+is only an early unsupported-statement gate and must not scan RocksDB rows,
+insert RocksDB rows, or materialize result rows directly.
+
 ### Executor Guard
 
 `core/sql/executor/LocalLiteStorageStubs.cpp` still builds
@@ -496,7 +505,8 @@ Completed:
 - Explicit unsupported diagnostics for known local-lite unsupported SQL.
 - HBase access TDB guard that returns an unsupported TCB instead of `NULL`.
 - Local-lite SQF monitor/tools build trimming.
-- SQLCI RocksDB smoke/regression coverage.
+- SQLCI-entry RocksDB smoke/regression coverage for compiler/executor-backed
+  table IO.
 - Compiler-routed local table `CREATE TABLE` and `DROP TABLE`, including TMF
   avoidance and visible compiler DDL diagnostics.
 - Local catalog NATable loading for compiler-bound local table references.
@@ -507,7 +517,8 @@ Completed:
 - Versioned binary aligned row persistence for executor INSERT values.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
-- Operational usage documentation for the current SQLCI/RocksDB path.
+- Operational usage documentation for the current sqlci entry point and
+  compiler/executor-backed RocksDB table path.
 
 Remaining, in suggested implementation order:
 
@@ -526,15 +537,17 @@ The next task to start is **Harden predicates for local RocksDB scans**.
   - Current store supports create, drop, metadata lookup, row ID allocation,
     row insert, and full row scan.
 
-- [x] **Wire SQLCI local table statements to RocksDB.**
+- [x] **Remove SQLCI direct local table IO and route supported statements to
+  compiler/executor paths.**
   - Implemented in `core/sql/sqlci/LocalLiteSqlTable.cpp` and
     `core/sql/sqlci/SqlCmd.cpp`.
-  - Current SQLCI-local support is single-row and multi-row
-    `INSERT INTO ... VALUES (...)`.
+  - SQLCI no longer performs direct RocksDB table scans or inserts. The
+    local-lite SQLCI hook only reports known unsupported statements before
+    prepare.
   - `CREATE TABLE` and `DROP TABLE` were moved out of this SQLCI handler and
     now use the compiler DDL path.
-  - `SELECT` was also moved out of this SQLCI handler and now uses the
-    compiler/executor scan path.
+  - `INSERT` and all table `SELECT` queries were also moved out of this SQLCI
+    handler and now use executor TCBs after normal CLI prepare/bind/generate.
 
 - [x] **Return explicit unsupported diagnostics for known unsupported local
   table SQL.**
@@ -549,7 +562,8 @@ The next task to start is **Harden predicates for local RocksDB scans**.
   - Implemented by removing `make_monitor` and top-level `tools` from
     `LOCAL_LITE_COMPONENTS` in `core/sqf/Makefile`.
 
-- [x] **Add automated smoke coverage for the current SQLCI RocksDB path.**
+- [x] **Add automated smoke coverage for the current sqlci-entry RocksDB
+  path.**
   - Implemented in `scripts/test-local-lite-rocksdb-sqlci.sh`.
   - The script verifies `librocksdb` linkage, absence of Java/Hadoop/HBase/
     ZooKeeper dynamic library names, local table create/insert/select/drop, and
@@ -654,14 +668,15 @@ The next task to start is **Harden predicates for local RocksDB scans**.
     the compiler path, so they are enforced before reaching HBase, HDFS, Java,
     or TMF code.
 
-- [x] **Add a focused regression test suite for local-lite RocksDB SQLCI.**
+- [x] **Add a focused regression test suite for local-lite RocksDB through
+  sqlci.**
   - Implemented by extending `scripts/test-local-lite-rocksdb-sqlci.sh`.
   - Current coverage includes create/drop, duplicate table errors, missing
     table errors, insert column count errors, unsupported LOB type diagnostics,
     multi-row inserts, restart persistence, unsupported SQL, `librocksdb`
     linkage, and Java/Hadoop/HBase/ZooKeeper dynamic dependency checks.
 
-- [x] **Document operational usage for the current SQLCI RocksDB path.**
+- [x] **Document operational usage for the current sqlci-entry RocksDB path.**
   - Added environment setup, supported SQL examples, data directory cleanup, and
     troubleshooting for accidentally running an old `sqlci` or old
     `libsqlcilib.so`.

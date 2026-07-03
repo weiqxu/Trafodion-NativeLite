@@ -9,9 +9,10 @@ runtime milestone is `sqlci` as a local single-process command-line SQL engine
 for compiler/executor-only SQL and minimal local RocksDB table smoke tests.
 
 Local-lite is not a complete standalone database. It has a narrow
-RocksDB-backed local table path for `sqlci` with local executor scan and insert
-TCBs, but no transactions, indexes, privileges, JDBC/ODBC service path,
-DCS/REST stack, or HBase/HDFS/Hive runtime.
+RocksDB-backed local table path reachable from `sqlci`, but supported queries
+fall through normal compiler/executor execution and use local executor scan and
+insert TCBs. It has no transactions, indexes, privileges, JDBC/ODBC service
+path, DCS/REST stack, or HBase/HDFS/Hive runtime.
 
 Full details are in:
 
