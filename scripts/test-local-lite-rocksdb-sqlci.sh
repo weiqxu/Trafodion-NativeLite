@@ -66,7 +66,7 @@ if grep -q 'does not exist or is inaccessible' <<<"$bind_output"; then
 fi
 
 projection_output=$(
-  printf "SELECT b FROM t;\nSELECT a, b FROM t;\nexit;\n" |
+  printf "SELECT b FROM t;\nSELECT a, b FROM t;\nSELECT b FROM t WHERE a = 1;\nexit;\n" |
     run_sqlci
 )
 grep -q 'one' <<<"$projection_output" ||
@@ -75,6 +75,8 @@ grep -q 'two' <<<"$projection_output" ||
   fail "executor scan did not return second projected VARCHAR row"
 grep -q -- '--- 2 row(s) selected.' <<<"$projection_output" ||
   fail "executor scan projection did not report selected rows"
+grep -q -- '--- 1 row(s) selected.' <<<"$projection_output" ||
+  fail "executor scan predicate did not filter projected rows"
 
 error_output=$(
   printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |

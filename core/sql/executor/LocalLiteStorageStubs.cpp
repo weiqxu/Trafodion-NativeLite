@@ -405,21 +405,43 @@ private:
         return false;
       }
 
-    std::vector<size_t> sourceIndexes;
-    if (!projectionSourceIndexes(asciiTd, &sourceIndexes, error))
+    std::vector<size_t> asciiSourceIndexes;
+    if (!projectionSourceIndexes(asciiTd, &asciiSourceIndexes, error))
       return false;
 
-    if (sourceIndexes.size() != convertTd->numAttrs())
-      {
-        *error = "local-lite scan projection does not match tuple descriptor";
-        return false;
-      }
+    std::vector<size_t> convertSourceIndexes;
+    if (!projectionSourceIndexes(convertTd, &convertSourceIndexes, error))
+      return false;
 
     workAtp_->getTupp(scanTdb().asciiTuppIndex_).setDataPointer(asciiRow_);
     workAtp_->getTupp(scanTdb().convertTuppIndex_).setDataPointer(convertRow_);
 
+    unsigned int asciiLen = 0;
+    if (!LocalLiteProjectBinaryRow(table_, row.value, asciiSourceIndexes,
+                                   asciiTd, asciiRow_,
+                                   scanTdb().asciiRowLen_,
+                                   &asciiLen, error))
+      return false;
+
+    if (scanTdb().scanExpr_)
+      {
+        ex_expr::exp_return_type evalRetCode =
+          scanTdb().scanExpr_->eval(downEntry()->getAtp(), workAtp_);
+        if (evalRetCode == ex_expr::EXPR_ERROR)
+          {
+            *error = "local-lite scan predicate evaluation failed";
+            return false;
+          }
+        if (evalRetCode == ex_expr::EXPR_FALSE)
+          {
+            *pass = false;
+            *formattedLen = 0;
+            return true;
+          }
+      }
+
     unsigned int convertLen = 0;
-    if (!LocalLiteProjectBinaryRow(table_, row.value, sourceIndexes,
+    if (!LocalLiteProjectBinaryRow(table_, row.value, convertSourceIndexes,
                                    convertTd, convertRow_,
                                    scanTdb().convertRowLen_,
                                    &convertLen, error))
@@ -601,11 +623,11 @@ private:
     return true;
   }
 
-  bool projectionSourceIndexes(ExpTupleDesc *asciiTd,
+  bool projectionSourceIndexes(ExpTupleDesc *td,
                                std::vector<size_t> *sourceIndexes,
                                std::string *error)
   {
-    if (!asciiTd)
+    if (!td)
       {
         *error = "local-lite missing scan tuple descriptor";
         return false;
@@ -613,9 +635,9 @@ private:
 
     sourceIndexes->clear();
     Queue *fetched = scanTdb().listOfFetchedColNames();
-    if (fetched && fetched->numEntries() >= asciiTd->numAttrs())
+    if (fetched && fetched->numEntries() >= td->numAttrs())
       {
-        for (UInt32 i = 0; i < asciiTd->numAttrs(); i++)
+        for (UInt32 i = 0; i < td->numAttrs(); i++)
           {
             size_t sourceIndex = 0;
             if (!decodeFetchedColumnIndex((char *)fetched->get(i),
@@ -629,7 +651,7 @@ private:
         return true;
       }
 
-    for (UInt32 i = 0; i < asciiTd->numAttrs(); i++)
+    for (UInt32 i = 0; i < td->numAttrs(); i++)
       sourceIndexes->push_back(i);
     return true;
   }

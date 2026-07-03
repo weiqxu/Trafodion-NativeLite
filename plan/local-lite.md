@@ -496,7 +496,8 @@ above.
 ### Current Task Status
 
 Last updated after moving local table INSERT to executor expression evaluation
-and persisting normalized `LLBR1` binary aligned row payloads.
+and hardening local executor scans to evaluate predicates over binary aligned
+rows.
 
 Completed:
 
@@ -515,6 +516,8 @@ Completed:
 - Binary aligned executor row materialization and fetched-column projection
   mapping for local table SELECTs.
 - Versioned binary aligned row persistence for executor INSERT values.
+- Predicate evaluation for local RocksDB scans, including predicates on columns
+  that are not part of the final projection.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
 - Operational usage documentation for the current sqlci entry point and
@@ -522,10 +525,10 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Harden predicates for local RocksDB scans, including predicate columns that
-   are not part of the final projection.
+1. Extend local-lite row codec and DDL validation for the next required scalar
+   type family beyond the current v1 smoke coverage.
 
-The next task to start is **Harden predicates for local RocksDB scans**.
+The next task to start is **Extend local-lite scalar type coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -648,9 +651,13 @@ The next task to start is **Harden predicates for local RocksDB scans**.
   - Runtime validation covers single-row and multi-row `INSERT INTO ... VALUES`
     followed by projected executor scans.
 
-- [ ] **Harden predicates for local RocksDB scans.**
+- [x] **Harden predicates for local RocksDB scans.**
   - Ensure predicate-only columns are available to expression evaluation even
     when they are not part of the final projection.
+  - Implemented in `core/sql/executor/LocalLiteStorageStubs.cpp` by
+    materializing the scan ascii tuple from persisted `LLBR1` rows, evaluating
+    the compiler-generated `scanExpr_`, and only then materializing the
+    projected convert tuple.
   - Acceptance check: `SELECT b FROM t WHERE a = 1;` runs through the normal
     SQL compiler/executor path and returns only matching projected columns.
 
