@@ -1,1 +1,1 @@
-/home/weiqxu/learning/trafodion/core/sqf/opt/hpmpi/include/mpicxx.h
+/home/weiqxu/workspace/Trafodion-NativeLite/core/sqf/opt/hpmpi/include/mpicxx.h

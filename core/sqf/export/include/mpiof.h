@@ -1,1 +1,1 @@
-/home/weiqxu/learning/trafodion/core/sqf/opt/hpmpi/include/mpiof.h
+/home/weiqxu/workspace/Trafodion-NativeLite/core/sqf/opt/hpmpi/include/mpiof.h

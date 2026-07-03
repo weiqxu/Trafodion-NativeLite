@@ -1,1 +1,1 @@
-/home/weiqxu/learning/trafodion/core/sqf/opt/hpmpi/include/mpi_f08_types.mod
+/home/weiqxu/workspace/Trafodion-NativeLite/core/sqf/opt/hpmpi/include/mpi_f08_types.mod

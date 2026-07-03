@@ -1,1 +1,1 @@
-/home/weiqxu/learning/trafodion/core/sqf/opt/hpmpi/include/pmpi_base.mod
+/home/weiqxu/workspace/Trafodion-NativeLite/core/sqf/opt/hpmpi/include/pmpi_base.mod

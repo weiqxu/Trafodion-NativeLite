@@ -1,1 +1,1 @@
-/home/weiqxu/learning/trafodion/core/sqf/opt/hpmpi/include/pmpi_f08.mod
+/home/weiqxu/workspace/Trafodion-NativeLite/core/sqf/opt/hpmpi/include/pmpi_f08.mod
