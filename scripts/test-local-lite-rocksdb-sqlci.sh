@@ -79,7 +79,7 @@ grep -q -- '--- 1 row(s) selected.' <<<"$projection_output" ||
   fail "executor scan predicate did not filter projected rows"
 
 error_output=$(
-  printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
+  printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nCREATE TABLE bad_decimal(c DECIMAL(5,2));\nCREATE TABLE bad_numeric(c NUMERIC(19,2));\nexit;\n" |
     run_sqlci
 )
 grep -q 'ERROR\[4082\]' <<<"$error_output" ||
@@ -112,6 +112,18 @@ fi
 datetime_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$datetime_output")
 [[ "$datetime_selected_count" -ge 3 ]] ||
   fail "datetime predicate scans did not each report one selected row"
+
+numeric_output=$(
+  printf "CREATE TABLE numtab(n NUMERIC(5,2), label VARCHAR(20));\nINSERT INTO numtab VALUES (12.34, 'ok'), (56.78, 'miss');\nSELECT label FROM numtab WHERE n = 12.34;\nDROP TABLE numtab;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'ok' <<<"$numeric_output" ||
+  fail "numeric predicate scan did not return matching row"
+if grep -q 'miss' <<<"$numeric_output"; then
+  fail "numeric predicate scan returned non-matching row"
+fi
+grep -q -- '--- 1 row(s) selected.' <<<"$numeric_output" ||
+  fail "numeric predicate scan did not report one selected row"
 
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT PRIMARY KEY);\nexit;\n" |

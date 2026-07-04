@@ -30,6 +30,7 @@ enum LocalLiteCodecType
   LL_TYPE_INT64,
   LL_TYPE_FLOAT32,
   LL_TYPE_FLOAT64,
+  LL_TYPE_NUMERIC,
   LL_TYPE_DATETIME,
   LL_TYPE_CHAR,
   LL_TYPE_VARCHAR
@@ -80,6 +81,31 @@ static size_t typeArg(const std::string &type, size_t defaultValue)
   return value > 0 ? static_cast<size_t>(value) : defaultValue;
 }
 
+static size_t secondTypeArg(const std::string &type, size_t defaultValue)
+{
+  size_t lparen = type.find('(');
+  if (lparen == std::string::npos)
+    return defaultValue;
+  size_t comma = type.find(',', lparen + 1);
+  if (comma == std::string::npos)
+    return defaultValue;
+  const char *p = type.c_str() + comma + 1;
+  char *end = NULL;
+  long value = strtol(p, &end, 10);
+  return value >= 0 ? static_cast<size_t>(value) : defaultValue;
+}
+
+static size_t numericStorageSize(size_t precision)
+{
+  if (precision <= 2)
+    return 1;
+  if (precision <= 4)
+    return 2;
+  if (precision <= 9)
+    return 4;
+  return 8;
+}
+
 static bool mapType(const std::string &typeText,
                     LocalLiteCodecType *type,
                     size_t *length)
@@ -122,6 +148,16 @@ static bool mapType(const std::string &typeText,
     {
       *type = LL_TYPE_FLOAT64;
       *length = 8;
+      return true;
+    }
+  if (startsWithWord(typeName, "NUMERIC"))
+    {
+      size_t precision = typeArg(typeName, 18);
+      size_t scale = secondTypeArg(typeName, 0);
+      if (precision < 1 || precision > 18 || scale > precision)
+        return false;
+      *type = LL_TYPE_NUMERIC;
+      *length = numericStorageSize(precision);
       return true;
     }
   if (startsWithWord(typeName, "DATE"))
@@ -183,6 +219,7 @@ static size_t typeAlignment(LocalLiteCodecType type)
     case LL_TYPE_INT64:
     case LL_TYPE_FLOAT64:
     case LL_TYPE_DATETIME:
+    case LL_TYPE_NUMERIC:
       return 8;
     }
   return 1;
@@ -345,6 +382,11 @@ static bool writeValue(char *row,
         double v = strtod(value.c_str(), NULL);
         str_cpy_all(target, reinterpret_cast<char *>(&v), sizeof(v));
         return true;
+      }
+    case LL_TYPE_NUMERIC:
+      {
+        setError(error, "local-lite numeric values require executor expression encoding");
+        return false;
       }
     case LL_TYPE_DATETIME:
       {
@@ -565,6 +607,7 @@ static bool copyAttrToCanonical(const char *srcRow,
     case LL_TYPE_FLOAT32:
     case LL_TYPE_FLOAT64:
     case LL_TYPE_DATETIME:
+    case LL_TYPE_NUMERIC:
       {
         size_t len = srcLen < destCol.length ? srcLen : destCol.length;
         str_cpy_all(destRow + destCol.offset, src, len);

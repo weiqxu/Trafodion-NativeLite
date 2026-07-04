@@ -63,6 +63,9 @@ Implemented:
   plans. It evaluates the compiler-generated insert expression, normalizes the
   executor row into the local canonical binary aligned row layout, and persists
   the `LLBR1` payload through RocksDB.
+- Local-lite scalar type coverage includes integer, floating-point, character,
+  date/time/timestamp, and small exact `NUMERIC(p,s)` values whose precision
+  fits Trafodion's binary executor representation.
 - Unsupported local table SQL diagnostics for `UPDATE`, `DELETE`, `MERGE`,
   `UPSERT`, and `CREATE INDEX`.
 - HBase access TDBs reached through the old executor path now build a TCB that
@@ -84,7 +87,8 @@ Known limits:
   `CREATE TABLE` and `DROP TABLE`, and local tables can now be loaded as
   NATables from the local catalog. Local table inserts also fall through CLI
   prepare and execute through the local executor insert TCB. Type coverage is
-  still intentionally narrow.
+  still intentionally narrow; `DECIMAL` and `NUMERIC` values that require
+  Trafodion BigNum storage are rejected by local-lite DDL for now.
 - `SELECT` over local RocksDB tables uses the local executor scan TCB. The scan
   TCB projects from persisted binary aligned rows into the compiler-generated
   executor row layout.
@@ -520,6 +524,8 @@ Completed:
   that are not part of the final projection.
 - Date/time/timestamp local table rows through executor insert, `LLBR1`
   persistence, and executor scan predicates.
+- Small exact `NUMERIC(p,s)` local table rows through executor insert,
+  `LLBR1` persistence, and executor scan predicates.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
 - Operational usage documentation for the current sqlci entry point and
@@ -527,10 +533,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Extend local-lite row codec and DDL validation for exact numeric/decimal
-   types if they are needed for the next smoke target.
+1. Evaluate full `DECIMAL` and BigNum `NUMERIC` support if they are needed for
+   the next smoke target.
 
-The next task to start is **Evaluate decimal/numeric type support scope**.
+The next task to start is **Evaluate NULL and expression edge cases for local
+executor INSERT/SCAN rows**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -674,6 +681,18 @@ The next task to start is **Evaluate decimal/numeric type support scope**.
   - Runtime validation covers executor inserts and scan predicates over
     `DATE`, `TIME`, and `TIMESTAMP` columns while projecting a separate
     `VARCHAR` column.
+
+- [x] **Extend local-lite scalar type coverage for small exact NUMERIC types.**
+  - Implemented in `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp`,
+    `core/sql/optimizer/NATable.cpp`, and
+    `core/sql/localstore/LocalLiteRowCodec.cpp`.
+  - `NUMERIC(p,s)` values with precision `1..18` are stored as fixed binary
+    executor values in the local `LLBR1` row; write-side encoding still comes
+    from the compiler-generated insert expression.
+  - `DECIMAL` and `NUMERIC` values that require BigNum storage remain
+    unsupported and are rejected by compiler DDL with a local-lite diagnostic.
+  - Runtime validation covers executor inserts and scan predicates over
+    `NUMERIC(5,2)` while projecting a separate `VARCHAR` column.
 
 - [x] **Define and enforce v1 unsupported object/type rules before CLI
   prepare.**

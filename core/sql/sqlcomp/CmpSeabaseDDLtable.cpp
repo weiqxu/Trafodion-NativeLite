@@ -120,6 +120,56 @@ static bool localLiteUnsupportedType(const std::string &type)
          u.find("ARRAY") != std::string::npos;
 }
 
+static bool localLiteStartsWithWord(const std::string &s, const char *word)
+{
+  size_t len = strlen(word);
+  return s.size() >= len &&
+         s.compare(0, len, word) == 0 &&
+         (s.size() == len || !isalnum(static_cast<unsigned char>(s[len])));
+}
+
+static long localLiteTypeArg(const std::string &type, long defaultValue)
+{
+  size_t lparen = type.find('(');
+  if (lparen == std::string::npos)
+    return defaultValue;
+  const char *p = type.c_str() + lparen + 1;
+  char *end = NULL;
+  long value = strtol(p, &end, 10);
+  return value > 0 ? value : defaultValue;
+}
+
+static long localLiteSecondTypeArg(const std::string &type, long defaultValue)
+{
+  size_t lparen = type.find('(');
+  if (lparen == std::string::npos)
+    return defaultValue;
+  size_t comma = type.find(',', lparen + 1);
+  if (comma == std::string::npos)
+    return defaultValue;
+  const char *p = type.c_str() + comma + 1;
+  char *end = NULL;
+  long value = strtol(p, &end, 10);
+  return value >= 0 ? value : defaultValue;
+}
+
+static bool localLiteRejectUnsupportedColumnType(const std::string &type)
+{
+  std::string u = localLiteUpper(type);
+  if (localLiteUnsupportedType(u))
+    return true;
+  if (localLiteStartsWithWord(u, "DECIMAL"))
+    return true;
+  if (localLiteStartsWithWord(u, "NUMERIC"))
+    {
+      long precision = localLiteTypeArg(u, 18);
+      long scale = localLiteSecondTypeArg(u, 0);
+      return precision < 1 || precision > 18 || scale < 0 ||
+             scale > precision;
+    }
+  return false;
+}
+
 static uint64_t localLiteNewObjectUid()
 {
   uint64_t uid = static_cast<uint64_t>(time(NULL));
@@ -219,7 +269,7 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
       NAString typeText;
       col->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
       std::string type(typeText.data());
-      if (localLiteUnsupportedType(type))
+      if (localLiteRejectUnsupportedColumnType(type))
         {
           localLiteDDLDiag("unsupported local-lite column type: " + type);
           return false;

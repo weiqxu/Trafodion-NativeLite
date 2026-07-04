@@ -2884,6 +2884,32 @@ static Lng32 localLiteTypeArg(const std::string &type, Lng32 defaultValue)
   return value > 0 ? static_cast<Lng32>(value) : defaultValue;
 }
 
+static Lng32 localLiteSecondTypeArg(const std::string &type,
+                                    Lng32 defaultValue)
+{
+  size_t lparen = type.find('(');
+  if (lparen == std::string::npos)
+    return defaultValue;
+  size_t comma = type.find(',', lparen + 1);
+  if (comma == std::string::npos)
+    return defaultValue;
+  const char *p = type.c_str() + comma + 1;
+  char *end = NULL;
+  long value = strtol(p, &end, 10);
+  return value >= 0 ? static_cast<Lng32>(value) : defaultValue;
+}
+
+static Lng32 localLiteNumericStorageSize(Lng32 precision)
+{
+  if (precision <= 2)
+    return 1;
+  if (precision <= 4)
+    return 2;
+  if (precision <= 9)
+    return 4;
+  return 8;
+}
+
 static bool localLiteMapType(const std::string &typeText,
                              Int32 *datatype,
                              Lng32 *length,
@@ -2937,6 +2963,33 @@ static bool localLiteMapType(const std::string &typeText,
     {
       *datatype = REC_FLOAT64;
       *length = 8;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "NUMERIC"))
+    {
+      *precision = localLiteTypeArg(type, 18);
+      *scale = localLiteSecondTypeArg(type, 0);
+      if (*precision < 1 || *precision > 18 || *scale < 0 ||
+          *scale > *precision)
+        return false;
+      *length = localLiteNumericStorageSize(*precision);
+      switch (*length)
+        {
+        case 1:
+          *datatype = REC_BIN8_SIGNED;
+          break;
+        case 2:
+          *datatype = REC_BIN16_SIGNED;
+          break;
+        case 4:
+          *datatype = REC_BIN32_SIGNED;
+          break;
+        case 8:
+          *datatype = REC_BIN64_SIGNED;
+          break;
+        default:
+          return false;
+        }
       return true;
     }
   if (localLiteStartsWithWord(type, "VARCHAR") ||
