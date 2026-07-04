@@ -63,6 +63,9 @@ Implemented:
   plans. It evaluates the compiler-generated insert expression, normalizes the
   executor row into the local canonical binary aligned row layout, and persists
   the `LLBR1` payload through RocksDB.
+- Local executor table rows preserve nullable values. Scan predicates and
+  projections over NULL fixed-width and variable-width columns use the normal
+  executor tuple descriptors.
 - Local-lite scalar type coverage includes integer, floating-point, character,
   date/time/timestamp, and small exact `NUMERIC(p,s)` values whose precision
   fits Trafodion's binary executor representation.
@@ -526,6 +529,7 @@ Completed:
   persistence, and executor scan predicates.
 - Small exact `NUMERIC(p,s)` local table rows through executor insert,
   `LLBR1` persistence, and executor scan predicates.
+- NULL and insert-expression edge cases for local executor INSERT/SCAN rows.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
 - Operational usage documentation for the current sqlci entry point and
@@ -536,8 +540,8 @@ Remaining, in suggested implementation order:
 1. Evaluate full `DECIMAL` and BigNum `NUMERIC` support if they are needed for
    the next smoke target.
 
-The next task to start is **Evaluate NULL and expression edge cases for local
-executor INSERT/SCAN rows**.
+The next task to start is **Evaluate full DECIMAL and BigNum NUMERIC support
+scope**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -693,6 +697,17 @@ executor INSERT/SCAN rows**.
     unsupported and are rejected by compiler DDL with a local-lite diagnostic.
   - Runtime validation covers executor inserts and scan predicates over
     `NUMERIC(5,2)` while projecting a separate `VARCHAR` column.
+
+- [x] **Cover NULL and expression edge cases for local executor INSERT/SCAN
+  rows.**
+  - Implemented in `core/sql/localstore/LocalLiteRowCodec.cpp` by preserving
+    NULL bitmap state and advancing variable-column VOA state when projecting
+    stored nullable VARCHAR values into executor scan rows.
+  - `core/sql/executor/LocalLiteStorageStubs.cpp` now uses the variable column
+    indicator width when writing local-lite variable-column VOA entries.
+  - Runtime validation covers NULL fixed-width predicates, NULL VARCHAR
+    predicates, executor insert expressions such as arithmetic and CAST,
+    NOT NULL insert diagnostics, and multiple nullable VARCHAR columns.
 
 - [x] **Define and enforce v1 unsupported object/type rules before CLI
   prepare.**

@@ -125,6 +125,26 @@ fi
 grep -q -- '--- 1 row(s) selected.' <<<"$numeric_output" ||
   fail "numeric predicate scan did not report one selected row"
 
+null_expr_output=$(
+  printf "CREATE TABLE nul(a INT, b VARCHAR(20), c INT NOT NULL);\nINSERT INTO nul VALUES (NULL, 'null-a', 1), (2, NULL, 1), (1 + 2, CAST('expr' AS VARCHAR(20)), 1);\nSELECT b FROM nul WHERE a IS NULL;\nSELECT a FROM nul WHERE b IS NULL;\nSELECT b FROM nul WHERE a = 3;\nINSERT INTO nul VALUES (4, 'bad', NULL);\nDROP TABLE nul;\nCREATE TABLE vv(a VARCHAR(10), b VARCHAR(10), label VARCHAR(10));\nINSERT INTO vv VALUES (NULL, 'second', 'hit'), ('first', NULL, 'miss');\nSELECT b, label FROM vv WHERE a IS NULL;\nSELECT a, label FROM vv WHERE b IS NULL;\nDROP TABLE vv;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'null-a' <<<"$null_expr_output" ||
+  fail "NULL numeric predicate scan did not return matching VARCHAR row"
+grep -Eq '^ *2 *$' <<<"$null_expr_output" ||
+  fail "NULL VARCHAR predicate scan did not return matching INT row"
+grep -q 'expr' <<<"$null_expr_output" ||
+  fail "executor expression INSERT did not persist expression result"
+grep -q 'ERROR\[4122\]' <<<"$null_expr_output" ||
+  fail "NOT NULL executor insert diagnostic missing"
+grep -q 'second      hit' <<<"$null_expr_output" ||
+  fail "multiple VARCHAR projection after NULL did not preserve following value"
+grep -q 'first       miss' <<<"$null_expr_output" ||
+  fail "multiple VARCHAR projection with later NULL did not preserve earlier value"
+null_expr_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$null_expr_output")
+[[ "$null_expr_selected_count" -ge 5 ]] ||
+  fail "NULL/expression scans did not each report one selected row"
+
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT PRIMARY KEY);\nexit;\n" |
     run_sqlci

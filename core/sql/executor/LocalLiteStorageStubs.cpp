@@ -524,7 +524,7 @@ private:
               }
 
             ExpTupleDesc::setVoaValue(row, voaOffset, lengthOffset,
-                                      td->getTupleDataFormat());
+                                      attr->getVCIndicatorLength());
             writeVarLength(attr, row, lengthOffset, dataOffset, field,
                            &lengthOffset, &dataOffset, &rowLen);
             ExpAlignedFormat::incrVoaOffset(voaOffset);

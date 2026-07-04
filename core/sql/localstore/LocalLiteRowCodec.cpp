@@ -703,12 +703,30 @@ static bool copyStoredToDest(const std::string &storedRow,
                              ExpTupleDesc *destTd,
                              std::string *error)
 {
+  if (dest->getVCIndicatorLength() > 0 && *firstVar)
+    {
+      *voaOffset = dest->getVoaOffset();
+      *lengthOffset = dest->getVCLenIndOffset();
+      *dataOffset = *lengthOffset + dest->getVCIndicatorLength();
+      *firstVar = false;
+    }
+
   if (storedColumnIsNull(storedRow, source))
     {
       if (dest->getNullFlag())
         ExpTupleDesc::setNullValue(destRow + dest->getNullIndOffset(),
                                    dest->getNullBitIndex(),
                                    destTd->getTupleDataFormat());
+      if (dest->getVCIndicatorLength() > 0)
+        {
+          ExpTupleDesc::setVoaValue(destRow, *voaOffset, *lengthOffset,
+                                    dest->getVCIndicatorLength());
+          dest->setVarLength(0, destRow + *lengthOffset);
+          *lengthOffset = *dataOffset;
+          *dataOffset = *lengthOffset + dest->getVCIndicatorLength();
+          *rowLen = *lengthOffset;
+          ExpAlignedFormat::incrVoaOffset(*voaOffset);
+        }
       return true;
     }
   if (dest->getNullFlag())
@@ -754,15 +772,8 @@ static bool copyStoredToDest(const std::string &storedRow,
         }
       if (len > static_cast<size_t>(dest->getLength()))
         len = dest->getLength();
-      if (*firstVar)
-        {
-          *voaOffset = dest->getVoaOffset();
-          *lengthOffset = dest->getVCLenIndOffset();
-          *dataOffset = *lengthOffset + dest->getVCIndicatorLength();
-          *firstVar = false;
-        }
       ExpTupleDesc::setVoaValue(destRow, *voaOffset, *lengthOffset,
-                                destTd->getTupleDataFormat());
+                                dest->getVCIndicatorLength());
       dest->setVarLength(static_cast<UInt32>(len), destRow + *lengthOffset);
       if (len > 0)
         str_cpy_all(destRow + *dataOffset, src, len);
