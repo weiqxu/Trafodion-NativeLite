@@ -2648,6 +2648,22 @@ short HbaseAccess::codeGen(Generator * generator)
      }
 
 #ifdef TRAF_LOCAL_LITE
+  if (!executorPred().isEmpty())
+    {
+      ValueIdSet predColumns;
+      executorPred().findAllReferencedBaseCols(predColumns);
+      executorPred().findAllReferencedIndexCols(predColumns);
+      for (ValueId predColValId = predColumns.init();
+           predColumns.next(predColValId);
+           predColumns.advance(predColValId))
+        {
+          OperatorTypeEnum op = predColValId.getItemExpr()->getOperatorType();
+          if ((op == ITM_BASECOLUMN || op == ITM_INDEXCOLUMN) &&
+              !columnList.contains(predColValId))
+            columnList.insert(predColValId);
+        }
+    }
+
   for (Lng32 i = 0; i < retColumnList.entries(); i++)
     {
       ValueId retValId = retColumnList[i];

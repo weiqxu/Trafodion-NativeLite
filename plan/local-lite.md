@@ -496,8 +496,8 @@ above.
 ### Current Task Status
 
 Last updated after moving local table INSERT to executor expression evaluation
-and hardening local executor scans to evaluate predicates over binary aligned
-rows.
+and extending the local binary row codec to preserve executor-produced datetime
+values.
 
 Completed:
 
@@ -518,6 +518,8 @@ Completed:
 - Versioned binary aligned row persistence for executor INSERT values.
 - Predicate evaluation for local RocksDB scans, including predicates on columns
   that are not part of the final projection.
+- Date/time/timestamp local table rows through executor insert, `LLBR1`
+  persistence, and executor scan predicates.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
 - Operational usage documentation for the current sqlci entry point and
@@ -525,10 +527,10 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Extend local-lite row codec and DDL validation for the next required scalar
-   type family beyond the current v1 smoke coverage.
+1. Extend local-lite row codec and DDL validation for exact numeric/decimal
+   types if they are needed for the next smoke target.
 
-The next task to start is **Extend local-lite scalar type coverage**.
+The next task to start is **Evaluate decimal/numeric type support scope**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -658,8 +660,20 @@ The next task to start is **Extend local-lite scalar type coverage**.
     materializing the scan ascii tuple from persisted `LLBR1` rows, evaluating
     the compiler-generated `scanExpr_`, and only then materializing the
     projected convert tuple.
+  - `core/sql/generator/GenRelScan.cpp` adds executor-predicate columns before
+    projection-only columns in the local-lite fetched-column list so predicate
+    expressions receive the correct tuple attributes.
   - Acceptance check: `SELECT b FROM t WHERE a = 1;` runs through the normal
     SQL compiler/executor path and returns only matching projected columns.
+
+- [x] **Extend local-lite scalar type coverage for datetime types.**
+  - Implemented in `core/sql/localstore/LocalLiteRowCodec.cpp`.
+  - `DATE`, `TIME`, and `TIMESTAMP` values are persisted from the
+    executor-produced binary representation and copied back into executor scan
+    rows as `REC_DATETIME` values.
+  - Runtime validation covers executor inserts and scan predicates over
+    `DATE`, `TIME`, and `TIMESTAMP` columns while projecting a separate
+    `VARCHAR` column.
 
 - [x] **Define and enforce v1 unsupported object/type rules before CLI
   prepare.**

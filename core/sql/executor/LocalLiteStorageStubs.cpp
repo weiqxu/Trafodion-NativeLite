@@ -423,6 +423,13 @@ private:
                                    &asciiLen, error))
       return false;
 
+    unsigned int convertLen = 0;
+    if (!LocalLiteProjectBinaryRow(table_, row.value, convertSourceIndexes,
+                                   convertTd, convertRow_,
+                                   scanTdb().convertRowLen_,
+                                   &convertLen, error))
+      return false;
+
     if (scanTdb().scanExpr_)
       {
         ex_expr::exp_return_type evalRetCode =
@@ -439,13 +446,6 @@ private:
             return true;
           }
       }
-
-    unsigned int convertLen = 0;
-    if (!LocalLiteProjectBinaryRow(table_, row.value, convertSourceIndexes,
-                                   convertTd, convertRow_,
-                                   scanTdb().convertRowLen_,
-                                   &convertLen, error))
-      return false;
 
     *pass = true;
 

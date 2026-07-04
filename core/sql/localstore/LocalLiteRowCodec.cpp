@@ -30,6 +30,7 @@ enum LocalLiteCodecType
   LL_TYPE_INT64,
   LL_TYPE_FLOAT32,
   LL_TYPE_FLOAT64,
+  LL_TYPE_DATETIME,
   LL_TYPE_CHAR,
   LL_TYPE_VARCHAR
 };
@@ -123,6 +124,24 @@ static bool mapType(const std::string &typeText,
       *length = 8;
       return true;
     }
+  if (startsWithWord(typeName, "DATE"))
+    {
+      *type = LL_TYPE_DATETIME;
+      *length = 4;
+      return true;
+    }
+  if (startsWithWord(typeName, "TIME"))
+    {
+      *type = LL_TYPE_DATETIME;
+      *length = 8;
+      return true;
+    }
+  if (startsWithWord(typeName, "TIMESTAMP"))
+    {
+      *type = LL_TYPE_DATETIME;
+      *length = 11;
+      return true;
+    }
   if (startsWithWord(typeName, "VARCHAR") ||
       startsWithWord(typeName, "CHARACTER VARYING"))
     {
@@ -163,6 +182,7 @@ static size_t typeAlignment(LocalLiteCodecType type)
       return 4;
     case LL_TYPE_INT64:
     case LL_TYPE_FLOAT64:
+    case LL_TYPE_DATETIME:
       return 8;
     }
   return 1;
@@ -325,6 +345,11 @@ static bool writeValue(char *row,
         double v = strtod(value.c_str(), NULL);
         str_cpy_all(target, reinterpret_cast<char *>(&v), sizeof(v));
         return true;
+      }
+    case LL_TYPE_DATETIME:
+      {
+        setError(error, "local-lite datetime values require executor expression encoding");
+        return false;
       }
     case LL_TYPE_CHAR:
       {
@@ -539,6 +564,7 @@ static bool copyAttrToCanonical(const char *srcRow,
     case LL_TYPE_INT64:
     case LL_TYPE_FLOAT32:
     case LL_TYPE_FLOAT64:
+    case LL_TYPE_DATETIME:
       {
         size_t len = srcLen < destCol.length ? srcLen : destCol.length;
         str_cpy_all(destRow + destCol.offset, src, len);
@@ -724,6 +750,7 @@ static bool copyStoredToDest(const std::string &storedRow,
     case REC_BIN64_UNSIGNED:
     case REC_FLOAT32:
     case REC_FLOAT64:
+    case REC_DATETIME:
       {
         size_t len = source.length < static_cast<size_t>(dest->getLength())
                        ? source.length

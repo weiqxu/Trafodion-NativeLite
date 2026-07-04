@@ -100,6 +100,19 @@ grep -q '2  two' <<<"$select_output" ||
 grep -q -- '--- 2 row(s) selected.' <<<"$select_output" ||
   fail "SELECT did not report two selected rows"
 
+datetime_output=$(
+  printf "CREATE TABLE dt(d DATE, tm TIME, ts TIMESTAMP, label VARCHAR(20));\nINSERT INTO dt VALUES (DATE '2026-07-03', TIME '12:34:56', TIMESTAMP '2026-07-03 12:34:56', 'hit'), (DATE '2026-07-04', TIME '01:02:03', TIMESTAMP '2026-07-04 01:02:03', 'miss');\nSELECT label FROM dt WHERE d = DATE '2026-07-03';\nSELECT label FROM dt WHERE tm = TIME '12:34:56';\nSELECT label FROM dt WHERE ts = TIMESTAMP '2026-07-03 12:34:56';\nDROP TABLE dt;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'hit' <<<"$datetime_output" ||
+  fail "datetime predicate scan did not return matching row"
+if grep -q 'miss' <<<"$datetime_output"; then
+  fail "datetime predicate scan returned non-matching row"
+fi
+datetime_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$datetime_output")
+[[ "$datetime_selected_count" -ge 3 ]] ||
+  fail "datetime predicate scans did not each report one selected row"
+
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT PRIMARY KEY);\nexit;\n" |
     run_sqlci
