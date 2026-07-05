@@ -158,14 +158,12 @@ static bool localLiteRejectUnsupportedColumnType(const std::string &type)
   std::string u = localLiteUpper(type);
   if (localLiteUnsupportedType(u))
     return true;
-  if (localLiteStartsWithWord(u, "DECIMAL"))
-    return true;
-  if (localLiteStartsWithWord(u, "NUMERIC"))
+  if (localLiteStartsWithWord(u, "DECIMAL") ||
+      localLiteStartsWithWord(u, "NUMERIC"))
     {
       long precision = localLiteTypeArg(u, 18);
       long scale = localLiteSecondTypeArg(u, 0);
-      return precision < 1 || precision > 18 || scale < 0 ||
-             scale > precision;
+      return precision < 1 || scale < 0 || scale > precision;
     }
   return false;
 }

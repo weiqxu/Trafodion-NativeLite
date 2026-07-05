@@ -8,6 +8,7 @@
 
 #include "LocalLiteRowCodec.h"
 
+#include "BigNumHelper.h"
 #include "LocalLiteRocksDBStore.h"
 #include "Platform.h"
 #include "NABoolean.h"
@@ -106,6 +107,13 @@ static size_t numericStorageSize(size_t precision)
   return 8;
 }
 
+static size_t bigNumStorageSize(size_t precision)
+{
+  Lng32 len =
+    BigNumHelper::ConvPrecisionToStorageLengthHelper(static_cast<Lng32>(precision));
+  return len > 0 ? static_cast<size_t>(len) : 0;
+}
+
 static bool mapType(const std::string &typeText,
                     LocalLiteCodecType *type,
                     size_t *length)
@@ -154,10 +162,23 @@ static bool mapType(const std::string &typeText,
     {
       size_t precision = typeArg(typeName, 18);
       size_t scale = secondTypeArg(typeName, 0);
-      if (precision < 1 || precision > 18 || scale > precision)
+      if (precision < 1 || scale > precision)
         return false;
       *type = LL_TYPE_NUMERIC;
-      *length = numericStorageSize(precision);
+      *length = precision > 18 ? bigNumStorageSize(precision)
+                               : numericStorageSize(precision);
+      if (*length == 0)
+        return false;
+      return true;
+    }
+  if (startsWithWord(typeName, "DECIMAL"))
+    {
+      size_t precision = typeArg(typeName, 18);
+      size_t scale = secondTypeArg(typeName, 0);
+      if (precision < 1 || scale > precision)
+        return false;
+      *type = LL_TYPE_NUMERIC;
+      *length = precision;
       return true;
     }
   if (startsWithWord(typeName, "DATE"))
@@ -805,6 +826,10 @@ static bool copyStoredToDest(const std::string &storedRow,
     case REC_FLOAT32:
     case REC_FLOAT64:
     case REC_DATETIME:
+    case REC_DECIMAL_UNSIGNED:
+    case REC_DECIMAL_LSE:
+    case REC_NUM_BIG_UNSIGNED:
+    case REC_NUM_BIG_SIGNED:
       {
         size_t len = source.length < static_cast<size_t>(dest->getLength())
                        ? source.length

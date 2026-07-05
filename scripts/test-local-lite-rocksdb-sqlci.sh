@@ -79,7 +79,7 @@ grep -q -- '--- 1 row(s) selected.' <<<"$projection_output" ||
   fail "executor scan predicate did not filter projected rows"
 
 error_output=$(
-  printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nCREATE TABLE bad_decimal(c DECIMAL(5,2));\nCREATE TABLE bad_numeric(c NUMERIC(19,2));\nexit;\n" |
+  printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
     run_sqlci
 )
 grep -q 'ERROR\[4082\]' <<<"$error_output" ||
@@ -124,6 +124,24 @@ if grep -q 'miss' <<<"$numeric_output"; then
 fi
 grep -q -- '--- 1 row(s) selected.' <<<"$numeric_output" ||
   fail "numeric predicate scan did not report one selected row"
+
+decimal_big_numeric_output=$(
+  printf "CREATE TABLE dectab(d DECIMAL(5,2), label VARCHAR(20));\nINSERT INTO dectab VALUES (12.34, 'dec-hit'), (56.78, 'dec-miss');\nSELECT label FROM dectab WHERE d = 12.34;\nDROP TABLE dectab;\nCREATE TABLE bigtab(n NUMERIC(30,2), label VARCHAR(20));\nINSERT INTO bigtab VALUES (1234567890123456789012345678.90, 'big-hit'), (2234567890123456789012345678.90, 'big-miss');\nSELECT label FROM bigtab WHERE n = 1234567890123456789012345678.90;\nDROP TABLE bigtab;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'dec-hit' <<<"$decimal_big_numeric_output" ||
+  fail "decimal predicate scan did not return matching row"
+if grep -q 'dec-miss' <<<"$decimal_big_numeric_output"; then
+  fail "decimal predicate scan returned non-matching row"
+fi
+grep -q 'big-hit' <<<"$decimal_big_numeric_output" ||
+  fail "BigNum numeric predicate scan did not return matching row"
+if grep -q 'big-miss' <<<"$decimal_big_numeric_output"; then
+  fail "BigNum numeric predicate scan returned non-matching row"
+fi
+decimal_big_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$decimal_big_numeric_output")
+[[ "$decimal_big_selected_count" -ge 2 ]] ||
+  fail "decimal/BigNum predicate scans did not each report one selected row"
 
 null_expr_output=$(
   printf "CREATE TABLE nul(a INT, b VARCHAR(20), c INT NOT NULL);\nINSERT INTO nul VALUES (NULL, 'null-a', 1), (2, NULL, 1), (1 + 2, CAST('expr' AS VARCHAR(20)), 1);\nSELECT b FROM nul WHERE a IS NULL;\nSELECT a FROM nul WHERE b IS NULL;\nSELECT b FROM nul WHERE a = 3;\nINSERT INTO nul VALUES (4, 'bad', NULL);\nDROP TABLE nul;\nCREATE TABLE vv(a VARCHAR(10), b VARCHAR(10), label VARCHAR(10));\nINSERT INTO vv VALUES (NULL, 'second', 'hit'), ('first', NULL, 'miss');\nSELECT b, label FROM vv WHERE a IS NULL;\nSELECT a, label FROM vv WHERE b IS NULL;\nDROP TABLE vv;\nexit;\n" |

@@ -85,6 +85,7 @@
 #include "CmpSeabaseDDL.h"
 
 #ifdef TRAF_LOCAL_LITE
+#include "BigNumHelper.h"
 #include "LocalLiteRocksDBStore.h"
 #include <ctype.h>
 #include <stdlib.h>
@@ -2910,6 +2911,11 @@ static Lng32 localLiteNumericStorageSize(Lng32 precision)
   return 8;
 }
 
+static bool localLiteTypeIsUnsigned(const std::string &type)
+{
+  return type.find("UNSIGNED") != std::string::npos;
+}
+
 static bool localLiteMapType(const std::string &typeText,
                              Int32 *datatype,
                              Lng32 *length,
@@ -2969,27 +2975,44 @@ static bool localLiteMapType(const std::string &typeText,
     {
       *precision = localLiteTypeArg(type, 18);
       *scale = localLiteSecondTypeArg(type, 0);
-      if (*precision < 1 || *precision > 18 || *scale < 0 ||
-          *scale > *precision)
+      if (*precision < 1 || *scale < 0 || *scale > *precision)
         return false;
+      bool isUnsigned = localLiteTypeIsUnsigned(type);
+      if (*precision > 18)
+        {
+          *datatype = isUnsigned ? REC_NUM_BIG_UNSIGNED : REC_NUM_BIG_SIGNED;
+          *length = BigNumHelper::ConvPrecisionToStorageLengthHelper(*precision);
+          return *length > 0;
+        }
       *length = localLiteNumericStorageSize(*precision);
       switch (*length)
         {
         case 1:
-          *datatype = REC_BIN8_SIGNED;
+          *datatype = isUnsigned ? REC_BIN8_UNSIGNED : REC_BIN8_SIGNED;
           break;
         case 2:
-          *datatype = REC_BIN16_SIGNED;
+          *datatype = isUnsigned ? REC_BIN16_UNSIGNED : REC_BIN16_SIGNED;
           break;
         case 4:
-          *datatype = REC_BIN32_SIGNED;
+          *datatype = isUnsigned ? REC_BIN32_UNSIGNED : REC_BIN32_SIGNED;
           break;
         case 8:
-          *datatype = REC_BIN64_SIGNED;
+          *datatype = isUnsigned ? REC_BIN64_UNSIGNED : REC_BIN64_SIGNED;
           break;
         default:
           return false;
         }
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "DECIMAL"))
+    {
+      *precision = localLiteTypeArg(type, 18);
+      *scale = localLiteSecondTypeArg(type, 0);
+      if (*precision < 1 || *scale < 0 || *scale > *precision)
+        return false;
+      *datatype = localLiteTypeIsUnsigned(type) ? REC_DECIMAL_UNSIGNED
+                                                : REC_DECIMAL_LSE;
+      *length = *precision;
       return true;
     }
   if (localLiteStartsWithWord(type, "VARCHAR") ||
