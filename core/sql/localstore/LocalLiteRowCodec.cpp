@@ -811,6 +811,52 @@ bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
   return true;
 }
 
+bool LocalLiteBuildPrimaryKeyFromTextFields(
+    const LocalLiteTableDef &table,
+    const std::vector<std::string> &keyFields,
+    std::string *key,
+    std::string *error)
+{
+  if (keyFields.size() != table.primaryKeyColumns.size())
+    {
+      setError(error, "local-lite primary key field count mismatch");
+      return false;
+    }
+
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  if (!computeLayout(table, &columns, &rowLen, error))
+    return false;
+
+  std::string row(rowLen, '\0');
+  initializeCanonicalRow(columns, &row[0], row.size());
+
+  for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+    {
+      size_t columnIndex = table.primaryKeyColumns[i];
+      if (columnIndex >= columns.size())
+        {
+          setError(error, "local-lite primary key column index out of range");
+          return false;
+        }
+      if (!writeValue(&row[0], columns[columnIndex], keyFields[i], error))
+        return false;
+    }
+
+  UInt32 adjustedLen = ExpAlignedFormat::adjustDataLength(
+      &row[0],
+      static_cast<UInt32>(row.size()),
+      ExpAlignedFormat::ALIGNMENT,
+      TRUE);
+  row.resize(adjustedLen);
+
+  std::string encoded;
+  encoded.assign(LOCAL_LITE_BINARY_ROW_MAGIC,
+                 sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1);
+  encoded.append(row);
+  return LocalLiteBuildPrimaryKey(table, encoded, key, error);
+}
+
 bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &table,
                              const std::string &encoded,
                              const std::vector<size_t> &keyColumns,

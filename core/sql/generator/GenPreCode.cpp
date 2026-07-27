@@ -69,6 +69,14 @@
 #include "CmpSeabaseDDL.h"
 #include "NAExecTrans.h"
 #include "exp_function.h"
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#include "LocalLiteRowCodec.h"
+
+#include <stdio.h>
+#include <string>
+#include <vector>
+#endif
 #include "SqlParserGlobals.h"      // must be last #include
 
 extern ItemExpr * buildComparisonPred (	ItemExpr *, ItemExpr *, ItemExpr *,
@@ -141,6 +149,141 @@ static void generateKeyExpr(const ValueIdSet & externalInputs,
     } // end For Loop
 
 } // static generateKeyExpr()
+
+#ifdef TRAF_LOCAL_LITE
+static std::string localLiteNAStringToStd(const NAString &s)
+{
+  return std::string(s.data(), s.length());
+}
+
+static NABoolean localLiteLoadTable(TableDesc *tdesc,
+                                    LocalLiteTableDef *table)
+{
+  if (!tdesc || !tdesc->getNATable())
+    return FALSE;
+
+  const QualifiedName &qn = tdesc->getNATable()->getTableName();
+  LocalLiteRocksDBStore store;
+  std::string error;
+  bool exists = false;
+  if (!store.tableExists(localLiteNAStringToStd(qn.getCatalogName()),
+                         localLiteNAStringToStd(qn.getSchemaName()),
+                         localLiteNAStringToStd(qn.getObjectName()),
+                         &exists,
+                         &error) ||
+      !exists)
+    return FALSE;
+
+  return store.loadTable(localLiteNAStringToStd(qn.getCatalogName()),
+                         localLiteNAStringToStd(qn.getSchemaName()),
+                         localLiteNAStringToStd(qn.getObjectName()),
+                         table,
+                         &error) ? TRUE : FALSE;
+}
+
+static NABoolean localLiteConstValueToText(ValueId valueId,
+                                           std::string *text)
+{
+  ItemExpr *expr = valueId.getItemExpr();
+  if (!expr || expr->getOperatorType() != ITM_CONSTANT)
+    return FALSE;
+
+  ConstValue *cv = static_cast<ConstValue *>(expr);
+  if (cv->isNull())
+    return FALSE;
+
+  const NAType *type = cv->getType();
+  if (!type)
+    return FALSE;
+
+  if (type->getTypeQualifier() == NA_CHARACTER_TYPE)
+    {
+      const NAString *raw = cv->getRawText();
+      if (!raw)
+        return FALSE;
+      *text = localLiteNAStringToStd(*raw);
+      return TRUE;
+    }
+
+  if (type->getTypeQualifier() == NA_NUMERIC_TYPE &&
+      cv->canGetExactNumericValue())
+    {
+      Lng32 scale = 0;
+      Int64 value = cv->getExactNumericValue(scale);
+      if (scale != 0)
+        return FALSE;
+
+      char buf[64];
+      snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(value));
+      *text = buf;
+      return TRUE;
+    }
+
+  return FALSE;
+}
+
+static NABoolean localLiteBuildPrimaryKeyForSearchKey(
+    const LocalLiteTableDef &table,
+    HbaseSearchKey *searchKey,
+    std::string *rowKey)
+{
+  if (!searchKey ||
+      !searchKey->isUnique() ||
+      table.primaryKeyColumns.empty() ||
+      searchKey->getCoveredLeadingKeys() !=
+          static_cast<Int32>(table.primaryKeyColumns.size()))
+    return FALSE;
+
+  const ValueIdList &keyValues = searchKey->getBeginKeyValues();
+  if (keyValues.entries() < table.primaryKeyColumns.size())
+    return FALSE;
+
+  std::vector<std::string> keyFields;
+  for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+    {
+      std::string field;
+      if (!localLiteConstValueToText(keyValues[i], &field))
+        return FALSE;
+      keyFields.push_back(field);
+    }
+
+  std::string error;
+  return LocalLiteBuildPrimaryKeyFromTextFields(table, keyFields, rowKey,
+                                                &error) ? TRUE : FALSE;
+}
+
+static NABoolean localLiteRewritePrimaryGetRows(
+    TableDesc *tdesc,
+    NAList<HbaseSearchKey*> &searchKeys,
+    ListOfUniqueRows &listOfUniqueRows)
+{
+  if (listOfUniqueRows.entries() == 0 || searchKeys.entries() == 0)
+    return FALSE;
+
+  LocalLiteTableDef table;
+  if (!localLiteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
+    return FALSE;
+
+  HbaseUniqueRows localGetSpec;
+  localGetSpec.rowTS_ = -1;
+
+  for (CollIndex i = 0; i < searchKeys.entries(); i++)
+    {
+      std::string rowKey;
+      if (!localLiteBuildPrimaryKeyForSearchKey(table, searchKeys[i], &rowKey))
+        return FALSE;
+      localGetSpec.rowIds_.insert(NAString(rowKey.data(),
+                                           static_cast<Int32>(rowKey.size())));
+    }
+
+  if (localGetSpec.rowIds_.entries() == 0)
+    return FALSE;
+
+  listOfUniqueRows.clear();
+  listOfUniqueRows.insert(localGetSpec);
+  return TRUE;
+}
+#endif
 
 static NABoolean processConstHBaseKeys(Generator * generator,
                                        RelExpr *relExpr,
@@ -248,6 +391,16 @@ static NABoolean processConstHBaseKeys(Generator * generator,
 					      listOfUpdUniqueRows,
 					      listOfUpdSubsetRows))
 	return FALSE;
+
+#ifdef TRAF_LOCAL_LITE
+      if (tdesc &&
+          relExpr->getOperatorType() == REL_HBASE_ACCESS &&
+          listOfUpdSubsetRows.entries() == 0)
+        {
+          localLiteRewritePrimaryGetRows(tdesc, mySearchKeys,
+                                         listOfUpdUniqueRows);
+        }
+#endif
 
     } // key uses all constants
   return TRUE;

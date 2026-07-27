@@ -9,6 +9,7 @@ makerules="$repo_root/core/sql/nskgmake/Makerules.linux"
 executor_makefile="$repo_root/core/sql/nskgmake/executor/Makefile"
 sqlcilib_makefile="$repo_root/core/sql/nskgmake/sqlcilib/Makefile"
 sqlcomp_makefile="$repo_root/core/sql/nskgmake/sqlcomp/Makefile"
+generator_makefile="$repo_root/core/sql/nskgmake/generator/Makefile"
 sqlcmd_source="$repo_root/core/sql/sqlci/SqlCmd.cpp"
 local_sql_handler="$repo_root/core/sql/sqlci/LocalLiteSqlTable.cpp"
 local_sqlci_smoke="$repo_root/scripts/test-local-lite-rocksdb-sqlci.sh"
@@ -16,6 +17,8 @@ storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
 localstore_dir="$repo_root/core/sql/localstore"
 localstore_header="$localstore_dir/LocalLiteRocksDBStore.h"
 localstore_source="$localstore_dir/LocalLiteRocksDBStore.cpp"
+localstore_codec_header="$localstore_dir/LocalLiteRowCodec.h"
+localstore_codec_source="$localstore_dir/LocalLiteRowCodec.cpp"
 cmp_stmt="$repo_root/core/sql/arkcmp/CmpStatement.cpp"
 cmp_ddl_common="$repo_root/core/sql/sqlcomp/CmpSeabaseDDLcommon.cpp"
 cmp_ddl_table="$repo_root/core/sql/sqlcomp/CmpSeabaseDDLtable.cpp"
@@ -48,6 +51,10 @@ grep -q -- '-lrocksdb' "$makerules" || fail "local-lite SQL link flags must incl
 grep -q 'localstore' "$executor_makefile" || fail "executor build must include the localstore source path"
 grep -q 'LocalLiteRocksDBStore.cpp' "$executor_makefile" || fail "executor build must compile the RocksDB local store"
 grep -q 'LocalLiteRowCodec.cpp' "$executor_makefile" || fail "executor build must compile the local-lite row codec"
+grep -q 'LocalLiteRocksDBStore.cpp' "$generator_makefile" ||
+  fail "generator build must compile local-lite store metadata access"
+grep -q 'LocalLiteRowCodec.cpp' "$generator_makefile" ||
+  fail "generator build must compile local-lite primary key codec"
 grep -q 'LocalLiteUnsupportedHbaseTcb' "$storage_stubs" ||
   fail "local-lite HBase access build must create an executor TCB instead of returning NULL"
 grep -q 'LocalLiteHbaseScanTcb' "$storage_stubs" ||
@@ -101,6 +108,10 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
 [[ -f "$local_sqlci_smoke" ]] || fail "missing local-lite RocksDB SQLCI smoke test: $local_sqlci_smoke"
 [[ -f "$localstore_header" ]] || fail "missing local store header: $localstore_header"
 [[ -f "$localstore_source" ]] || fail "missing local store source: $localstore_source"
+grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_header" ||
+  fail "local-lite row codec must expose compiler primary-key literal encoding"
+grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_source" ||
+  fail "local-lite row codec must build primary keys from compiler literals"
 grep -q 'TRAF_LOCAL_STORE_DIR' "$localstore_source" || fail "local store must support TRAF_LOCAL_STORE_DIR override"
 grep -q 'localstore/rocksdb' "$localstore_source" || fail "local store must default under TRAF_VAR/localstore/rocksdb"
 if grep -q 'processCreate' "$local_sql_handler"; then
@@ -132,6 +143,8 @@ grep -q 'localLiteDropTable' "$cmp_ddl_table" ||
   fail "DROP TABLE must route to the local RocksDB catalog from sqlcomp"
 grep -q 'xnNeeded() = FALSE' "$gen_precode" ||
   fail "generator pre-code must mark local-lite CREATE/DROP as no transaction"
+grep -q 'localLiteRewritePrimaryGetRows' "$gen_precode" ||
+  fail "generator pre-code must map primary-key equality to local-lite get-row keys"
 grep -q 'ddl_tdb->setHbaseDDL(TRUE)' "$gen_relmisc" ||
   fail "generator must route local-lite CREATE/DROP through PROCESSDDL"
 grep -q 'switchToCmpContext' "$ex_ddl" ||

@@ -23,6 +23,10 @@
 
 INCLUDE_DIRS += sqludr
 
+ifeq ($(TRAF_LOCAL_LITE),1)
+INCLUDE_DIRS += localstore
+endif
+
 CPPSRC := GenBitMuxFunction.cpp \
 	Generator.cpp \
 	GenExpGenerator.cpp \
@@ -65,3 +69,10 @@ CPPSRC := GenBitMuxFunction.cpp \
 DEFS := -DNDEBUG
 
 SRCPATH := generator langman smdio
+
+ifeq ($(TRAF_LOCAL_LITE),1)
+CPPSRC += LocalLiteRocksDBStore.cpp \
+	LocalLiteRowCodec.cpp
+SRCPATH += localstore
+DEFS += -DTRAF_LOCAL_LITE
+endif

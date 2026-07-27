@@ -218,10 +218,10 @@ rejected in committed data and inside the current pending local transaction
 write set. Keyless tables continue to use the existing internal row id path.
 The local-lite executor scan TCB can now consume encoded get-row requests from
 `listOfGetRows()` through `LocalLiteTxn::getRowByKey()`, including read-own-write
-lookups inside the pending local transaction write set. The optimizer does not
-yet expose local-lite keys as real key-access metadata, so ordinary SQL
-predicates still reach this capability only after a future optimizer mapping
-step.
+lookups inside the pending local transaction write set. Pre-code can now rewrite
+constant primary-key equality search keys to deterministic `P`-prefixed
+local-lite get-row keys. Unsupported literal types and non-key predicates still
+fall back to full executor scan.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -306,10 +306,12 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The next implementation step should expose local-lite key metadata only after
-the runtime get-row path is covered by optimizer-generated access:
+The next implementation step should broaden local-lite optimizer key exposure
+after the primary-key get-row path is validated:
 
-1. Map optimizer-generated primary-key equality access to the deterministic
-   `P`-prefixed row key.
-2. Keep full executor scan as the fallback path for non-key predicates.
-3. Only then expose local-lite key metadata broadly to the optimizer.
+1. Add SQLCI coverage that proves primary-key equality uses local-lite get-row
+   keys while non-key predicates still fall back to full scan.
+2. Extend compiler literal key encoding beyond exact integer and character
+   keys.
+3. Expose local-lite key metadata broadly to the optimizer once fallback
+   behavior is covered.
