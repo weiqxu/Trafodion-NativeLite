@@ -31,17 +31,20 @@ Local-lite currently supports a narrow local table path:
 
 The important storage limits are:
 
-- `LocalLiteRocksDBStore` owns RocksDB handles per object instance.
-- Table data operations reopen the table RocksDB database per `putRow()` and
-  `scanRows()` call.
-- `allocateRowId()` updates catalog `nextRowId` with a plain read-modify-write.
-- `allocateRowId()` and `putRow()` are separate writes.
-- There is no local transaction context, snapshot ownership, write set, commit,
-  or rollback path.
+- `LocalLiteStorageManager` owns process-local shared RocksDB catalog and table
+  handles.
+- Keyless table rows still use catalog `nextRowId` and an internal 8-byte row
+  key.
+- Primary-key local tables store row data under deterministic binary row keys
+  derived from the persisted `LLBR1` row payload.
+- The explicit local transaction context is single-process and buffers pending
+  writes in memory until `COMMIT WORK`.
+- There is no RocksDB TransactionDB or cross-process transaction coordinator
+  yet.
 
 This means the current implementation is appropriate for serial smoke tests,
-but not yet for concurrent scans, concurrent writers, or explicit SQL
-transactions.
+same-process scan reuse, and single-process explicit SQL transaction smoke, but
+not yet for cross-process concurrent writers or crash-atomic multi-table commit.
 
 ## Trafodion Transaction Model To Preserve
 
@@ -202,6 +205,16 @@ Validation:
 
 ### Phase 5: Deterministic Row Keys And Conflict Detection
 
+Status: initial primary-key storage support implemented. Local-lite DDL now
+accepts PRIMARY KEY, persists primary-key column ordinals in `LLT2` table
+metadata, and rejects UNIQUE/RI/CHECK constraints. INSERTs into primary-key
+tables build a deterministic `P`-prefixed RocksDB row key from the binary
+aligned `LLBR1` payload, reject duplicate keys in committed data, and reject
+duplicates inside the current pending local transaction write set. Keyless
+tables continue to use the existing internal row id path. The optimizer does
+not yet expose local-lite primary keys as real key-access metadata; all queries
+still execute through the local-lite executor scan path.
+
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
 Tasks:
@@ -210,8 +223,12 @@ Tasks:
 - Generate local row keys from compiler/executor key expressions when a table
   has a primary key.
 - Keep internal row id allocation only for keyless heap-like local tables.
-- Add duplicate-key detection for primary and unique keys.
+- Add duplicate-key detection for primary keys.
 - Add conflict diagnostics that map cleanly to SQL errors.
+- Add unique-key metadata and duplicate detection after primary-key storage is
+  stable.
+- Teach local-lite scan/get TCBs to consume optimized key access before exposing
+  local-lite primary keys as optimizer-visible key metadata.
 
 Validation:
 
@@ -219,6 +236,9 @@ Validation:
   other.
 - Primary-key scans use deterministic encoded keys.
 - Keyless table inserts continue to work through the internal row id path.
+- `CREATE TABLE pk_t(a INT PRIMARY KEY, ...)`, duplicate insert diagnostics,
+  transaction read-own-write, rollback, and keyless table regression are covered
+  by the RocksDB SQLCI smoke.
 
 ### Phase 6: Optional TMF Integration Boundary
 

@@ -41,6 +41,11 @@ bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
                                unsigned int *formattedLen,
                                std::string *error);
 
+bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
+                              const std::string &encoded,
+                              std::string *key,
+                              std::string *error);
+
 #endif
 
 #endif

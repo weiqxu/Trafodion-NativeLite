@@ -198,13 +198,11 @@ static bool localLiteRejectUnsupportedCreate(StmtDDLCreateTable *createTableNode
       localLiteDDLDiag("CREATE TABLE LIKE is not supported in local-lite");
       return true;
     }
-  if (createTableNode->getIsConstraintPKSpecified() ||
-      createTableNode->getAddConstraintPK() ||
-      createTableNode->getAddConstraintUniqueArray().entries() > 0 ||
+  if (createTableNode->getAddConstraintUniqueArray().entries() > 0 ||
       createTableNode->getAddConstraintRIArray().entries() > 0 ||
       createTableNode->getAddConstraintCheckArray().entries() > 0)
     {
-      localLiteDDLDiag("local-lite table constraints are not supported");
+      localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY are not supported");
       return true;
     }
   if (createTableNode->isPartitionSpecified() ||
@@ -222,6 +220,22 @@ static bool localLiteRejectUnsupportedCreate(StmtDDLCreateTable *createTableNode
     {
       localLiteDDLDiag("Hive options are not supported in local-lite");
       return true;
+    }
+  return false;
+}
+
+static bool localLiteFindColumn(const ElemDDLColDefArray &colArray,
+                                const NAString &columnName,
+                                size_t *index)
+{
+  for (CollIndex i = 0; i < colArray.entries(); i++)
+    {
+      if (colArray[i] && colArray[i]->getColumnName() == columnName)
+        {
+          if (index)
+            *index = static_cast<size_t>(i);
+          return true;
+        }
     }
   return false;
 }
@@ -248,6 +262,29 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
   table.objectUid = localLiteNewObjectUid();
   table.nextRowId = 1;
 
+  ElemDDLColRefArray &primaryKeyArray =
+    createTableNode->getPrimaryKeyColRefArray();
+  for (CollIndex i = 0; i < primaryKeyArray.entries(); i++)
+    {
+      size_t columnIndex = 0;
+      if (!primaryKeyArray[i] ||
+          !localLiteFindColumn(colArray, primaryKeyArray[i]->getColumnName(),
+                               &columnIndex))
+        {
+          localLiteDDLDiag("local-lite primary key column does not exist");
+          return false;
+        }
+      for (size_t j = 0; j < table.primaryKeyColumns.size(); j++)
+        {
+          if (table.primaryKeyColumns[j] == columnIndex)
+            {
+              localLiteDDLDiag("duplicate local-lite primary key column");
+              return false;
+            }
+        }
+      table.primaryKeyColumns.push_back(columnIndex);
+    }
+
   for (CollIndex i = 0; i < colArray.entries(); i++)
     {
       ElemDDLColDef *col = colArray[i];
@@ -256,11 +293,10 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
           localLiteDDLDiag("invalid local-lite column definition");
           return false;
         }
-      if (col->getConstraintPK() ||
-          col->getConstraintArray().entries() > 0 ||
+      if (col->getConstraintArray().entries() > 0 ||
           col->getDefaultClauseStatus() != ElemDDLColDef::DEFAULT_CLAUSE_NOT_SPEC)
         {
-          localLiteDDLDiag("local-lite table constraints are not supported");
+          localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY are not supported");
           return false;
         }
 

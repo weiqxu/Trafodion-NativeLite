@@ -712,6 +712,105 @@ static bool storedColumnIsNull(const std::string &row,
       static_cast<UInt16>(col.nullBitIndex));
 }
 
+static void appendKeyUint64(std::string *s, uint64_t v)
+{
+  for (int shift = 56; shift >= 0; shift -= 8)
+    *s += static_cast<char>((v >> shift) & 0xff);
+}
+
+bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
+                              const std::string &encoded,
+                              std::string *key,
+                              std::string *error)
+{
+  if (!key)
+    {
+      setError(error, "missing local-lite primary key output");
+      return false;
+    }
+  if (table.primaryKeyColumns.empty())
+    {
+      setError(error, "local-lite table has no primary key");
+      return false;
+    }
+  if (encoded.size() < sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1 ||
+      memcmp(encoded.data(), LOCAL_LITE_BINARY_ROW_MAGIC,
+             sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1) != 0)
+    {
+      setError(error, "invalid local-lite binary row payload");
+      return false;
+    }
+
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t fullRowLen = 0;
+  if (!computeLayout(table, &columns, &fullRowLen, error))
+    return false;
+
+  std::string storedRow =
+    encoded.substr(sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1);
+  if (storedRow.empty() && fullRowLen > 0)
+    {
+      setError(error, "truncated local-lite binary row payload");
+      return false;
+    }
+
+  key->clear();
+  key->push_back('P');
+  appendKeyUint64(key, static_cast<uint64_t>(table.primaryKeyColumns.size()));
+  for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+    {
+      size_t sourceIndex = table.primaryKeyColumns[i];
+      if (sourceIndex >= columns.size())
+        {
+          setError(error, "local-lite primary key column index out of range");
+          return false;
+        }
+
+      const LocalLiteStoredColumn &col = columns[sourceIndex];
+      if (storedColumnIsNull(storedRow, col))
+        {
+          setError(error, "NULL is not allowed for local-lite primary key column");
+          return false;
+        }
+
+      const char *src = NULL;
+      size_t len = 0;
+      if (col.type == LL_TYPE_VARCHAR)
+        {
+          if (!hasRange(storedRow, col.vcLenIndOffset,
+                        ExpAlignedFormat::VARIABLE_LEN_SIZE))
+            {
+              setError(error, "truncated local-lite binary row payload");
+              return false;
+            }
+          len = ExpAlignedFormat::getVarLength(
+              const_cast<char *>(storedRow.data()) + col.vcLenIndOffset);
+          if (!hasRange(storedRow, col.offset, len))
+            {
+              setError(error, "truncated local-lite binary row payload");
+              return false;
+            }
+          src = storedRow.data() + col.offset;
+        }
+      else
+        {
+          len = col.length;
+          if (!hasRange(storedRow, col.offset, len))
+            {
+              setError(error, "truncated local-lite binary row payload");
+              return false;
+            }
+          src = storedRow.data() + col.offset;
+        }
+
+      appendKeyUint64(key, static_cast<uint64_t>(sourceIndex));
+      appendKeyUint64(key, static_cast<uint64_t>(len));
+      if (len > 0)
+        key->append(src, len);
+    }
+  return true;
+}
+
 static bool copyStoredToDest(const std::string &storedRow,
                              const LocalLiteStoredColumn &source,
                              Attributes *dest,

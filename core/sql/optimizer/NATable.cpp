@@ -3127,6 +3127,16 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
         }
 
       char *columnName = localLiteCopyToHeap(table.columns[i].name, heap);
+      bool nullableForOptimizer = table.columns[i].nullable;
+      for (size_t keyIndex = 0; keyIndex < table.primaryKeyColumns.size();
+           keyIndex++)
+        {
+          if (table.primaryKeyColumns[keyIndex] == i)
+            {
+              nullableForOptimizer = true;
+              break;
+            }
+        }
       TrafDesc *columnDesc = TrafMakeColumnDesc(
           tableDesc->tableDesc()->tablename,
           columnName,
@@ -3134,7 +3144,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           datatype,
           length,
           offset,
-          table.columns[i].nullable,
+          nullableForOptimizer,
           SQLCHARSETCODE_ISO88591,
           heap);
       columnDesc->columnsDesc()->precision = precision;

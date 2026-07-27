@@ -189,8 +189,22 @@ transaction_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$transactio
 [[ "$transaction_selected_count" -ge 2 ]] ||
   fail "local transaction scans did not report expected selected rows"
 
+primary_key_output=$(
+  printf "CREATE TABLE pk_t(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_t VALUES (1, 'one');\nSELECT b FROM pk_t WHERE a = 1;\nINSERT INTO pk_t VALUES (1, 'dup');\nBEGIN WORK;\nINSERT INTO pk_t VALUES (2, 'two');\nSELECT b FROM pk_t WHERE a = 2;\nINSERT INTO pk_t VALUES (2, 'dup-pending');\nROLLBACK WORK;\nSELECT b FROM pk_t WHERE a = 2;\nDROP TABLE pk_t;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'one' <<<"$primary_key_output" ||
+  fail "primary key table did not return inserted row"
+grep -q 'two' <<<"$primary_key_output" ||
+  fail "primary key transaction did not read pending row"
+pk_duplicate_count=$(grep -c 'duplicate local-lite primary key' <<<"$primary_key_output")
+[[ "$pk_duplicate_count" -ge 2 ]] ||
+  fail "primary key duplicate diagnostics missing"
+grep -q -- '--- 0 row(s) selected.' <<<"$primary_key_output" ||
+  fail "primary key rollback did not discard pending row"
+
 unsupported_output=$(
-  printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT PRIMARY KEY);\nexit;\n" |
+  printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |
     run_sqlci
 )
 grep -q 'UPDATE, DELETE, and MERGE are not supported in local-lite' <<<"$unsupported_output" ||
@@ -205,7 +219,7 @@ grep -q 'ALTER TABLE is not supported in local-lite' <<<"$unsupported_output" ||
   fail "ALTER TABLE unsupported diagnostic missing"
 grep -q 'TRUNCATE TABLE is not supported in local-lite' <<<"$unsupported_output" ||
   fail "TRUNCATE TABLE unsupported diagnostic missing"
-grep -q 'local-lite table constraints are not supported' <<<"$unsupported_output" ||
+grep -q 'local-lite table constraints other than PRIMARY KEY are not supported' <<<"$unsupported_output" ||
   fail "constraint unsupported diagnostic missing"
 
 echo "local-lite RocksDB sqlci smoke passed"
