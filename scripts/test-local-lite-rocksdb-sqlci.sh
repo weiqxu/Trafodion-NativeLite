@@ -175,6 +175,20 @@ null_expr_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$null_expr_ou
 [[ "$null_expr_selected_count" -ge 5 ]] ||
   fail "NULL/expression scans did not each report one selected row"
 
+transaction_output=$(
+  printf "CREATE TABLE tx(a INT, b VARCHAR(20));\nBEGIN WORK;\nINSERT INTO tx VALUES (1, 'rollback');\nSELECT b FROM tx WHERE a = 1;\nROLLBACK WORK;\nSELECT b FROM tx WHERE a = 1;\nBEGIN WORK;\nINSERT INTO tx VALUES (2, 'commit');\nCOMMIT WORK;\nSELECT b FROM tx WHERE a = 2;\nDROP TABLE tx;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'rollback' <<<"$transaction_output" ||
+  fail "local transaction did not read its own pending insert"
+grep -q 'commit' <<<"$transaction_output" ||
+  fail "local transaction commit did not persist inserted row"
+grep -q -- '--- 0 row(s) selected.' <<<"$transaction_output" ||
+  fail "local transaction rollback did not discard inserted row"
+transaction_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$transaction_output")
+[[ "$transaction_selected_count" -ge 2 ]] ||
+  fail "local transaction scans did not report expected selected rows"
+
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT PRIMARY KEY);\nexit;\n" |
     run_sqlci

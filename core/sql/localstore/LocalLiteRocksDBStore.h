@@ -108,6 +108,15 @@ private:
   LocalLiteRocksDBStore *store_;
 };
 
+class LocalLiteTxnManager
+{
+public:
+  static bool begin(std::string *error);
+  static bool commit(std::string *error);
+  static bool rollback(std::string *error);
+  static bool active();
+};
+
 #endif
 
 #endif

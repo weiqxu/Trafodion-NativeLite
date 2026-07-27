@@ -58,6 +58,10 @@
 #include "ExCextdecs.h"
 #include "dtm/tm.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#endif
+
 ExTransaction::ExTransaction(CliGlobals * cliGlob, CollHeap *heap)
      : cliGlob_(cliGlob),
        heap_(heap),
@@ -1111,11 +1115,26 @@ short ExTransTcb::work()
     }	
     else{
 
-    short rc;
-    switch (transTdb().transType_)  {
-      case BEGIN_: {
-        if (ta->userEndedExeXn())
-        {
+	    short rc;
+	    switch (transTdb().transType_)  {
+	      case BEGIN_: {
+#ifdef TRAF_LOCAL_LITE
+	        std::string localLiteError;
+	        if (!LocalLiteTxnManager::begin(&localLiteError))
+	          {
+	            ComDiagsArea *diags =
+	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
+	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
+	                   << DgString0(localLiteError.c_str());
+	            handleErrors(pentry_down, diags);
+	            break;
+	          }
+	        ta->disableAutoCommit();
+	        ta->implicitXn() = FALSE;
+	        break;
+#endif
+	        if (ta->userEndedExeXn())
+	        {
           handleErrors(pentry_down, NULL, 
              (ExeErrorCode)(-CLI_USER_ENDED_EXE_XN));
           break;
@@ -1136,8 +1155,22 @@ short ExTransTcb::work()
       }
       break;
 	  
-      case COMMIT_: {
-        if (ta->userEndedExeXn()) {
+	      case COMMIT_: {
+#ifdef TRAF_LOCAL_LITE
+	        std::string localLiteError;
+	        if (!LocalLiteTxnManager::commit(&localLiteError))
+	          {
+	            ComDiagsArea *diags =
+	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
+	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
+	                   << DgString0(localLiteError.c_str());
+	            handleErrors(pentry_down, diags);
+	            break;
+	          }
+	        ta->enableAutoCommit();
+	        break;
+#endif
+	        if (ta->userEndedExeXn()) {
           ta->cleanupTransaction();
           handleErrors(pentry_down, NULL, 
              (ExeErrorCode)(-CLI_USER_ENDED_XN_CLEANUP));
@@ -1181,8 +1214,22 @@ short ExTransTcb::work()
       }
       break;
       
-      case ROLLBACK_:  {
-        if (ta->userEndedExeXn()) {
+	      case ROLLBACK_:  {
+#ifdef TRAF_LOCAL_LITE
+	        std::string localLiteError;
+	        if (!LocalLiteTxnManager::rollback(&localLiteError))
+	          {
+	            ComDiagsArea *diags =
+	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
+	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
+	                   << DgString0(localLiteError.c_str());
+	            handleErrors(pentry_down, diags);
+	            break;
+	          }
+	        ta->enableAutoCommit();
+	        break;
+#endif
+	        if (ta->userEndedExeXn()) {
           ta->cleanupTransaction();
           handleErrors(pentry_down, NULL, 
              (ExeErrorCode)(-CLI_USER_ENDED_XN_CLEANUP));
@@ -1228,8 +1275,22 @@ short ExTransTcb::work()
       }
       break;
 
-      case ROLLBACK_WAITED_:  {
-        if (ta->userEndedExeXn()) {
+	      case ROLLBACK_WAITED_:  {
+#ifdef TRAF_LOCAL_LITE
+	        std::string localLiteError;
+	        if (!LocalLiteTxnManager::rollback(&localLiteError))
+	          {
+	            ComDiagsArea *diags =
+	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
+	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
+	                   << DgString0(localLiteError.c_str());
+	            handleErrors(pentry_down, diags);
+	            break;
+	          }
+	        ta->enableAutoCommit();
+	        break;
+#endif
+	        if (ta->userEndedExeXn()) {
           ta->cleanupTransaction();
           handleErrors(pentry_down, NULL, 
             (ExeErrorCode)(-CLI_USER_ENDED_XN_CLEANUP));
@@ -1367,4 +1428,3 @@ ex_tcb_private_state * ExTransPrivateState::allocate_new(const ex_tcb *tcb)
   return new(((ex_tcb *)tcb)->getSpace()) 
     ExTransPrivateState((ExTransTcb *) tcb);
 };
-

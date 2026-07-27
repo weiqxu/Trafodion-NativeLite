@@ -70,6 +70,10 @@ Implemented:
   operation instead of issuing separate calls from the executor TCB.
 - Local table scans now go through the `LocalLiteTxn` facade and bind RocksDB
   iterators to a snapshot while materializing scan rows.
+- Local-lite `BEGIN WORK`, `COMMIT WORK`, and `ROLLBACK WORK` now use an
+  initial local transaction context in single-process SQLCI mode. Transactional
+  local INSERTs are buffered until commit, rollback discards them, and scans read
+  their own pending writes.
 - Local RocksDB storage now shares catalog/table handles inside the local-lite
   process module, so multiple executor scans of the same table in one statement
   no longer reopen the same RocksDB path and collide on RocksDB `LOCK`.

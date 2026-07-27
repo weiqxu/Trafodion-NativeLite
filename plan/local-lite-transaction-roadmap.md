@@ -172,6 +172,13 @@ Validation:
 
 ### Phase 4: Explicit Local Transactions
 
+Status: initial local transaction context implemented for single-process
+local-lite SQLCI. `BEGIN WORK` creates a pending write set, local table INSERTs
+buffer writes in that set, scans read base RocksDB rows plus own pending writes,
+`ROLLBACK WORK` discards pending rows, and `COMMIT WORK` persists them through
+the existing local insert path. This phase does not yet provide RocksDB
+TransactionDB semantics or all-table atomic commit across failures.
+
 Add local transaction behavior for `BEGIN`, `COMMIT`, and `ROLLBACK` without
 starting TMF/DTM/RMS.
 
@@ -270,12 +277,10 @@ Phase 1 is now implemented for the current local-lite process model:
 - Same-process row-id allocation is protected by the manager mutex.
 - The RocksDB SQLCI smoke includes a self-join regression over one local table.
 
-The next implementation step should be Phase 4:
+The next implementation step should be Phase 5:
 
-1. Add a local transaction context to the CLI/executor context.
-2. Route `BEGIN`, `COMMIT`, and `ROLLBACK` to local-lite transaction state when
-   running without TMF.
-3. Move local table read/write operations from temporary autocommit facades to
-   the active local transaction context.
-4. Extend scan snapshot ownership from per-scan materialization to the active
-   statement or transaction context.
+1. Add primary key metadata support for local-lite tables.
+2. Generate deterministic local row keys from compiler/executor key expressions
+   when a table has a primary key.
+3. Keep internal row id allocation only for keyless heap-like local tables.
+4. Add duplicate-key diagnostics for primary and unique keys.

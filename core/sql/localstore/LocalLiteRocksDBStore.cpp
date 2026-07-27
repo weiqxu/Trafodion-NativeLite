@@ -129,6 +129,11 @@ static std::string tableKey(const std::string &catalog,
   return "table|" + catalog + "|" + schema + "|" + name;
 }
 
+static std::string tableKey(const LocalLiteTableDef &table)
+{
+  return tableKey(table.catalog, table.schema, table.name);
+}
+
 static std::string uidKey(uint64_t uid)
 {
   char buf[64];
@@ -528,6 +533,153 @@ private:
   pthread_mutex_t mutex_;
 };
 
+class LocalLiteTxnState
+{
+public:
+  LocalLiteTxnState()
+    : active_(false)
+  {
+    pthread_mutex_init(&mutex_, NULL);
+  }
+
+  bool begin(std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    if (active_)
+      {
+        setError(error, "local-lite transaction already active");
+        return false;
+      }
+
+    pendingTables_.clear();
+    active_ = true;
+    return true;
+  }
+
+  bool commit(std::string *error)
+  {
+    PendingMap pending;
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (!active_)
+        {
+          setError(error, "no active local-lite transaction");
+          return false;
+        }
+
+      pending.swap(pendingTables_);
+      active_ = false;
+    }
+
+    LocalLiteRocksDBStore store;
+    for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
+      {
+        for (size_t i = 0; i < t->second.rows.size(); i++)
+          {
+            uint64_t rowId = 0;
+            if (!store.insertRow(t->second.table, t->second.rows[i].value,
+                                 &rowId, error))
+              return false;
+          }
+      }
+    return true;
+  }
+
+  bool rollback(std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_)
+      {
+        setError(error, "no active local-lite transaction");
+        return false;
+      }
+
+    pendingTables_.clear();
+    active_ = false;
+    return true;
+  }
+
+  bool active()
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    return active_;
+  }
+
+  bool insertRow(LocalLiteRocksDBStore *store,
+                 const LocalLiteTableDef &table,
+                 const std::string &encodedRow,
+                 uint64_t *rowId,
+                 std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_)
+      return store->insertRow(table, encodedRow, rowId, error);
+
+    const std::string key = tableKey(table);
+    PendingTable &pending = pendingTables_[key];
+    if (pending.rows.empty())
+      {
+        LocalLiteTableDef loaded;
+        if (!store->loadTable(table.catalog, table.schema, table.name,
+                              &loaded, error))
+          return false;
+        pending.table = loaded;
+        pending.nextRowId = loaded.nextRowId;
+      }
+
+    LocalLiteRow row;
+    row.rowId = pending.nextRowId++;
+    row.value = encodedRow;
+    pending.rows.push_back(row);
+    if (rowId)
+      *rowId = row.rowId;
+    return true;
+  }
+
+  bool scanRows(LocalLiteRocksDBStore *store,
+                const LocalLiteTableDef &table,
+                std::vector<LocalLiteRow> *rows,
+                std::string *error)
+  {
+    if (!store->scanRows(table, rows, error))
+      return false;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_)
+      return true;
+
+    PendingMap::iterator it = pendingTables_.find(tableKey(table));
+    if (it == pendingTables_.end())
+      return true;
+
+    for (size_t i = 0; i < it->second.rows.size(); i++)
+      rows->push_back(it->second.rows[i]);
+    return true;
+  }
+
+  static LocalLiteTxnState &instance()
+  {
+    static LocalLiteTxnState state;
+    return state;
+  }
+
+private:
+  struct PendingTable
+  {
+    LocalLiteTableDef table;
+    uint64_t nextRowId;
+    std::vector<LocalLiteRow> rows;
+  };
+  typedef std::map<std::string, PendingTable> PendingMap;
+
+  LocalLiteTxnState(const LocalLiteTxnState &);
+  LocalLiteTxnState &operator=(const LocalLiteTxnState &);
+
+  bool active_;
+  PendingMap pendingTables_;
+  pthread_mutex_t mutex_;
+};
+
 LocalLiteRocksDBStore::LocalLiteRocksDBStore()
   : opened_(false)
 {
@@ -864,7 +1016,8 @@ bool LocalLiteTxn::insertRow(const LocalLiteTableDef &table,
       return false;
     }
 
-  return store_->insertRow(table, encodedRow, rowId, error);
+  return LocalLiteTxnState::instance().insertRow(store_, table, encodedRow,
+                                                rowId, error);
 }
 
 bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
@@ -877,7 +1030,27 @@ bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
       return false;
     }
 
-  return store_->scanRows(table, rows, error);
+  return LocalLiteTxnState::instance().scanRows(store_, table, rows, error);
+}
+
+bool LocalLiteTxnManager::begin(std::string *error)
+{
+  return LocalLiteTxnState::instance().begin(error);
+}
+
+bool LocalLiteTxnManager::commit(std::string *error)
+{
+  return LocalLiteTxnState::instance().commit(error);
+}
+
+bool LocalLiteTxnManager::rollback(std::string *error)
+{
+  return LocalLiteTxnState::instance().rollback(error);
+}
+
+bool LocalLiteTxnManager::active()
+{
+  return LocalLiteTxnState::instance().active();
 }
 
 #endif
