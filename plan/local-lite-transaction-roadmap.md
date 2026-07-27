@@ -220,14 +220,16 @@ The local-lite executor scan TCB can now consume encoded get-row requests from
 `listOfGetRows()` through `LocalLiteTxn::getRowByKey()`, including read-own-write
 lookups inside the pending local transaction write set. Pre-code can now rewrite
 constant primary-key equality search keys to deterministic `P`-prefixed
-local-lite get-row keys. Unsupported literal types and non-key predicates still
-fall back to full executor scan. Binary NUMERIC primary-key literals with scale
-can now be encoded into deterministic get-row keys. UNIQUE-key equality
-predicates can now be mapped to deterministic `U`-prefixed get-row keys when the
-predicate supplies all columns of one unique key. SQLCI smoke now enables a
-test-only executor trace to assert that integer primary-key, binary NUMERIC
-primary-key, and UNIQUE-key equality use the get-row path while non-key
-predicates use full scan fallback.
+local-lite get-row keys. Binary NUMERIC, DECIMAL, and BigNum NUMERIC key
+literals can now be encoded into deterministic get-row keys, including negative
+predicate forms that the compiler represents as constant expressions rather than
+plain `ConstValue`s. UNIQUE-key equality predicates can now be mapped to
+deterministic `U`-prefixed get-row keys when the predicate supplies all columns
+of one unique key. Unsupported literal types and non-key predicates still fall
+back to full executor scan. SQLCI smoke now enables a test-only executor trace
+to assert that integer primary-key, NUMERIC/DECIMAL/BigNum primary-key, and
+UNIQUE-key equality use the get-row path while non-key predicates use full scan
+fallback.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -314,12 +316,12 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The next implementation step should continue broadening compiler literal key
-encoding and then expose key metadata more broadly:
+The next implementation step should expose local-lite key metadata more broadly
+now that literal key fallback coverage is in place:
 
-1. Extend compiler literal key encoding beyond integer, character, and binary
-   NUMERIC keys, with DECIMAL/BigNum and negative predicate shapes still pending.
-2. Extend UNIQUE-key get-row coverage to the same literal types as primary-key
-   get-row coverage.
-3. Expose local-lite key metadata broadly to the optimizer once fallback
+1. Expose local-lite primary-key and UNIQUE-key metadata broadly to the
+   optimizer.
+2. Keep local-lite scan/get fallback behavior for unsupported literal shapes and
+   non-key predicates.
+3. Add optimizer-facing regression coverage once metadata exposure changes plan
    behavior is covered.

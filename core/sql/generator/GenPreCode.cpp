@@ -207,17 +207,10 @@ static NABoolean localLiteLoadTable(TableDesc *tdesc,
                          &error) ? TRUE : FALSE;
 }
 
-static NABoolean localLiteConstValueToText(ValueId valueId,
-                                           std::string *text)
+static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
+                                                 NABoolean negate,
+                                                 std::string *text)
 {
-  ItemExpr *expr = valueId.getItemExpr();
-  if (!expr)
-    return FALSE;
-
-  NABoolean negate = FALSE;
-  ConstValue *cv = expr->castToConstValue(negate);
-  if (!cv && expr->getOperatorType() == ITM_CACHE_PARAM)
-    cv = static_cast<ConstantParameter *>(expr)->getConstVal();
   if (!cv)
     return FALSE;
   if (cv->isNull())
@@ -249,7 +242,91 @@ static NABoolean localLiteConstValueToText(ValueId valueId,
       return TRUE;
     }
 
+  if (type->getTypeQualifier() == NA_NUMERIC_TYPE)
+    {
+      const NAString *raw = cv->getRawText();
+      if (!raw)
+        return FALSE;
+      *text = localLiteNAStringToStd(*raw);
+      if (negate && !text->empty() && (*text)[0] != '-')
+        text->insert(text->begin(), '-');
+      return TRUE;
+    }
+
   return FALSE;
+}
+
+static NABoolean localLiteConstExprIsExactZero(ItemExpr *expr)
+{
+  std::string text;
+  if (!expr)
+    return FALSE;
+
+  NABoolean negate = FALSE;
+  ConstValue *cv = expr->castToConstValue(negate);
+  if (!cv && expr->getOperatorType() == ITM_CACHE_PARAM)
+    cv = static_cast<ConstantParameter *>(expr)->getConstVal();
+  if (!localLiteConstValueObjectToText(cv, negate, &text))
+    return FALSE;
+
+  for (size_t i = 0; i < text.size(); i++)
+    if (text[i] != '0' && text[i] != '.')
+      return FALSE;
+  return TRUE;
+}
+
+static NABoolean localLiteConstExprToText(ItemExpr *expr,
+                                          NABoolean inheritedNegate,
+                                          std::string *text)
+{
+  if (!expr)
+    return FALSE;
+
+  NABoolean negate = FALSE;
+  ConstValue *cv = expr->castToConstValue(negate);
+  if (cv)
+    return localLiteConstValueObjectToText(
+        cv, (inheritedNegate != negate), text);
+
+  if (expr->getOperatorType() == ITM_CACHE_PARAM)
+    return localLiteConstValueObjectToText(
+        static_cast<ConstantParameter *>(expr)->getConstVal(),
+        inheritedNegate,
+        text);
+
+  if (expr->getOperatorType() == ITM_CAST ||
+      expr->getOperatorType() == ITM_CAST_CONVERT ||
+      expr->getOperatorType() == ITM_CAST_TYPE ||
+      expr->getOperatorType() == ITM_NARROW)
+    return localLiteConstExprToText(
+        expr->child(0)->castToItemExpr(), inheritedNegate, text);
+
+  if (expr->getOperatorType() == ITM_NEGATE)
+    return localLiteConstExprToText(
+        expr->child(0)->castToItemExpr(), !inheritedNegate, text);
+
+  if (expr->getOperatorType() == ITM_MINUS ||
+      expr->getOperatorType() == ITM_PLUS)
+    {
+      ItemExpr *left = expr->child(0)->castToItemExpr();
+      ItemExpr *right = expr->child(1)->castToItemExpr();
+      if (localLiteConstExprIsExactZero(left))
+        return localLiteConstExprToText(
+            right,
+            (expr->getOperatorType() == ITM_MINUS) ?
+                !inheritedNegate : inheritedNegate,
+            text);
+      if (localLiteConstExprIsExactZero(right))
+        return localLiteConstExprToText(left, inheritedNegate, text);
+    }
+
+  return FALSE;
+}
+
+static NABoolean localLiteConstValueToText(ValueId valueId,
+                                           std::string *text)
+{
+  return localLiteConstExprToText(valueId.getItemExpr(), FALSE, text);
 }
 
 static NABoolean localLiteColumnPosition(ValueId valueId,
@@ -670,10 +747,12 @@ static NABoolean processConstHBaseKeys(Generator * generator,
       if (tdesc &&
           relExpr->getOperatorType() == REL_HBASE_ACCESS)
         {
+          NABoolean localLiteGetRows = FALSE;
           if (listOfUpdSubsetRows.entries() == 0)
-            localLiteRewritePrimaryGetRows(tdesc, mySearchKeys,
-                                           listOfUpdUniqueRows);
-          if (listOfUpdUniqueRows.entries() == 0)
+            localLiteGetRows =
+              localLiteRewritePrimaryGetRows(tdesc, mySearchKeys,
+                                             listOfUpdUniqueRows);
+          if (!localLiteGetRows)
             {
               ValueIdSet localLitePreds;
               localLitePreds += executorPreds;
@@ -12717,19 +12796,16 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
     return NULL;
 
 #ifdef TRAF_LOCAL_LITE
-  if (listOfUniqueRows_.entries() == 0)
-    {
-      ValueIdSet localLitePreds;
-      localLitePreds += executorPred();
-      localLitePreds += selectionPred();
-      if (getSearchKey())
-        localLitePreds += getSearchKey()->getFullKeyPredicates();
-      if (localLiteRewritePrimaryGetRowsFromPredicates(
-              getTableDesc(), localLitePreds, listOfUniqueRows_) ||
-          localLiteRewriteUniqueGetRowsFromPredicates(
-              getTableDesc(), localLitePreds, listOfUniqueRows_))
-        listOfRangeRows_.clear();
-    }
+  ValueIdSet localLitePreds;
+  localLitePreds += executorPred();
+  localLitePreds += selectionPred();
+  if (getSearchKey())
+    localLitePreds += getSearchKey()->getFullKeyPredicates();
+  if (localLiteRewritePrimaryGetRowsFromPredicates(
+          getTableDesc(), localLitePreds, listOfUniqueRows_) ||
+      localLiteRewriteUniqueGetRowsFromPredicates(
+          getTableDesc(), localLitePreds, listOfUniqueRows_))
+    listOfRangeRows_.clear();
 #endif
 
   //compute isUnique:

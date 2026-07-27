@@ -41,7 +41,9 @@ struct LocalLiteStoredColumn
 {
   LocalLiteCodecType type;
   size_t length;
+  size_t precision;
   size_t scale;
+  bool decimalStorage;
   bool nullable;
   size_t voaOffset;
   size_t nullIndOffset;
@@ -118,20 +120,26 @@ static size_t bigNumStorageSize(size_t precision)
 static bool mapType(const std::string &typeText,
                     LocalLiteCodecType *type,
                     size_t *length,
-                    size_t *scale)
+                    size_t *precisionOut,
+                    size_t *scale,
+                    bool *decimalStorage)
 {
   *scale = 0;
+  *precisionOut = 0;
+  *decimalStorage = false;
   std::string typeName = upper(typeText);
   if (startsWithWord(typeName, "TINYINT"))
     {
       *type = LL_TYPE_INT8;
       *length = 1;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "SMALLINT"))
     {
       *type = LL_TYPE_INT16;
       *length = 2;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "INT") ||
@@ -139,6 +147,7 @@ static bool mapType(const std::string &typeText,
     {
       *type = LL_TYPE_INT32;
       *length = 4;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "LARGEINT") ||
@@ -146,6 +155,7 @@ static bool mapType(const std::string &typeText,
     {
       *type = LL_TYPE_INT64;
       *length = 8;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "REAL") ||
@@ -153,12 +163,14 @@ static bool mapType(const std::string &typeText,
     {
       *type = LL_TYPE_FLOAT32;
       *length = 4;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "DOUBLE"))
     {
       *type = LL_TYPE_FLOAT64;
       *length = 8;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "NUMERIC"))
@@ -169,6 +181,8 @@ static bool mapType(const std::string &typeText,
         return false;
       *type = LL_TYPE_NUMERIC;
       *scale = typeScale;
+      *precisionOut = precision;
+      *decimalStorage = false;
       *length = precision > 18 ? bigNumStorageSize(precision)
                                : numericStorageSize(precision);
       if (*length == 0)
@@ -183,6 +197,8 @@ static bool mapType(const std::string &typeText,
         return false;
       *type = LL_TYPE_NUMERIC;
       *scale = typeScale;
+      *precisionOut = precision;
+      *decimalStorage = true;
       *length = precision;
       return true;
     }
@@ -190,18 +206,21 @@ static bool mapType(const std::string &typeText,
     {
       *type = LL_TYPE_DATETIME;
       *length = 4;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "TIME"))
     {
       *type = LL_TYPE_DATETIME;
       *length = 8;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "TIMESTAMP"))
     {
       *type = LL_TYPE_DATETIME;
       *length = 11;
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "VARCHAR") ||
@@ -209,6 +228,7 @@ static bool mapType(const std::string &typeText,
     {
       *type = LL_TYPE_VARCHAR;
       *length = typeArg(typeName, 1);
+      *precisionOut = *length;
       return true;
     }
   if (startsWithWord(typeName, "CHAR") ||
@@ -216,6 +236,7 @@ static bool mapType(const std::string &typeText,
     {
       *type = LL_TYPE_CHAR;
       *length = typeArg(typeName, 1);
+      *precisionOut = *length;
       return true;
     }
   return false;
@@ -265,7 +286,7 @@ static bool computeLayout(const LocalLiteTableDef &table,
     {
       LocalLiteStoredColumn &col = (*columns)[i];
       if (!mapType(table.columns[i].type, &col.type, &col.length,
-                   &col.scale))
+                   &col.precision, &col.scale, &col.decimalStorage))
         {
           setError(error, "unsupported local-lite binary row column type: " +
                   table.columns[i].type);
@@ -403,6 +424,127 @@ static bool parseScaledInt64(const std::string &value,
   return true;
 }
 
+static bool parseScaledDigits(const std::string &value,
+                              size_t scale,
+                              size_t precision,
+                              bool *negativeOut,
+                              std::string *digitsOut)
+{
+  const char *p = value.c_str();
+  bool negative = false;
+  if (*p == '-' || *p == '+')
+    {
+      negative = (*p == '-');
+      p++;
+    }
+
+  std::string digits;
+  size_t fracDigits = 0;
+  bool seenDigit = false;
+  bool seenPoint = false;
+
+  for (; *p; p++)
+    {
+      if (*p == '.')
+        {
+          if (seenPoint)
+            return false;
+          seenPoint = true;
+          continue;
+        }
+
+      if (*p < '0' || *p > '9')
+        return false;
+
+      seenDigit = true;
+      digits.push_back(*p);
+      if (seenPoint)
+        fracDigits++;
+    }
+
+  if (!seenDigit || fracDigits > scale)
+    return false;
+
+  while (fracDigits < scale)
+    {
+      digits.push_back('0');
+      fracDigits++;
+    }
+
+  size_t firstNonZero = digits.find_first_not_of('0');
+  if (firstNonZero == std::string::npos)
+    {
+      digits.assign(1, '0');
+      negative = false;
+    }
+  else if (firstNonZero > 0)
+    digits.erase(0, firstNonZero);
+
+  if (digits.size() > precision)
+    return false;
+
+  digits.insert(digits.begin(), precision - digits.size(), '0');
+  *negativeOut = negative;
+  *digitsOut = digits;
+  return true;
+}
+
+static bool writeDecimalValue(char *target,
+                              const LocalLiteStoredColumn &col,
+                              const std::string &value,
+                              std::string *error)
+{
+  bool negative = false;
+  std::string digits;
+  if (!parseScaledDigits(value, col.scale, col.precision,
+                         &negative, &digits))
+    {
+      setError(error, "invalid local-lite decimal literal");
+      return false;
+    }
+  if (digits.size() != col.length)
+    {
+      setError(error, "local-lite decimal storage length mismatch");
+      return false;
+    }
+
+  str_cpy_all(target, digits.data(), digits.size());
+  if (negative)
+    target[0] = static_cast<char>(target[0] | 0200);
+  return true;
+}
+
+static bool writeBigNumValue(char *target,
+                             const LocalLiteStoredColumn &col,
+                             const std::string &value,
+                             std::string *error)
+{
+  bool negative = false;
+  std::string digits;
+  if (!parseScaledDigits(value, col.scale, col.precision,
+                         &negative, &digits))
+    {
+      setError(error, "invalid local-lite BigNum literal");
+      return false;
+    }
+
+  std::string ascii;
+  ascii.reserve(digits.size() + 1);
+  ascii.push_back(negative ? '-' : '+');
+  ascii.append(digits);
+
+  if (BigNumHelper::ConvAsciiToBigNumWithSignHelper(
+          static_cast<Lng32>(ascii.size()),
+          static_cast<Lng32>(col.length),
+          &ascii[0],
+          target) != 0)
+    {
+      setError(error, "invalid local-lite BigNum literal");
+      return false;
+    }
+  return true;
+}
+
 static bool writeValue(char *row,
                        const LocalLiteStoredColumn &col,
                        const std::string &value,
@@ -464,6 +606,11 @@ static bool writeValue(char *row,
       }
     case LL_TYPE_NUMERIC:
       {
+        if (col.precision > 18)
+          return writeBigNumValue(target, col, value, error);
+        if (col.decimalStorage)
+          return writeDecimalValue(target, col, value, error);
+
         Int64 scaled = 0;
         if (!parseScaledInt64(value, col.scale, &scaled))
           {

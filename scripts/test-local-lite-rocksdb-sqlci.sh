@@ -243,36 +243,56 @@ grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_pk_output" ||
   fail "primary-key equality query did not use local-lite get-row scan"
 
 trace_numeric_setup_output=$(
-  printf "CREATE TABLE pk_num_trace(a NUMERIC(9,2) PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_num_trace VALUES (12.34, 'twelve');\nexit;\n" |
+  printf "CREATE TABLE pk_num_trace(a NUMERIC(9,2) PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_num_trace VALUES (12.34, 'twelve'), (-0.50, 'minus');\nCREATE TABLE pk_dec_trace(a DECIMAL(5,2) PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_dec_trace VALUES (12.34, 'dpos'), (-0.50, 'dneg');\nCREATE TABLE pk_big_trace(a NUMERIC(30,2) PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_big_trace VALUES (1234567890123456789012345678.90, 'big');\nexit;\n" |
     run_sqlci
 )
-grep -q -- '--- 1 row(s) inserted.' <<<"$trace_numeric_setup_output" ||
-  fail "numeric trace setup table did not insert row"
+numeric_trace_insert_count=$(grep -c -- '--- .* row(s) inserted.' <<<"$trace_numeric_setup_output")
+[[ "$numeric_trace_insert_count" -ge 3 ]] ||
+  fail "numeric trace setup tables did not insert rows"
 
 trace_numeric_pk_output=$(
-  printf "SELECT b FROM pk_num_trace WHERE a = 12.34;\nDROP TABLE pk_num_trace;\nexit;\n" |
+  printf "SELECT b FROM pk_num_trace WHERE a = 12.34;\nSELECT b FROM pk_num_trace WHERE a = -0.50;\nSELECT b FROM pk_dec_trace WHERE a = 12.34;\nSELECT b FROM pk_dec_trace WHERE a = -0.50;\nSELECT b FROM pk_big_trace WHERE a = 1234567890123456789012345678.90;\nDROP TABLE pk_num_trace;\nDROP TABLE pk_dec_trace;\nDROP TABLE pk_big_trace;\nexit;\n" |
     run_sqlci_trace_scan 2>&1
 )
 grep -q 'twelve' <<<"$trace_numeric_pk_output" ||
   fail "numeric primary-key trace query did not return row"
-grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_numeric_pk_output" ||
-  fail "numeric primary-key equality query did not use local-lite get-row scan"
+grep -q 'minus' <<<"$trace_numeric_pk_output" ||
+  fail "negative numeric primary-key trace query did not return row"
+grep -q 'dpos' <<<"$trace_numeric_pk_output" ||
+  fail "decimal primary-key trace query did not return row"
+grep -q 'dneg' <<<"$trace_numeric_pk_output" ||
+  fail "negative decimal primary-key trace query did not return row"
+grep -q 'big' <<<"$trace_numeric_pk_output" ||
+  fail "BigNum primary-key trace query did not return row"
+numeric_get_row_count=$(grep -c 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_numeric_pk_output")
+[[ "$numeric_get_row_count" -ge 5 ]] ||
+  fail "numeric/decimal/BigNum primary-key equality queries did not use local-lite get-row scan"
 
 trace_unique_setup_output=$(
-  printf "CREATE TABLE uq_trace(a INT, b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_trace VALUES (7, 'seven'), (8, 'eight');\nexit;\n" |
+  printf "CREATE TABLE uq_trace(a INT, b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_trace VALUES (7, 'seven'), (8, 'eight');\nCREATE TABLE uq_num_trace(a NUMERIC(9,2), b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_num_trace VALUES (12.34, 'unum'), (-0.50, 'uneg');\nCREATE TABLE uq_dec_trace(a DECIMAL(5,2), b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_dec_trace VALUES (12.34, 'udpos'), (-0.50, 'udneg');\nexit;\n" |
     run_sqlci
 )
-grep -q -- '--- 2 row(s) inserted.' <<<"$trace_unique_setup_output" ||
+unique_trace_insert_count=$(grep -c -- '--- 2 row(s) inserted.' <<<"$trace_unique_setup_output")
+[[ "$unique_trace_insert_count" -ge 3 ]] ||
   fail "unique trace setup table did not insert rows"
 
 trace_unique_output=$(
-  printf "SELECT b FROM uq_trace WHERE a = 7;\nDROP TABLE uq_trace;\nexit;\n" |
+  printf "SELECT b FROM uq_trace WHERE a = 7;\nSELECT b FROM uq_num_trace WHERE a = 12.34;\nSELECT b FROM uq_num_trace WHERE a = -0.50;\nSELECT b FROM uq_dec_trace WHERE a = 12.34;\nSELECT b FROM uq_dec_trace WHERE a = -0.50;\nDROP TABLE uq_trace;\nDROP TABLE uq_num_trace;\nDROP TABLE uq_dec_trace;\nexit;\n" |
     run_sqlci_trace_scan 2>&1
 )
 grep -q 'seven' <<<"$trace_unique_output" ||
   fail "unique-key trace query did not return row"
-grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_unique_output" ||
-  fail "unique-key equality query did not use local-lite get-row scan"
+grep -q 'unum' <<<"$trace_unique_output" ||
+  fail "numeric unique-key trace query did not return row"
+grep -q 'uneg' <<<"$trace_unique_output" ||
+  fail "negative numeric unique-key trace query did not return row"
+grep -q 'udpos' <<<"$trace_unique_output" ||
+  fail "decimal unique-key trace query did not return row"
+grep -q 'udneg' <<<"$trace_unique_output" ||
+  fail "negative decimal unique-key trace query did not return row"
+unique_get_row_count=$(grep -c 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_unique_output")
+[[ "$unique_get_row_count" -ge 5 ]] ||
+  fail "unique-key equality queries did not use local-lite get-row scan"
 
 trace_full_output=$(
   printf "SELECT a FROM pk_trace WHERE b = 'seven';\nDROP TABLE pk_trace;\nexit;\n" |
