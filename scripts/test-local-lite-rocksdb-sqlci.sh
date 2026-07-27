@@ -203,6 +203,20 @@ pk_duplicate_count=$(grep -c 'duplicate local-lite primary key' <<<"$primary_key
 grep -q -- '--- 0 row(s) selected.' <<<"$primary_key_output" ||
   fail "primary key rollback did not discard pending row"
 
+unique_key_output=$(
+  printf "CREATE TABLE uq_t(a INT, b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_t VALUES (1, 'one');\nSELECT b FROM uq_t WHERE a = 1;\nINSERT INTO uq_t VALUES (1, 'dup');\nBEGIN WORK;\nINSERT INTO uq_t VALUES (2, 'two');\nSELECT b FROM uq_t WHERE a = 2;\nINSERT INTO uq_t VALUES (2, 'dup-pending');\nROLLBACK WORK;\nSELECT b FROM uq_t WHERE a = 2;\nDROP TABLE uq_t;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'one' <<<"$unique_key_output" ||
+  fail "unique key table did not return inserted row"
+grep -q 'two' <<<"$unique_key_output" ||
+  fail "unique key transaction did not read pending row"
+unique_duplicate_count=$(grep -c 'duplicate local-lite unique key' <<<"$unique_key_output")
+[[ "$unique_duplicate_count" -ge 2 ]] ||
+  fail "unique key duplicate diagnostics missing"
+grep -q -- '--- 0 row(s) selected.' <<<"$unique_key_output" ||
+  fail "unique key rollback did not discard pending row"
+
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |
     run_sqlci
@@ -219,7 +233,7 @@ grep -q 'ALTER TABLE is not supported in local-lite' <<<"$unsupported_output" ||
   fail "ALTER TABLE unsupported diagnostic missing"
 grep -q 'TRUNCATE TABLE is not supported in local-lite' <<<"$unsupported_output" ||
   fail "TRUNCATE TABLE unsupported diagnostic missing"
-grep -q 'local-lite table constraints other than PRIMARY KEY are not supported' <<<"$unsupported_output" ||
+grep -q 'local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported' <<<"$unsupported_output" ||
   fail "constraint unsupported diagnostic missing"
 
 echo "local-lite RocksDB sqlci smoke passed"

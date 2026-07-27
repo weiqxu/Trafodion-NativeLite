@@ -206,14 +206,15 @@ Validation:
 ### Phase 5: Deterministic Row Keys And Conflict Detection
 
 Status: initial primary-key storage support implemented. Local-lite DDL now
-accepts PRIMARY KEY, persists primary-key column ordinals in `LLT2` table
-metadata, and rejects UNIQUE/RI/CHECK constraints. INSERTs into primary-key
-tables build a deterministic `P`-prefixed RocksDB row key from the binary
-aligned `LLBR1` payload, reject duplicate keys in committed data, and reject
-duplicates inside the current pending local transaction write set. Keyless
-tables continue to use the existing internal row id path. The optimizer does
-not yet expose local-lite primary keys as real key-access metadata; all queries
-still execute through the local-lite executor scan path.
+accepts PRIMARY KEY and UNIQUE, persists key column ordinals in `LLT3` table
+metadata, and rejects RI/CHECK constraints. INSERTs into primary-key tables
+build a deterministic `P`-prefixed RocksDB row key from the binary aligned
+`LLBR1` payload. UNIQUE constraints use `U`-prefixed secondary uniqueness
+records in the same RocksDB table. Duplicate primary and unique keys are
+rejected in committed data and inside the current pending local transaction
+write set. Keyless tables continue to use the existing internal row id path.
+The optimizer does not yet expose local-lite keys as real key-access metadata;
+all queries still execute through the local-lite executor scan path.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -236,9 +237,9 @@ Validation:
   other.
 - Primary-key scans use deterministic encoded keys.
 - Keyless table inserts continue to work through the internal row id path.
-- `CREATE TABLE pk_t(a INT PRIMARY KEY, ...)`, duplicate insert diagnostics,
-  transaction read-own-write, rollback, and keyless table regression are covered
-  by the RocksDB SQLCI smoke.
+- `CREATE TABLE pk_t(a INT PRIMARY KEY, ...)`, `CREATE TABLE uq_t(...,
+  UNIQUE(a))`, duplicate insert diagnostics, transaction read-own-write,
+  rollback, and keyless table regression are covered by the RocksDB SQLCI smoke.
 
 ### Phase 6: Optional TMF Integration Boundary
 
@@ -298,21 +299,12 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-Phase 1 is now implemented for the current local-lite process model:
+The next implementation step should make optimized key access real before
+exposing local-lite primary or unique keys as normal optimizer-visible access
+paths:
 
-- `LocalLiteStorageManager` owns shared RocksDB catalog and table handles inside
-  each linked local-lite module.
-- `LocalLiteRocksDBStore` instances acquire and release the shared manager
-  instead of directly owning a catalog DB handle.
-- `putRow()` and `scanRows()` use cached table handles instead of reopening the
-  same table RocksDB path per operation.
-- Same-process row-id allocation is protected by the manager mutex.
-- The RocksDB SQLCI smoke includes a self-join regression over one local table.
-
-The next implementation step should be Phase 5:
-
-1. Add primary key metadata support for local-lite tables.
-2. Generate deterministic local row keys from compiler/executor key expressions
-   when a table has a primary key.
-3. Keep internal row id allocation only for keyless heap-like local tables.
-4. Add duplicate-key diagnostics for primary and unique keys.
+1. Teach local-lite scan/get TCBs to consume encoded row-key access requests.
+2. Map optimizer-generated primary-key equality access to the deterministic
+   `P`-prefixed row key.
+3. Keep full executor scan as the fallback path for non-key predicates.
+4. Only then expose local-lite key metadata broadly to the optimizer.

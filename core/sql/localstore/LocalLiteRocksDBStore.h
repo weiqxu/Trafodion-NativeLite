@@ -29,6 +29,7 @@ struct LocalLiteTableDef
   uint64_t nextRowId;
   std::vector<LocalLiteColumnDef> columns;
   std::vector<size_t> primaryKeyColumns;
+  std::vector< std::vector<size_t> > uniqueKeyColumns;
 };
 
 struct LocalLiteRow

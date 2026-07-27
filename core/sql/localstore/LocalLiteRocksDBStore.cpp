@@ -163,7 +163,7 @@ static uint64_t readUint64(const std::string &s, size_t *offset)
 static std::string encodeTable(const LocalLiteTableDef &table)
 {
   std::string out;
-  out += "LLT2\n";
+  out += "LLT3\n";
   out += table.catalog + "\n";
   out += table.schema + "\n";
   out += table.name + "\n";
@@ -195,6 +195,21 @@ static std::string encodeTable(const LocalLiteTableDef &table)
                static_cast<unsigned long>(table.primaryKeyColumns[i]));
       out += buf;
     }
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.uniqueKeyColumns.size()));
+  out += buf;
+  for (size_t i = 0; i < table.uniqueKeyColumns.size(); i++)
+    {
+      snprintf(buf, sizeof(buf), "%lu\n",
+               static_cast<unsigned long>(table.uniqueKeyColumns[i].size()));
+      out += buf;
+      for (size_t j = 0; j < table.uniqueKeyColumns[i].size(); j++)
+        {
+          snprintf(buf, sizeof(buf), "%lu\n",
+                   static_cast<unsigned long>(table.uniqueKeyColumns[i][j]));
+          out += buf;
+        }
+    }
   return out;
 }
 
@@ -216,12 +231,14 @@ static bool decodeTable(const std::string &encoded,
 {
   std::string line;
   size_t pos = 0;
-  if (!nextLine(encoded, &pos, &line) || (line != "LLT1" && line != "LLT2"))
+  if (!nextLine(encoded, &pos, &line) ||
+      (line != "LLT1" && line != "LLT2" && line != "LLT3"))
     {
       setError(error, "invalid local-lite table metadata");
       return false;
     }
-  const bool hasKeyMetadata = (line == "LLT2");
+  const bool hasKeyMetadata = (line == "LLT2" || line == "LLT3");
+  const bool hasUniqueMetadata = (line == "LLT3");
   if (!nextLine(encoded, &pos, &table->catalog) ||
       !nextLine(encoded, &pos, &table->schema) ||
       !nextLine(encoded, &pos, &table->name) ||
@@ -239,6 +256,7 @@ static bool decodeTable(const std::string &encoded,
   unsigned long count = strtoul(line.c_str(), NULL, 10);
   table->columns.clear();
   table->primaryKeyColumns.clear();
+  table->uniqueKeyColumns.clear();
   for (unsigned long i = 0; i < count; i++)
     {
       if (!nextLine(encoded, &pos, &line))
@@ -281,6 +299,46 @@ static bool decodeTable(const std::string &encoded,
               return false;
             }
           table->primaryKeyColumns.push_back(static_cast<size_t>(keyIndex));
+        }
+    }
+  if (hasUniqueMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite unique key metadata");
+          return false;
+        }
+      unsigned long uniqueCount = strtoul(line.c_str(), NULL, 10);
+      for (unsigned long i = 0; i < uniqueCount; i++)
+        {
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite unique key metadata");
+              return false;
+            }
+          unsigned long keyColumnCount = strtoul(line.c_str(), NULL, 10);
+          std::vector<size_t> keyColumns;
+          for (unsigned long j = 0; j < keyColumnCount; j++)
+            {
+              if (!nextLine(encoded, &pos, &line))
+                {
+                  setError(error, "truncated local-lite unique key metadata");
+                  return false;
+                }
+              unsigned long keyIndex = strtoul(line.c_str(), NULL, 10);
+              if (keyIndex >= table->columns.size())
+                {
+                  setError(error, "invalid local-lite unique key metadata");
+                  return false;
+                }
+              keyColumns.push_back(static_cast<size_t>(keyIndex));
+            }
+          if (keyColumns.empty())
+            {
+              setError(error, "invalid local-lite unique key metadata");
+              return false;
+            }
+          table->uniqueKeyColumns.push_back(keyColumns);
         }
     }
   return true;
@@ -436,6 +494,18 @@ public:
       {
         appendUint64(key, loaded.nextRowId);
       }
+    std::vector<std::string> uniqueKeys;
+    for (size_t i = 0; i < loaded.uniqueKeyColumns.size(); i++)
+      {
+        std::string uniqueKey;
+        bool hasUniqueKey = false;
+        if (!LocalLiteBuildUniqueKey(loaded, encodedRow,
+                                     loaded.uniqueKeyColumns[i], i,
+                                     &uniqueKey, &hasUniqueKey, error))
+          return false;
+        if (hasUniqueKey)
+          uniqueKeys.push_back(uniqueKey);
+      }
 
     const uint64_t allocatedRowId = loaded.nextRowId;
     LocalLiteTableDef updated = loaded;
@@ -483,16 +553,50 @@ public:
         if (loaded.primaryKeyColumns.empty())
           putCatalogLocked(tableMetadataKey, oldMetadata,
                            "rollback local-lite row id metadata", NULL);
-        setError(error, "duplicate local-lite primary key");
+        setError(error, loaded.primaryKeyColumns.empty()
+                        ? "duplicate local-lite row key"
+                        : "duplicate local-lite primary key");
         return false;
+      }
+    for (size_t i = 0; i < uniqueKeys.size(); i++)
+      {
+        readOptions = rocksdb_readoptions_create();
+        err = NULL;
+        existingLen = 0;
+        existing = rocksdb_get(db, readOptions,
+                               uniqueKeys[i].data(), uniqueKeys[i].size(),
+                               &existingLen, &err);
+        rocksdb_readoptions_destroy(readOptions);
+        if (!checkRocksError(err, "read local-lite unique key", error))
+          {
+            if (loaded.primaryKeyColumns.empty())
+              putCatalogLocked(tableMetadataKey, oldMetadata,
+                               "rollback local-lite row id metadata", NULL);
+            return false;
+          }
+        if (existing)
+          {
+            rocksdb_free(existing);
+            if (loaded.primaryKeyColumns.empty())
+              putCatalogLocked(tableMetadataKey, oldMetadata,
+                               "rollback local-lite row id metadata", NULL);
+            setError(error, "duplicate local-lite unique key");
+            return false;
+          }
       }
 
     std::string value = encodeRowValue(encodedRow);
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    rocksdb_writebatch_put(batch, key.data(), key.size(),
+                           value.data(), value.size());
+    for (size_t i = 0; i < uniqueKeys.size(); i++)
+      rocksdb_writebatch_put(batch, uniqueKeys[i].data(), uniqueKeys[i].size(),
+                             key.data(), key.size());
     rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
     err = NULL;
-    rocksdb_put(db, writeOptions,
-                key.data(), key.size(), value.data(), value.size(), &err);
+    rocksdb_write(db, writeOptions, batch, &err);
     rocksdb_writeoptions_destroy(writeOptions);
+    rocksdb_writebatch_destroy(batch);
     if (!checkRocksError(err, "write local-lite row", error))
       {
         std::string rollbackError;
@@ -750,6 +854,33 @@ public:
             if (existingKey == newKey)
               {
                 setError(error, "duplicate local-lite primary key");
+                return false;
+              }
+          }
+      }
+    for (size_t keyIndex = 0;
+         keyIndex < pending.table.uniqueKeyColumns.size(); keyIndex++)
+      {
+        std::string newKey;
+        bool hasNewKey = false;
+        if (!LocalLiteBuildUniqueKey(pending.table, encodedRow,
+                                     pending.table.uniqueKeyColumns[keyIndex],
+                                     keyIndex, &newKey, &hasNewKey, error))
+          return false;
+        if (!hasNewKey)
+          continue;
+        for (size_t i = 0; i < pending.rows.size(); i++)
+          {
+            std::string existingKey;
+            bool hasExistingKey = false;
+            if (!LocalLiteBuildUniqueKey(
+                    pending.table, pending.rows[i].value,
+                    pending.table.uniqueKeyColumns[keyIndex], keyIndex,
+                    &existingKey, &hasExistingKey, error))
+              return false;
+            if (hasExistingKey && existingKey == newKey)
+              {
+                setError(error, "duplicate local-lite unique key");
                 return false;
               }
           }
@@ -1114,6 +1245,8 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
       const char *rawKey = rocksdb_iter_key(it, &keyLen);
       const char *rawValue = rocksdb_iter_value(it, &valueLen);
       std::string key(rawKey, keyLen);
+      if (key.size() > 0 && key[0] == 'U')
+        continue;
       std::string value(rawValue, valueLen);
       size_t offset = 0;
       LocalLiteRow row;

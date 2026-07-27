@@ -198,11 +198,10 @@ static bool localLiteRejectUnsupportedCreate(StmtDDLCreateTable *createTableNode
       localLiteDDLDiag("CREATE TABLE LIKE is not supported in local-lite");
       return true;
     }
-  if (createTableNode->getAddConstraintUniqueArray().entries() > 0 ||
-      createTableNode->getAddConstraintRIArray().entries() > 0 ||
+  if (createTableNode->getAddConstraintRIArray().entries() > 0 ||
       createTableNode->getAddConstraintCheckArray().entries() > 0)
     {
-      localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY are not supported");
+      localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported");
       return true;
     }
   if (createTableNode->isPartitionSpecified() ||
@@ -222,6 +221,47 @@ static bool localLiteRejectUnsupportedCreate(StmtDDLCreateTable *createTableNode
       return true;
     }
   return false;
+}
+
+static bool localLiteFindColumn(const ElemDDLColDefArray &colArray,
+                                const NAString &columnName,
+                                size_t *index);
+
+static bool localLiteAppendKeyColumns(const ElemDDLColDefArray &colArray,
+                                      ElemDDLColRefArray &keyArray,
+                                      const char *constraintName,
+                                      std::vector<size_t> *keyColumns)
+{
+  if (keyArray.entries() == 0)
+    {
+      localLiteDDLDiag(std::string("local-lite ") + constraintName +
+                       " constraint requires at least one column");
+      return false;
+    }
+
+  for (CollIndex i = 0; i < keyArray.entries(); i++)
+    {
+      size_t columnIndex = 0;
+      if (!keyArray[i] ||
+          !localLiteFindColumn(colArray, keyArray[i]->getColumnName(),
+                               &columnIndex))
+        {
+          localLiteDDLDiag(std::string("local-lite ") + constraintName +
+                           " column does not exist");
+          return false;
+        }
+      for (size_t j = 0; j < keyColumns->size(); j++)
+        {
+          if ((*keyColumns)[j] == columnIndex)
+            {
+              localLiteDDLDiag(std::string("duplicate local-lite ") +
+                               constraintName + " column");
+              return false;
+            }
+        }
+      keyColumns->push_back(columnIndex);
+    }
+  return true;
 }
 
 static bool localLiteFindColumn(const ElemDDLColDefArray &colArray,
@@ -264,25 +304,30 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
 
   ElemDDLColRefArray &primaryKeyArray =
     createTableNode->getPrimaryKeyColRefArray();
-  for (CollIndex i = 0; i < primaryKeyArray.entries(); i++)
+  if (primaryKeyArray.entries() > 0 &&
+      !localLiteAppendKeyColumns(colArray, primaryKeyArray, "primary key",
+                                 &table.primaryKeyColumns))
+    return false;
+
+  StmtDDLAddConstraintUniqueArray &uniqueArray =
+    createTableNode->getAddConstraintUniqueArray();
+  for (CollIndex i = 0; i < uniqueArray.entries(); i++)
     {
-      size_t columnIndex = 0;
-      if (!primaryKeyArray[i] ||
-          !localLiteFindColumn(colArray, primaryKeyArray[i]->getColumnName(),
-                               &columnIndex))
+      if (!uniqueArray[i] || !uniqueArray[i]->getConstraint() ||
+          !uniqueArray[i]->getConstraint()->castToElemDDLConstraintUnique())
         {
-          localLiteDDLDiag("local-lite primary key column does not exist");
+          localLiteDDLDiag("invalid local-lite unique constraint");
           return false;
         }
-      for (size_t j = 0; j < table.primaryKeyColumns.size(); j++)
-        {
-          if (table.primaryKeyColumns[j] == columnIndex)
-            {
-              localLiteDDLDiag("duplicate local-lite primary key column");
-              return false;
-            }
-        }
-      table.primaryKeyColumns.push_back(columnIndex);
+      ElemDDLColRefArray &keyArray =
+        uniqueArray[i]->getConstraint()
+                      ->castToElemDDLConstraintUnique()
+                      ->getKeyColumnArray();
+      std::vector<size_t> keyColumns;
+      if (!localLiteAppendKeyColumns(colArray, keyArray, "unique",
+                                     &keyColumns))
+        return false;
+      table.uniqueKeyColumns.push_back(keyColumns);
     }
 
   for (CollIndex i = 0; i < colArray.entries(); i++)
@@ -296,7 +341,7 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
       if (col->getConstraintArray().entries() > 0 ||
           col->getDefaultClauseStatus() != ElemDDLColDef::DEFAULT_CLAUSE_NOT_SPEC)
         {
-          localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY are not supported");
+          localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported");
           return false;
         }
 

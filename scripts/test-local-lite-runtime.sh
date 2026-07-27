@@ -58,6 +58,10 @@ grep -q 'LocalLiteProjectBinaryRow' "$storage_stubs" ||
   fail "local-lite executor scan must project from binary persisted rows"
 grep -q 'LocalLiteNormalizeBinaryRow' "$storage_stubs" ||
   fail "local-lite executor insert must persist normalized executor binary aligned rows"
+grep -q 'uniqueKeyColumns' "$localstore_header" ||
+  fail "local-lite table metadata must preserve UNIQUE key columns"
+grep -q 'LocalLiteBuildUniqueKey' "$localstore_source" ||
+  fail "local-lite insert path must build UNIQUE secondary keys"
 grep -q 'beginForExecutor' "$localstore_header" ||
   fail "local-lite transaction manager must expose executor-bound begin"
 grep -q 'commitForExecutor' "$localstore_header" ||

@@ -46,6 +46,14 @@ bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
                               std::string *key,
                               std::string *error);
 
+bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &table,
+                             const std::string &encoded,
+                             const std::vector<size_t> &keyColumns,
+                             size_t keyOrdinal,
+                             std::string *key,
+                             bool *hasKey,
+                             std::string *error);
+
 #endif
 
 #endif
