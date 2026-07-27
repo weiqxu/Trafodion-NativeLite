@@ -17,6 +17,8 @@ Trafodion catalog, complete table integration, transactions, indexes,
 privileges, JDBC/ODBC connectivity, and distributed execution remain outside
 the supported runtime surface. The current local NATable loader and executor
 scan TCB are intentionally narrow and only cover the v1 local table smoke path.
+The transaction and concurrency integration plan is tracked separately in
+[`local-lite-transaction-roadmap.md`](local-lite-transaction-roadmap.md).
 
 ## Current State
 
@@ -63,6 +65,9 @@ Implemented:
   plans. It evaluates the compiler-generated insert expression, normalizes the
   executor row into the local canonical binary aligned row layout, and persists
   the `LLBR1` payload through RocksDB.
+- Local RocksDB storage now shares catalog/table handles inside the local-lite
+  process module, so multiple executor scans of the same table in one statement
+  no longer reopen the same RocksDB path and collide on RocksDB `LOCK`.
 - Local executor table rows preserve nullable values. Scan predicates and
   projections over NULL fixed-width and variable-width columns use the normal
   executor tuple descriptors.

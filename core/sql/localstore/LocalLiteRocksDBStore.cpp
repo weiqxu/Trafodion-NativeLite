@@ -15,14 +15,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <map>
+#include <pthread.h>
+
 #include <rocksdb/c.h>
 
 static const unsigned char LOCAL_LITE_ROW_FORMAT_VERSION = 1;
-
-static rocksdb_t *asDb(void *db)
-{
-  return static_cast<rocksdb_t *>(db);
-}
 
 static void setError(std::string *error, const std::string &message)
 {
@@ -277,8 +275,151 @@ static bool decodeRowValue(const std::string &value,
   return true;
 }
 
+class LocalLiteMutexGuard
+{
+public:
+  explicit LocalLiteMutexGuard(pthread_mutex_t *mutex)
+    : mutex_(mutex)
+  {
+    pthread_mutex_lock(mutex_);
+  }
+
+  ~LocalLiteMutexGuard()
+  {
+    pthread_mutex_unlock(mutex_);
+  }
+
+private:
+  LocalLiteMutexGuard(const LocalLiteMutexGuard &);
+  LocalLiteMutexGuard &operator=(const LocalLiteMutexGuard &);
+
+  pthread_mutex_t *mutex_;
+};
+
+class LocalLiteStorageManager
+{
+public:
+  static LocalLiteStorageManager &instance()
+  {
+    static LocalLiteStorageManager manager;
+    return manager;
+  }
+
+  bool acquire(std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+
+    if (refCount_ == 0)
+      {
+        if (!mkdirs(parentDir(LocalLiteRocksDBStore::catalogPath()), error))
+          return false;
+
+        rocksdb_options_t *options = rocksdb_options_create();
+        rocksdb_options_set_create_if_missing(options, 1);
+
+        char *err = NULL;
+        rocksdb_t *db = rocksdb_open(options,
+                                     LocalLiteRocksDBStore::catalogPath().c_str(),
+                                     &err);
+        rocksdb_options_destroy(options);
+        if (!checkRocksError(err,
+                             "open RocksDB catalog " +
+                             LocalLiteRocksDBStore::catalogPath(),
+                             error))
+          return false;
+
+        catalogDb_ = db;
+      }
+
+    refCount_++;
+    return true;
+  }
+
+  void release()
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+
+    if (refCount_ == 0)
+      return;
+
+    refCount_--;
+    if (refCount_ != 0)
+      return;
+
+    for (TableMap::iterator it = tableDbs_.begin(); it != tableDbs_.end(); ++it)
+      rocksdb_close(it->second);
+    tableDbs_.clear();
+
+    if (catalogDb_)
+      rocksdb_close(catalogDb_);
+    catalogDb_ = NULL;
+  }
+
+  rocksdb_t *catalogDb()
+  {
+    return catalogDb_;
+  }
+
+  rocksdb_t *openTable(const std::string &path,
+                       bool createIfMissing,
+                       std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+
+    TableMap::iterator it = tableDbs_.find(path);
+    if (it != tableDbs_.end())
+      return it->second;
+
+    rocksdb_options_t *options = rocksdb_options_create();
+    rocksdb_options_set_create_if_missing(options, createIfMissing ? 1 : 0);
+    char *err = NULL;
+    rocksdb_t *db = rocksdb_open(options, path.c_str(), &err);
+    rocksdb_options_destroy(options);
+    if (!checkRocksError(err, "open RocksDB table " + path, error))
+      return NULL;
+
+    tableDbs_[path] = db;
+    return db;
+  }
+
+  void closeTable(const std::string &path)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+
+    TableMap::iterator it = tableDbs_.find(path);
+    if (it == tableDbs_.end())
+      return;
+
+    rocksdb_close(it->second);
+    tableDbs_.erase(it);
+  }
+
+  pthread_mutex_t *mutex()
+  {
+    return &mutex_;
+  }
+
+private:
+  typedef std::map<std::string, rocksdb_t *> TableMap;
+
+  LocalLiteStorageManager()
+    : refCount_(0),
+      catalogDb_(NULL)
+  {
+    pthread_mutex_init(&mutex_, NULL);
+  }
+
+  LocalLiteStorageManager(const LocalLiteStorageManager &);
+  LocalLiteStorageManager &operator=(const LocalLiteStorageManager &);
+
+  unsigned int refCount_;
+  rocksdb_t *catalogDb_;
+  TableMap tableDbs_;
+  pthread_mutex_t mutex_;
+};
+
 LocalLiteRocksDBStore::LocalLiteRocksDBStore()
-  : catalogDb_(NULL)
+  : opened_(false)
 {
 }
 
@@ -321,30 +462,23 @@ std::string LocalLiteRocksDBStore::tablePath(const LocalLiteTableDef &table)
 
 bool LocalLiteRocksDBStore::open(std::string *error)
 {
-  if (catalogDb_)
+  if (opened_)
     return true;
 
-  if (!mkdirs(parentDir(catalogPath()), error))
+  if (!LocalLiteStorageManager::instance().acquire(error))
     return false;
 
-  rocksdb_options_t *options = rocksdb_options_create();
-  rocksdb_options_set_create_if_missing(options, 1);
-
-  char *err = NULL;
-  rocksdb_t *db = rocksdb_open(options, catalogPath().c_str(), &err);
-  rocksdb_options_destroy(options);
-  if (!checkRocksError(err, "open RocksDB catalog " + catalogPath(), error))
-    return false;
-
-  catalogDb_ = db;
+  opened_ = true;
   return true;
 }
 
 void LocalLiteRocksDBStore::close()
 {
-  if (catalogDb_)
-    rocksdb_close(asDb(catalogDb_));
-  catalogDb_ = NULL;
+  if (!opened_)
+    return;
+
+  LocalLiteStorageManager::instance().release();
+  opened_ = false;
 }
 
 bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
@@ -366,6 +500,7 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   if (!mkdirs(parentDir(tablePath(table)), error))
     return false;
 
+  LocalLiteStorageManager::instance().closeTable(tablePath(table));
   rocksdb_options_t *tableOptions = rocksdb_options_create();
   rocksdb_options_set_create_if_missing(tableOptions, 1);
   char *err = NULL;
@@ -387,7 +522,8 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   rocksdb_writebatch_put(batch, uid.data(), uid.size(), key.data(), key.size());
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
   err = NULL;
-  rocksdb_write(asDb(catalogDb_), writeOptions, batch, &err);
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
+                writeOptions, batch, &err);
   rocksdb_writeoptions_destroy(writeOptions);
   rocksdb_writebatch_destroy(batch);
   if (!checkRocksError(err, "write local-lite table metadata", error))
@@ -411,12 +547,14 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
   rocksdb_writebatch_delete(batch, uid.data(), uid.size());
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
   char *err = NULL;
-  rocksdb_write(asDb(catalogDb_), writeOptions, batch, &err);
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
+                writeOptions, batch, &err);
   rocksdb_writeoptions_destroy(writeOptions);
   rocksdb_writebatch_destroy(batch);
   if (!checkRocksError(err, "delete local-lite table metadata", error))
     return false;
 
+  LocalLiteStorageManager::instance().closeTable(tablePath(table));
   rocksdb_options_t *options = rocksdb_options_create();
   err = NULL;
   rocksdb_destroy_db(options, tablePath(table).c_str(), &err);
@@ -439,7 +577,8 @@ bool LocalLiteRocksDBStore::tableExists(const std::string &catalog,
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
   char *err = NULL;
   size_t valueLen = 0;
-  char *value = rocksdb_get(asDb(catalogDb_), readOptions,
+  char *value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                            readOptions,
                             key.data(), key.size(), &valueLen, &err);
   rocksdb_readoptions_destroy(readOptions);
   if (!checkRocksError(err, "read local-lite table metadata", error))
@@ -467,7 +606,8 @@ bool LocalLiteRocksDBStore::loadTable(const std::string &catalog,
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
   char *err = NULL;
   size_t valueLen = 0;
-  char *value = rocksdb_get(asDb(catalogDb_), readOptions,
+  char *value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                            readOptions,
                             key.data(), key.size(), &valueLen, &err);
   rocksdb_readoptions_destroy(readOptions);
   if (!checkRocksError(err, "read local-lite table metadata", error))
@@ -487,6 +627,11 @@ bool LocalLiteRocksDBStore::allocateRowId(const LocalLiteTableDef &table,
                                           uint64_t *rowId,
                                           std::string *error)
 {
+  if (!open(error))
+    return false;
+
+  LocalLiteMutexGuard guard(LocalLiteStorageManager::instance().mutex());
+
   LocalLiteTableDef loaded;
   if (!loadTable(table.catalog, table.schema, table.name, &loaded, error))
     return false;
@@ -496,7 +641,8 @@ bool LocalLiteRocksDBStore::allocateRowId(const LocalLiteTableDef &table,
   std::string value = encodeTable(loaded);
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
   char *err = NULL;
-  rocksdb_put(asDb(catalogDb_), writeOptions,
+  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(),
+              writeOptions,
               key.data(), key.size(), value.data(), value.size(), &err);
   rocksdb_writeoptions_destroy(writeOptions);
   if (!checkRocksError(err, "update local-lite row id metadata", error))
@@ -509,22 +655,22 @@ bool LocalLiteRocksDBStore::putRow(const LocalLiteTableDef &table,
                                    const std::string &encodedRow,
                                    std::string *error)
 {
-  rocksdb_options_t *options = rocksdb_options_create();
-  rocksdb_options_set_create_if_missing(options, 0);
-  char *err = NULL;
-  rocksdb_t *db = rocksdb_open(options, tablePath(table).c_str(), &err);
-  rocksdb_options_destroy(options);
-  if (!checkRocksError(err, "open RocksDB table " + tablePath(table), error))
+  if (!open(error))
+    return false;
+
+  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(tablePath(table),
+                                                               false,
+                                                               error);
+  if (!db)
     return false;
 
   std::string key;
   appendUint64(key, rowId);
   std::string value = encodeRowValue(encodedRow);
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
-  err = NULL;
+  char *err = NULL;
   rocksdb_put(db, writeOptions, key.data(), key.size(), value.data(), value.size(), &err);
   rocksdb_writeoptions_destroy(writeOptions);
-  rocksdb_close(db);
   if (!checkRocksError(err, "write local-lite row", error))
     return false;
   return true;
@@ -536,12 +682,13 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
 {
   rows->clear();
 
-  rocksdb_options_t *options = rocksdb_options_create();
-  rocksdb_options_set_create_if_missing(options, 0);
-  char *err = NULL;
-  rocksdb_t *db = rocksdb_open(options, tablePath(table).c_str(), &err);
-  rocksdb_options_destroy(options);
-  if (!checkRocksError(err, "open RocksDB table " + tablePath(table), error))
+  if (!open(error))
+    return false;
+
+  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(tablePath(table),
+                                                               false,
+                                                               error);
+  if (!db)
     return false;
 
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
@@ -561,17 +708,15 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
         {
           rocksdb_iter_destroy(it);
           rocksdb_readoptions_destroy(readOptions);
-          rocksdb_close(db);
           return false;
         }
       rows->push_back(row);
     }
 
-  err = NULL;
+  char *err = NULL;
   rocksdb_iter_get_error(it, &err);
   rocksdb_iter_destroy(it);
   rocksdb_readoptions_destroy(readOptions);
-  rocksdb_close(db);
   if (!checkRocksError(err, "scan local-lite rows", error))
     return false;
   return true;

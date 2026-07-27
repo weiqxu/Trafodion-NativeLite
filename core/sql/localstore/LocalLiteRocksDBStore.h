@@ -81,7 +81,7 @@ private:
   LocalLiteRocksDBStore(const LocalLiteRocksDBStore &);
   LocalLiteRocksDBStore &operator=(const LocalLiteRocksDBStore &);
 
-  void *catalogDb_;
+  bool opened_;
 };
 
 #endif

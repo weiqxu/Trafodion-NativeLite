@@ -78,6 +78,18 @@ grep -q -- '--- 2 row(s) selected.' <<<"$projection_output" ||
 grep -q -- '--- 1 row(s) selected.' <<<"$projection_output" ||
   fail "executor scan predicate did not filter projected rows"
 
+self_join_output=$(
+  printf "SELECT t1.b, t2.b FROM t t1, t t2 WHERE t1.a = t2.a AND t1.a = 1;\nexit;\n" |
+    run_sqlci
+)
+grep -Eq '^one[[:space:]]+one[[:space:]]*$' <<<"$self_join_output" ||
+  fail "self-join over local-lite table did not return expected row"
+grep -q -- '--- 1 row(s) selected.' <<<"$self_join_output" ||
+  fail "self-join over local-lite table did not report one selected row"
+if grep -q 'LOCK' <<<"$self_join_output"; then
+  fail "self-join over local-lite table hit RocksDB LOCK"
+fi
+
 error_output=$(
   printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
     run_sqlci
