@@ -79,6 +79,11 @@ public:
               uint64_t rowId,
               const std::string &encodedRow,
               std::string *error);
+  bool getRowByKey(const LocalLiteTableDef &table,
+                   const std::string &storageKey,
+                   LocalLiteRow *row,
+                   bool *found,
+                   std::string *error);
   bool scanRows(const LocalLiteTableDef &table,
                 std::vector<LocalLiteRow> *rows,
                 std::string *error);
@@ -102,6 +107,11 @@ public:
   bool scanRows(const LocalLiteTableDef &table,
                 std::vector<LocalLiteRow> *rows,
                 std::string *error);
+  bool getRowByKey(const LocalLiteTableDef &table,
+                   const std::string &storageKey,
+                   LocalLiteRow *row,
+                   bool *found,
+                   std::string *error);
 
 private:
   LocalLiteTxn(const LocalLiteTxn &);

@@ -54,6 +54,10 @@ grep -q 'LocalLiteHbaseScanTcb' "$storage_stubs" ||
   fail "local-lite SELECT must use an executor scan TCB"
 grep -q 'LocalLiteHbaseInsertTcb' "$storage_stubs" ||
   fail "local-lite INSERT must use an executor insert TCB"
+grep -q 'listOfGetRows' "$storage_stubs" ||
+  fail "local-lite executor scan must consume optimized get-row requests"
+grep -q 'LocalLiteTxn::getRowByKey' "$localstore_source" ||
+  fail "local-lite get-row access must go through the transaction facade"
 grep -q 'LocalLiteProjectBinaryRow' "$storage_stubs" ||
   fail "local-lite executor scan must project from binary persisted rows"
 grep -q 'LocalLiteNormalizeBinaryRow' "$storage_stubs" ||

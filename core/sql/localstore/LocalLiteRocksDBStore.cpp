@@ -916,6 +916,49 @@ public:
     return true;
   }
 
+  bool getRowByKey(LocalLiteRocksDBStore *store,
+                   const LocalLiteTableDef &table,
+                   const std::string &storageKey,
+                   LocalLiteRow *row,
+                   bool *found,
+                   std::string *error)
+  {
+    if (found)
+      *found = false;
+    if (!row || !found)
+      {
+        setError(error, "missing local-lite get row output");
+        return false;
+      }
+
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (active_)
+        {
+          PendingMap::iterator it = pendingTables_.find(tableKey(table));
+          if (it != pendingTables_.end())
+            {
+              for (size_t i = 0; i < it->second.rows.size(); i++)
+                {
+                  if (!pendingRowMatchesKey(it->second.table,
+                                            it->second.rows[i],
+                                            storageKey,
+                                            found,
+                                            error))
+                    return false;
+                  if (*found)
+                    {
+                      *row = it->second.rows[i];
+                      return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return store->getRowByKey(table, storageKey, row, found, error);
+  }
+
   static LocalLiteTxnState &instance()
   {
     static LocalLiteTxnState state;
@@ -930,6 +973,51 @@ private:
     std::vector<LocalLiteRow> rows;
   };
   typedef std::map<std::string, PendingTable> PendingMap;
+
+  bool pendingRowMatchesKey(const LocalLiteTableDef &table,
+                            const LocalLiteRow &row,
+                            const std::string &storageKey,
+                            bool *matches,
+                            std::string *error)
+  {
+    *matches = false;
+    if (storageKey.size() > 0 && storageKey[0] == 'P')
+      {
+        std::string key;
+        if (!LocalLiteBuildPrimaryKey(table, row.value, &key, error))
+          return false;
+        *matches = (key == storageKey);
+        return true;
+      }
+
+    if (storageKey.size() > 0 && storageKey[0] == 'U')
+      {
+        for (size_t keyIndex = 0;
+             keyIndex < table.uniqueKeyColumns.size(); keyIndex++)
+          {
+            std::string key;
+            bool hasKey = false;
+            if (!LocalLiteBuildUniqueKey(table, row.value,
+                                         table.uniqueKeyColumns[keyIndex],
+                                         keyIndex, &key, &hasKey, error))
+              return false;
+            if (hasKey && key == storageKey)
+              {
+                *matches = true;
+                return true;
+              }
+          }
+        return true;
+      }
+
+    if (storageKey.size() == 8)
+      {
+        std::string key;
+        appendUint64(key, row.rowId);
+        *matches = (key == storageKey);
+      }
+    return true;
+  }
 
   bool matchesExecutorTxnId(int64_t executorTxnId) const
   {
@@ -1219,6 +1307,67 @@ bool LocalLiteRocksDBStore::putRow(const LocalLiteTableDef &table,
   return true;
 }
 
+bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,
+                                        const std::string &storageKey,
+                                        LocalLiteRow *row,
+                                        bool *found,
+                                        std::string *error)
+{
+  if (found)
+    *found = false;
+  if (!row || !found)
+    {
+      setError(error, "missing local-lite get row output");
+      return false;
+    }
+  if (!open(error))
+    return false;
+
+  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(tablePath(table),
+                                                               false,
+                                                               error);
+  if (!db)
+    return false;
+
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *value = rocksdb_get(db, readOptions,
+                            storageKey.data(), storageKey.size(),
+                            &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite row", error))
+    return false;
+  if (!value)
+    return true;
+
+  std::string encodedValue(value, valueLen);
+  rocksdb_free(value);
+
+  std::string encodedRow;
+  if (decodeRowValue(encodedValue, &encodedRow, NULL))
+    {
+      row->rowId = 0;
+      if (storageKey.size() == 8)
+        {
+          size_t offset = 0;
+          row->rowId = readUint64(storageKey, &offset);
+        }
+      row->value = encodedRow;
+      *found = true;
+      return true;
+    }
+
+  if (storageKey.size() > 0 && storageKey[0] == 'U')
+    {
+      std::string referencedKey = encodedValue;
+      return getRowByKey(table, referencedKey, row, found, error);
+    }
+
+  setError(error, "invalid local-lite row format");
+  return false;
+}
+
 bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
                                      std::vector<LocalLiteRow> *rows,
                                      std::string *error)
@@ -1302,6 +1451,22 @@ bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
     }
 
   return LocalLiteTxnState::instance().scanRows(store_, table, rows, error);
+}
+
+bool LocalLiteTxn::getRowByKey(const LocalLiteTableDef &table,
+                               const std::string &storageKey,
+                               LocalLiteRow *row,
+                               bool *found,
+                               std::string *error)
+{
+  if (!store_)
+    {
+      setError(error, "local-lite transaction missing store");
+      return false;
+    }
+
+  return LocalLiteTxnState::instance().getRowByKey(store_, table, storageKey,
+                                                   row, found, error);
 }
 
 bool LocalLiteTxnManager::begin(std::string *error)

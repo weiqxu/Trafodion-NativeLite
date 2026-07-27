@@ -25,6 +25,9 @@ Local-lite currently supports a narrow local table path:
   local RocksDB catalog metadata.
 - `INSERT INTO ... VALUES` executes through `LocalLiteHbaseInsertTcb`.
 - `SELECT` executes through `LocalLiteHbaseScanTcb`.
+- Executor scan can consume encoded `listOfGetRows()` row-key requests through
+  `LocalLiteTxn::getRowByKey()` and falls back to full scan when no get-row
+  request is present.
 - Persistent rows use the `LLBR1` binary aligned row payload.
 - SQLCI no longer directly executes supported local table queries against
   RocksDB.
@@ -213,8 +216,12 @@ build a deterministic `P`-prefixed RocksDB row key from the binary aligned
 records in the same RocksDB table. Duplicate primary and unique keys are
 rejected in committed data and inside the current pending local transaction
 write set. Keyless tables continue to use the existing internal row id path.
-The optimizer does not yet expose local-lite keys as real key-access metadata;
-all queries still execute through the local-lite executor scan path.
+The local-lite executor scan TCB can now consume encoded get-row requests from
+`listOfGetRows()` through `LocalLiteTxn::getRowByKey()`, including read-own-write
+lookups inside the pending local transaction write set. The optimizer does not
+yet expose local-lite keys as real key-access metadata, so ordinary SQL
+predicates still reach this capability only after a future optimizer mapping
+step.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -299,12 +306,10 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The next implementation step should make optimized key access real before
-exposing local-lite primary or unique keys as normal optimizer-visible access
-paths:
+The next implementation step should expose local-lite key metadata only after
+the runtime get-row path is covered by optimizer-generated access:
 
-1. Teach local-lite scan/get TCBs to consume encoded row-key access requests.
-2. Map optimizer-generated primary-key equality access to the deterministic
+1. Map optimizer-generated primary-key equality access to the deterministic
    `P`-prefixed row key.
-3. Keep full executor scan as the fallback path for non-key predicates.
-4. Only then expose local-lite key metadata broadly to the optimizer.
+2. Keep full executor scan as the fallback path for non-key predicates.
+3. Only then expose local-lite key metadata broadly to the optimizer.

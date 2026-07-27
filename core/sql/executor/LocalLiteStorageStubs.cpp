@@ -364,7 +364,100 @@ private:
       return false;
 
     LocalLiteTxn txn(&store_);
+    bool handledGetRows = false;
+    if (!loadGetRows(&txn, &handledGetRows, error))
+      return false;
+    if (handledGetRows)
+      return true;
+
     return txn.scanRows(table_, &rows_, error);
+  }
+
+  bool loadGetRows(LocalLiteTxn *txn, bool *handled, std::string *error)
+  {
+    *handled = false;
+    Queue *getRows = scanTdb().listOfGetRows();
+    if (!getRows || getRows->numEntries() == 0)
+      return true;
+
+    std::vector<std::string> storageKeys;
+    getRows->position();
+    for (Lng32 i = 0; i < getRows->numEntries(); i++)
+      {
+        ComTdbHbaseAccess::HbaseGetRows *hgr =
+          static_cast<ComTdbHbaseAccess::HbaseGetRows *>(getRows->getNext());
+        if (!hgr || !hgr->rowIds() || hgr->rowIds()->numEntries() == 0)
+          {
+            *error = "local-lite get row id list is empty";
+            return false;
+          }
+
+        Queue *rowIds = hgr->rowIds();
+        rowIds->position();
+        for (Lng32 j = 0; j < rowIds->numEntries(); j++)
+          {
+            const char *rawKey = static_cast<const char *>(rowIds->getNext());
+            std::string storageKey;
+            if (!decodeGetRowKey(rawKey, &storageKey, error))
+              return false;
+            if (!isLocalLiteStorageKey(storageKey))
+              return true;
+            storageKeys.push_back(storageKey);
+          }
+      }
+
+    *handled = true;
+    for (size_t i = 0; i < storageKeys.size(); i++)
+      {
+        LocalLiteRow row;
+        bool found = false;
+        if (!txn->getRowByKey(table_, storageKeys[i], &row, &found, error))
+          return false;
+        if (found)
+          rows_.push_back(row);
+      }
+    return true;
+  }
+
+  bool decodeGetRowKey(const char *rawKey,
+                       std::string *storageKey,
+                       std::string *error)
+  {
+    if (!rawKey)
+      {
+        *error = "local-lite get row id is null";
+        return false;
+      }
+
+    if (rawKey[0] != 'P' && rawKey[0] != 'U')
+      {
+        short len = 0;
+        memcpy(&len, rawKey, sizeof(len));
+        if (len > 0 && len < 4096)
+          {
+            storageKey->assign(rawKey + sizeof(len),
+                               static_cast<size_t>(len));
+            return true;
+          }
+      }
+
+    UInt32 fixedLen = scanTdb().getRowIDLen();
+    if (fixedLen > 0)
+      {
+        storageKey->assign(rawKey, static_cast<size_t>(fixedLen));
+        return true;
+      }
+
+    storageKey->assign(rawKey, strlen(rawKey));
+    return true;
+  }
+
+  bool isLocalLiteStorageKey(const std::string &storageKey)
+  {
+    if (storageKey.size() == 8)
+      return true;
+    return storageKey.size() > 0 &&
+           (storageKey[0] == 'P' || storageKey[0] == 'U');
   }
 
   void deriveAlignedHeader(ExpTupleDesc *td,
