@@ -258,6 +258,22 @@ grep -q 'twelve' <<<"$trace_numeric_pk_output" ||
 grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_numeric_pk_output" ||
   fail "numeric primary-key equality query did not use local-lite get-row scan"
 
+trace_unique_setup_output=$(
+  printf "CREATE TABLE uq_trace(a INT, b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_trace VALUES (7, 'seven'), (8, 'eight');\nexit;\n" |
+    run_sqlci
+)
+grep -q -- '--- 2 row(s) inserted.' <<<"$trace_unique_setup_output" ||
+  fail "unique trace setup table did not insert rows"
+
+trace_unique_output=$(
+  printf "SELECT b FROM uq_trace WHERE a = 7;\nDROP TABLE uq_trace;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -q 'seven' <<<"$trace_unique_output" ||
+  fail "unique-key trace query did not return row"
+grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_unique_output" ||
+  fail "unique-key equality query did not use local-lite get-row scan"
+
 trace_full_output=$(
   printf "SELECT a FROM pk_trace WHERE b = 'seven';\nDROP TABLE pk_trace;\nexit;\n" |
     run_sqlci_trace_scan 2>&1

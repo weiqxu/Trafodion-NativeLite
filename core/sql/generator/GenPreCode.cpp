@@ -382,16 +382,18 @@ static NABoolean localLiteBuildPrimaryKeyForSearchKey(
                                                 &error) ? TRUE : FALSE;
 }
 
-static NABoolean localLiteBuildPrimaryKeyFromPredicates(
+static NABoolean localLiteBuildKeyFieldsFromPredicates(
     const LocalLiteTableDef &table,
+    const std::vector<size_t> &keyColumns,
     const ValueIdSet &predicates,
-    std::string *rowKey)
+    std::vector<std::string> *keyFields)
 {
-  if (table.primaryKeyColumns.empty())
+  if (keyColumns.empty() || !keyFields)
     return FALSE;
 
-  std::vector<std::string> keyFields(table.primaryKeyColumns.size());
-  std::vector<bool> found(table.primaryKeyColumns.size(), false);
+  keyFields->clear();
+  keyFields->resize(keyColumns.size());
+  std::vector<bool> found(keyColumns.size(), false);
 
   for (ValueId predId = predicates.init();
        predicates.next(predId);
@@ -408,11 +410,11 @@ static NABoolean localLiteBuildPrimaryKeyFromPredicates(
                                                 &field))
         continue;
 
-      for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+      for (size_t i = 0; i < keyColumns.size(); i++)
         {
-          if (table.primaryKeyColumns[i] == columnPosition)
+          if (keyColumns[i] == columnPosition)
             {
-              keyFields[i] = field;
+              (*keyFields)[i] = field;
               found[i] = true;
               break;
             }
@@ -422,6 +424,22 @@ static NABoolean localLiteBuildPrimaryKeyFromPredicates(
   for (size_t i = 0; i < found.size(); i++)
     if (!found[i])
       return FALSE;
+
+  return TRUE;
+}
+
+static NABoolean localLiteBuildPrimaryKeyFromPredicates(
+    const LocalLiteTableDef &table,
+    const ValueIdSet &predicates,
+    std::string *rowKey)
+{
+  if (table.primaryKeyColumns.empty())
+    return FALSE;
+
+  std::vector<std::string> keyFields;
+  if (!localLiteBuildKeyFieldsFromPredicates(
+          table, table.primaryKeyColumns, predicates, &keyFields))
+    return FALSE;
 
   std::string error;
   return LocalLiteBuildPrimaryKeyFromTextFields(table, keyFields, rowKey,
@@ -497,6 +515,47 @@ static NABoolean localLiteRewritePrimaryGetRowsFromPredicates(
   listOfUniqueRows.clear();
   listOfUniqueRows.insert(localGetSpec);
   return TRUE;
+}
+
+static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
+    TableDesc *tdesc,
+    const ValueIdSet &predicates,
+    ListOfUniqueRows &listOfUniqueRows)
+{
+  LocalLiteTableDef table;
+  if (!localLiteLoadTable(tdesc, &table) || table.uniqueKeyColumns.empty())
+    return FALSE;
+
+  for (size_t keyIndex = 0; keyIndex < table.uniqueKeyColumns.size();
+       keyIndex++)
+    {
+      std::vector<std::string> keyFields;
+      if (!localLiteBuildKeyFieldsFromPredicates(
+              table, table.uniqueKeyColumns[keyIndex], predicates,
+              &keyFields))
+        continue;
+
+      std::string rowKey;
+      bool hasKey = false;
+      std::string error;
+      if (!LocalLiteBuildUniqueKeyFromTextFields(
+              table, table.uniqueKeyColumns[keyIndex], keyIndex, keyFields,
+              &rowKey, &hasKey, &error) ||
+          !hasKey)
+        continue;
+
+      rowKey = localLiteEncodeGetRowKey(rowKey);
+      HbaseUniqueRows localGetSpec;
+      localGetSpec.rowTS_ = -1;
+      localGetSpec.rowIds_.insert(NAString(
+          rowKey.data(), static_cast<Int32>(rowKey.size())));
+
+      listOfUniqueRows.clear();
+      listOfUniqueRows.insert(localGetSpec);
+      return TRUE;
+    }
+
+  return FALSE;
 }
 #endif
 
@@ -609,19 +668,22 @@ static NABoolean processConstHBaseKeys(Generator * generator,
 
 #ifdef TRAF_LOCAL_LITE
       if (tdesc &&
-          relExpr->getOperatorType() == REL_HBASE_ACCESS &&
-          listOfUpdSubsetRows.entries() == 0)
+          relExpr->getOperatorType() == REL_HBASE_ACCESS)
         {
-          localLiteRewritePrimaryGetRows(tdesc, mySearchKeys,
-                                         listOfUpdUniqueRows);
+          if (listOfUpdSubsetRows.entries() == 0)
+            localLiteRewritePrimaryGetRows(tdesc, mySearchKeys,
+                                           listOfUpdUniqueRows);
           if (listOfUpdUniqueRows.entries() == 0)
             {
               ValueIdSet localLitePreds;
               localLitePreds += executorPreds;
               localLitePreds += relExpr->getSelectionPred();
               localLitePreds += skey->getFullKeyPredicates();
-              localLiteRewritePrimaryGetRowsFromPredicates(
-                  tdesc, localLitePreds, listOfUpdUniqueRows);
+              if (localLiteRewritePrimaryGetRowsFromPredicates(
+                      tdesc, localLitePreds, listOfUpdUniqueRows) ||
+                  localLiteRewriteUniqueGetRowsFromPredicates(
+                      tdesc, localLitePreds, listOfUpdUniqueRows))
+                listOfUpdSubsetRows.clear();
             }
         }
 #endif
@@ -12655,15 +12717,18 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
     return NULL;
 
 #ifdef TRAF_LOCAL_LITE
-  if (listOfRangeRows_.entries() == 0 && listOfUniqueRows_.entries() == 0)
+  if (listOfUniqueRows_.entries() == 0)
     {
       ValueIdSet localLitePreds;
       localLitePreds += executorPred();
       localLitePreds += selectionPred();
       if (getSearchKey())
         localLitePreds += getSearchKey()->getFullKeyPredicates();
-      localLiteRewritePrimaryGetRowsFromPredicates(
-          getTableDesc(), localLitePreds, listOfUniqueRows_);
+      if (localLiteRewritePrimaryGetRowsFromPredicates(
+              getTableDesc(), localLitePreds, listOfUniqueRows_) ||
+          localLiteRewriteUniqueGetRowsFromPredicates(
+              getTableDesc(), localLitePreds, listOfUniqueRows_))
+        listOfRangeRows_.clear();
     }
 #endif
 

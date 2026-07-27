@@ -222,9 +222,12 @@ lookups inside the pending local transaction write set. Pre-code can now rewrite
 constant primary-key equality search keys to deterministic `P`-prefixed
 local-lite get-row keys. Unsupported literal types and non-key predicates still
 fall back to full executor scan. Binary NUMERIC primary-key literals with scale
-can now be encoded into deterministic get-row keys. SQLCI smoke now enables a
-test-only executor trace to assert that integer and binary NUMERIC primary-key
-equality use the get-row path while non-key predicates use full scan fallback.
+can now be encoded into deterministic get-row keys. UNIQUE-key equality
+predicates can now be mapped to deterministic `U`-prefixed get-row keys when the
+predicate supplies all columns of one unique key. SQLCI smoke now enables a
+test-only executor trace to assert that integer primary-key, binary NUMERIC
+primary-key, and UNIQUE-key equality use the get-row path while non-key
+predicates use full scan fallback.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -246,10 +249,12 @@ Validation:
 - Concurrent inserts of the same primary key cannot silently overwrite each
   other.
 - Primary-key scans use deterministic encoded keys.
+- Unique-key equality scans use deterministic encoded secondary keys.
 - Keyless table inserts continue to work through the internal row id path.
 - `CREATE TABLE pk_t(a INT PRIMARY KEY, ...)`, `CREATE TABLE uq_t(...,
   UNIQUE(a))`, duplicate insert diagnostics, transaction read-own-write,
-  rollback, and keyless table regression are covered by the RocksDB SQLCI smoke.
+  rollback, primary-key/unique-key get-row trace assertions, and keyless table
+  regression are covered by the RocksDB SQLCI smoke.
 
 ### Phase 6: Optional TMF Integration Boundary
 
@@ -310,10 +315,11 @@ side-records, RocksDB metadata, or the transaction manager layer.
 ## Immediate Next Implementation Step
 
 The next implementation step should continue broadening compiler literal key
-encoding and then move to secondary key access:
+encoding and then expose key metadata more broadly:
 
 1. Extend compiler literal key encoding beyond integer, character, and binary
    NUMERIC keys, with DECIMAL/BigNum and negative predicate shapes still pending.
-2. Add UNIQUE-key get-row mapping after primary-key literal coverage is broader.
+2. Extend UNIQUE-key get-row coverage to the same literal types as primary-key
+   get-row coverage.
 3. Expose local-lite key metadata broadly to the optimizer once fallback
    behavior is covered.

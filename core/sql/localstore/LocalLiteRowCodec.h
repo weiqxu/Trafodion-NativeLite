@@ -60,6 +60,15 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &table,
                              bool *hasKey,
                              std::string *error);
 
+bool LocalLiteBuildUniqueKeyFromTextFields(
+    const LocalLiteTableDef &table,
+    const std::vector<size_t> &keyColumns,
+    size_t keyOrdinal,
+    const std::vector<std::string> &keyFields,
+    std::string *key,
+    bool *hasKey,
+    std::string *error);
+
 #endif
 
 #endif
