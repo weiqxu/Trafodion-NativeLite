@@ -362,7 +362,9 @@ private:
 
     if (!store_.loadTable(catalog, schema, object, &table_, error))
       return false;
-    return store_.scanRows(table_, &rows_, error);
+
+    LocalLiteTxn txn(&store_);
+    return txn.scanRows(table_, &rows_, error);
   }
 
   void deriveAlignedHeader(ExpTupleDesc *td,

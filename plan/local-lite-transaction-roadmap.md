@@ -148,6 +148,11 @@ Validation:
 
 ### Phase 3: Snapshot-Based Statement Reads
 
+Status: initial scan facade implemented. Local table scans now call
+`LocalLiteTxn::scanRows()`, and RocksDB iterators are bound to a snapshot for
+the duration of each scan materialization. A statement-wide snapshot shared by
+multiple scan TCBs still requires a future local transaction context.
+
 Give scans a stable statement snapshot.
 
 Tasks:
@@ -265,10 +270,12 @@ Phase 1 is now implemented for the current local-lite process model:
 - Same-process row-id allocation is protected by the manager mutex.
 - The RocksDB SQLCI smoke includes a self-join regression over one local table.
 
-The next implementation step should be Phase 3:
+The next implementation step should be Phase 4:
 
-1. Add statement snapshot acquisition to `LocalLiteTxn`.
-2. Make `LocalLiteHbaseScanTcb` scan through the transaction facade.
-3. Release snapshots when the statement finishes, errors, or is cancelled.
-4. Add regression coverage that repeated scans in one statement observe a stable
-   view.
+1. Add a local transaction context to the CLI/executor context.
+2. Route `BEGIN`, `COMMIT`, and `ROLLBACK` to local-lite transaction state when
+   running without TMF.
+3. Move local table read/write operations from temporary autocommit facades to
+   the active local transaction context.
+4. Extend scan snapshot ownership from per-scan materialization to the active
+   statement or transaction context.

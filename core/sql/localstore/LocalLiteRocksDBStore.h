@@ -97,6 +97,9 @@ public:
                  const std::string &encodedRow,
                  uint64_t *rowId,
                  std::string *error);
+  bool scanRows(const LocalLiteTableDef &table,
+                std::vector<LocalLiteRow> *rows,
+                std::string *error);
 
 private:
   LocalLiteTxn(const LocalLiteTxn &);

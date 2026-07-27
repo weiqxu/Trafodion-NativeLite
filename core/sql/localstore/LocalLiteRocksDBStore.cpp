@@ -814,6 +814,8 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
     return false;
 
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  const rocksdb_snapshot_t *snapshot = rocksdb_create_snapshot(db);
+  rocksdb_readoptions_set_snapshot(readOptions, snapshot);
   rocksdb_iterator_t *it = rocksdb_create_iterator(db, readOptions);
   for (rocksdb_iter_seek_to_first(it); rocksdb_iter_valid(it); rocksdb_iter_next(it))
     {
@@ -830,6 +832,7 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
         {
           rocksdb_iter_destroy(it);
           rocksdb_readoptions_destroy(readOptions);
+          rocksdb_release_snapshot(db, snapshot);
           return false;
         }
       rows->push_back(row);
@@ -839,6 +842,7 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
   rocksdb_iter_get_error(it, &err);
   rocksdb_iter_destroy(it);
   rocksdb_readoptions_destroy(readOptions);
+  rocksdb_release_snapshot(db, snapshot);
   if (!checkRocksError(err, "scan local-lite rows", error))
     return false;
   return true;
@@ -861,6 +865,19 @@ bool LocalLiteTxn::insertRow(const LocalLiteTableDef &table,
     }
 
   return store_->insertRow(table, encodedRow, rowId, error);
+}
+
+bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
+                            std::vector<LocalLiteRow> *rows,
+                            std::string *error)
+{
+  if (!store_)
+    {
+      setError(error, "local-lite transaction missing store");
+      return false;
+    }
+
+  return store_->scanRows(table, rows, error);
 }
 
 #endif
