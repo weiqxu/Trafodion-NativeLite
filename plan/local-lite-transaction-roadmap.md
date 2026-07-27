@@ -221,9 +221,10 @@ The local-lite executor scan TCB can now consume encoded get-row requests from
 lookups inside the pending local transaction write set. Pre-code can now rewrite
 constant primary-key equality search keys to deterministic `P`-prefixed
 local-lite get-row keys. Unsupported literal types and non-key predicates still
-fall back to full executor scan. SQLCI smoke now enables a test-only executor
-trace to assert that primary-key equality uses the get-row path while non-key
-predicates use full scan fallback.
+fall back to full executor scan. Binary NUMERIC primary-key literals with scale
+can now be encoded into deterministic get-row keys. SQLCI smoke now enables a
+test-only executor trace to assert that integer and binary NUMERIC primary-key
+equality use the get-row path while non-key predicates use full scan fallback.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -308,10 +309,11 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The next implementation step should broaden compiler literal key encoding:
+The next implementation step should continue broadening compiler literal key
+encoding and then move to secondary key access:
 
-1. Extend compiler literal key encoding beyond exact integer and character
-   keys.
+1. Extend compiler literal key encoding beyond integer, character, and binary
+   NUMERIC keys, with DECIMAL/BigNum and negative predicate shapes still pending.
 2. Add UNIQUE-key get-row mapping after primary-key literal coverage is broader.
 3. Expose local-lite key metadata broadly to the optimizer once fallback
    behavior is covered.

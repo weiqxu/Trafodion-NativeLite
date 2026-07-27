@@ -156,6 +156,32 @@ static std::string localLiteNAStringToStd(const NAString &s)
   return std::string(s.data(), s.length());
 }
 
+static std::string localLiteFormatExactNumeric(Int64 value, Lng32 scale)
+{
+  bool negative = value < 0;
+  UInt64 magnitude = negative ? (static_cast<UInt64>(0) -
+                                 static_cast<UInt64>(value))
+                              : static_cast<UInt64>(value);
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%llu",
+           static_cast<unsigned long long>(magnitude));
+  std::string digits(buf);
+
+  if (scale <= 0)
+    return negative ? "-" + digits : digits;
+
+  if (digits.size() <= static_cast<size_t>(scale))
+    digits.insert(0, static_cast<size_t>(scale) - digits.size() + 1, '0');
+
+  size_t point = digits.size() - static_cast<size_t>(scale);
+  std::string result = digits.substr(0, point);
+  result += ".";
+  result += digits.substr(point);
+  if (negative)
+    result.insert(0, "-");
+  return result;
+}
+
 static NABoolean localLiteLoadTable(TableDesc *tdesc,
                                     LocalLiteTableDef *table)
 {
@@ -192,7 +218,7 @@ static NABoolean localLiteConstValueToText(ValueId valueId,
   ConstValue *cv = expr->castToConstValue(negate);
   if (!cv && expr->getOperatorType() == ITM_CACHE_PARAM)
     cv = static_cast<ConstantParameter *>(expr)->getConstVal();
-  if (!cv || negate)
+  if (!cv)
     return FALSE;
   if (cv->isNull())
     return FALSE;
@@ -203,6 +229,8 @@ static NABoolean localLiteConstValueToText(ValueId valueId,
 
   if (type->getTypeQualifier() == NA_CHARACTER_TYPE)
     {
+      if (negate)
+        return FALSE;
       const NAString *raw = cv->getRawText();
       if (!raw)
         return FALSE;
@@ -215,12 +243,9 @@ static NABoolean localLiteConstValueToText(ValueId valueId,
     {
       Lng32 scale = 0;
       Int64 value = cv->getExactNumericValue(scale);
-      if (scale != 0)
-        return FALSE;
-
-      char buf[64];
-      snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(value));
-      *text = buf;
+      if (negate)
+        value = -value;
+      *text = localLiteFormatExactNumeric(value, scale);
       return TRUE;
     }
 

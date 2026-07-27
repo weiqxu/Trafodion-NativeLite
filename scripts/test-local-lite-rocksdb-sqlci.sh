@@ -242,6 +242,22 @@ grep -q 'seven' <<<"$trace_pk_output" ||
 grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_pk_output" ||
   fail "primary-key equality query did not use local-lite get-row scan"
 
+trace_numeric_setup_output=$(
+  printf "CREATE TABLE pk_num_trace(a NUMERIC(9,2) PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_num_trace VALUES (12.34, 'twelve');\nexit;\n" |
+    run_sqlci
+)
+grep -q -- '--- 1 row(s) inserted.' <<<"$trace_numeric_setup_output" ||
+  fail "numeric trace setup table did not insert row"
+
+trace_numeric_pk_output=$(
+  printf "SELECT b FROM pk_num_trace WHERE a = 12.34;\nDROP TABLE pk_num_trace;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -q 'twelve' <<<"$trace_numeric_pk_output" ||
+  fail "numeric primary-key trace query did not return row"
+grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_numeric_pk_output" ||
+  fail "numeric primary-key equality query did not use local-lite get-row scan"
+
 trace_full_output=$(
   printf "SELECT a FROM pk_trace WHERE b = 'seven';\nDROP TABLE pk_trace;\nexit;\n" |
     run_sqlci_trace_scan 2>&1

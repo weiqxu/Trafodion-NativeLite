@@ -41,6 +41,7 @@ struct LocalLiteStoredColumn
 {
   LocalLiteCodecType type;
   size_t length;
+  size_t scale;
   bool nullable;
   size_t voaOffset;
   size_t nullIndOffset;
@@ -116,8 +117,10 @@ static size_t bigNumStorageSize(size_t precision)
 
 static bool mapType(const std::string &typeText,
                     LocalLiteCodecType *type,
-                    size_t *length)
+                    size_t *length,
+                    size_t *scale)
 {
+  *scale = 0;
   std::string typeName = upper(typeText);
   if (startsWithWord(typeName, "TINYINT"))
     {
@@ -161,10 +164,11 @@ static bool mapType(const std::string &typeText,
   if (startsWithWord(typeName, "NUMERIC"))
     {
       size_t precision = typeArg(typeName, 18);
-      size_t scale = secondTypeArg(typeName, 0);
-      if (precision < 1 || scale > precision)
+      size_t typeScale = secondTypeArg(typeName, 0);
+      if (precision < 1 || typeScale > precision)
         return false;
       *type = LL_TYPE_NUMERIC;
+      *scale = typeScale;
       *length = precision > 18 ? bigNumStorageSize(precision)
                                : numericStorageSize(precision);
       if (*length == 0)
@@ -174,10 +178,11 @@ static bool mapType(const std::string &typeText,
   if (startsWithWord(typeName, "DECIMAL"))
     {
       size_t precision = typeArg(typeName, 18);
-      size_t scale = secondTypeArg(typeName, 0);
-      if (precision < 1 || scale > precision)
+      size_t typeScale = secondTypeArg(typeName, 0);
+      if (precision < 1 || typeScale > precision)
         return false;
       *type = LL_TYPE_NUMERIC;
+      *scale = typeScale;
       *length = precision;
       return true;
     }
@@ -259,7 +264,8 @@ static bool computeLayout(const LocalLiteTableDef &table,
   for (size_t i = 0; i < table.columns.size(); i++)
     {
       LocalLiteStoredColumn &col = (*columns)[i];
-      if (!mapType(table.columns[i].type, &col.type, &col.length))
+      if (!mapType(table.columns[i].type, &col.type, &col.length,
+                   &col.scale))
         {
           setError(error, "unsupported local-lite binary row column type: " +
                   table.columns[i].type);
@@ -345,6 +351,58 @@ static bool isNullValue(const std::string &value)
   return value.empty();
 }
 
+static bool parseScaledInt64(const std::string &value,
+                             size_t scale,
+                             Int64 *out)
+{
+  const char *p = value.c_str();
+  bool negative = false;
+  if (*p == '-' || *p == '+')
+    {
+      negative = (*p == '-');
+      p++;
+    }
+
+  UInt64 magnitude = 0;
+  size_t fracDigits = 0;
+  bool seenDigit = false;
+  bool seenPoint = false;
+
+  for (; *p; p++)
+    {
+      if (*p == '.')
+        {
+          if (seenPoint)
+            return false;
+          seenPoint = true;
+          continue;
+        }
+
+      if (*p < '0' || *p > '9')
+        return false;
+
+      seenDigit = true;
+      magnitude = magnitude * 10 + static_cast<UInt64>(*p - '0');
+      if (seenPoint)
+        fracDigits++;
+    }
+
+  if (!seenDigit || fracDigits > scale)
+    return false;
+
+  while (fracDigits < scale)
+    {
+      magnitude *= 10;
+      fracDigits++;
+    }
+
+  if (negative)
+    *out = static_cast<Int64>(static_cast<UInt64>(0) - magnitude);
+  else
+    *out = static_cast<Int64>(magnitude);
+  return true;
+}
+
 static bool writeValue(char *row,
                        const LocalLiteStoredColumn &col,
                        const std::string &value,
@@ -406,8 +464,42 @@ static bool writeValue(char *row,
       }
     case LL_TYPE_NUMERIC:
       {
-        setError(error, "local-lite numeric values require executor expression encoding");
-        return false;
+        Int64 scaled = 0;
+        if (!parseScaledInt64(value, col.scale, &scaled))
+          {
+            setError(error, "invalid local-lite numeric literal");
+            return false;
+          }
+        switch (col.length)
+          {
+          case 1:
+            {
+              Int8 v = static_cast<Int8>(scaled);
+              str_cpy_all(target, reinterpret_cast<char *>(&v), sizeof(v));
+              return true;
+            }
+          case 2:
+            {
+              Int16 v = static_cast<Int16>(scaled);
+              str_cpy_all(target, reinterpret_cast<char *>(&v), sizeof(v));
+              return true;
+            }
+          case 4:
+            {
+              Int32 v = static_cast<Int32>(scaled);
+              str_cpy_all(target, reinterpret_cast<char *>(&v), sizeof(v));
+              return true;
+            }
+          case 8:
+            {
+              Int64 v = scaled;
+              str_cpy_all(target, reinterpret_cast<char *>(&v), sizeof(v));
+              return true;
+            }
+          default:
+            setError(error, "local-lite numeric key requires binary numeric storage");
+            return false;
+          }
       }
     case LL_TYPE_DATETIME:
       {
