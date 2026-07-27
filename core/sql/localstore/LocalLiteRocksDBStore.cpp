@@ -370,16 +370,66 @@ public:
     if (it != tableDbs_.end())
       return it->second;
 
-    rocksdb_options_t *options = rocksdb_options_create();
-    rocksdb_options_set_create_if_missing(options, createIfMissing ? 1 : 0);
-    char *err = NULL;
-    rocksdb_t *db = rocksdb_open(options, path.c_str(), &err);
-    rocksdb_options_destroy(options);
-    if (!checkRocksError(err, "open RocksDB table " + path, error))
-      return NULL;
+    return openTableLocked(path, createIfMissing, error);
+  }
 
-    tableDbs_[path] = db;
-    return db;
+  bool insertRow(const LocalLiteTableDef &table,
+                 const std::string &encodedRow,
+                 uint64_t *rowId,
+                 std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+
+    LocalLiteTableDef loaded;
+    if (!loadTableLocked(table.catalog, table.schema, table.name,
+                         &loaded, error))
+      return false;
+
+    const uint64_t allocatedRowId = loaded.nextRowId;
+    LocalLiteTableDef updated = loaded;
+    updated.nextRowId++;
+
+    std::string tableMetadataKey =
+      tableKey(loaded.catalog, loaded.schema, loaded.name);
+    std::string oldMetadata = encodeTable(loaded);
+    std::string newMetadata = encodeTable(updated);
+    if (!putCatalogLocked(tableMetadataKey, newMetadata,
+                          "update local-lite row id metadata", error))
+      return false;
+
+    rocksdb_t *db = openTableLocked(LocalLiteRocksDBStore::tablePath(loaded),
+                                    false, error);
+    if (!db)
+      {
+        putCatalogLocked(tableMetadataKey, oldMetadata,
+                         "rollback local-lite row id metadata", NULL);
+        return false;
+      }
+
+    std::string key;
+    appendUint64(key, allocatedRowId);
+    std::string value = encodeRowValue(encodedRow);
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    char *err = NULL;
+    rocksdb_put(db, writeOptions,
+                key.data(), key.size(), value.data(), value.size(), &err);
+    rocksdb_writeoptions_destroy(writeOptions);
+    if (!checkRocksError(err, "write local-lite row", error))
+      {
+        std::string rollbackError;
+        if (!putCatalogLocked(tableMetadataKey, oldMetadata,
+                              "rollback local-lite row id metadata",
+                              &rollbackError))
+          {
+            if (error)
+              *error += "; " + rollbackError;
+          }
+        return false;
+      }
+
+    if (rowId)
+      *rowId = allocatedRowId;
+    return true;
   }
 
   void closeTable(const std::string &path)
@@ -411,6 +461,66 @@ private:
 
   LocalLiteStorageManager(const LocalLiteStorageManager &);
   LocalLiteStorageManager &operator=(const LocalLiteStorageManager &);
+
+  rocksdb_t *openTableLocked(const std::string &path,
+                             bool createIfMissing,
+                             std::string *error)
+  {
+    TableMap::iterator it = tableDbs_.find(path);
+    if (it != tableDbs_.end())
+      return it->second;
+
+    rocksdb_options_t *options = rocksdb_options_create();
+    rocksdb_options_set_create_if_missing(options, createIfMissing ? 1 : 0);
+    char *err = NULL;
+    rocksdb_t *db = rocksdb_open(options, path.c_str(), &err);
+    rocksdb_options_destroy(options);
+    if (!checkRocksError(err, "open RocksDB table " + path, error))
+      return NULL;
+
+    tableDbs_[path] = db;
+    return db;
+  }
+
+  bool loadTableLocked(const std::string &catalog,
+                       const std::string &schema,
+                       const std::string &name,
+                       LocalLiteTableDef *table,
+                       std::string *error)
+  {
+    std::string key = tableKey(catalog, schema, name);
+    rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+    char *err = NULL;
+    size_t valueLen = 0;
+    char *value = rocksdb_get(catalogDb_, readOptions,
+                              key.data(), key.size(), &valueLen, &err);
+    rocksdb_readoptions_destroy(readOptions);
+    if (!checkRocksError(err, "read local-lite table metadata", error))
+      return false;
+    if (!value)
+      {
+        setError(error, "local-lite table does not exist: " +
+                catalog + "." + schema + "." + name);
+        return false;
+      }
+
+    std::string encoded(value, valueLen);
+    rocksdb_free(value);
+    return decodeTable(encoded, table, error);
+  }
+
+  bool putCatalogLocked(const std::string &key,
+                        const std::string &value,
+                        const std::string &errorPrefix,
+                        std::string *error)
+  {
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    char *err = NULL;
+    rocksdb_put(catalogDb_, writeOptions,
+                key.data(), key.size(), value.data(), value.size(), &err);
+    rocksdb_writeoptions_destroy(writeOptions);
+    return checkRocksError(err, errorPrefix, error);
+  }
 
   unsigned int refCount_;
   rocksdb_t *catalogDb_;
@@ -650,6 +760,18 @@ bool LocalLiteRocksDBStore::allocateRowId(const LocalLiteTableDef &table,
   return true;
 }
 
+bool LocalLiteRocksDBStore::insertRow(const LocalLiteTableDef &table,
+                                      const std::string &encodedRow,
+                                      uint64_t *rowId,
+                                      std::string *error)
+{
+  if (!open(error))
+    return false;
+
+  return LocalLiteStorageManager::instance().insertRow(table, encodedRow,
+                                                       rowId, error);
+}
+
 bool LocalLiteRocksDBStore::putRow(const LocalLiteTableDef &table,
                                    uint64_t rowId,
                                    const std::string &encodedRow,
@@ -720,6 +842,25 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
   if (!checkRocksError(err, "scan local-lite rows", error))
     return false;
   return true;
+}
+
+LocalLiteTxn::LocalLiteTxn(LocalLiteRocksDBStore *store)
+  : store_(store)
+{
+}
+
+bool LocalLiteTxn::insertRow(const LocalLiteTableDef &table,
+                             const std::string &encodedRow,
+                             uint64_t *rowId,
+                             std::string *error)
+{
+  if (!store_)
+    {
+      setError(error, "local-lite transaction missing store");
+      return false;
+    }
+
+  return store_->insertRow(table, encodedRow, rowId, error);
 }
 
 #endif

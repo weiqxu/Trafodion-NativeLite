@@ -69,6 +69,10 @@ public:
   bool allocateRowId(const LocalLiteTableDef &table,
                      uint64_t *rowId,
                      std::string *error);
+  bool insertRow(const LocalLiteTableDef &table,
+                 const std::string &encodedRow,
+                 uint64_t *rowId,
+                 std::string *error);
   bool putRow(const LocalLiteTableDef &table,
               uint64_t rowId,
               const std::string &encodedRow,
@@ -82,6 +86,23 @@ private:
   LocalLiteRocksDBStore &operator=(const LocalLiteRocksDBStore &);
 
   bool opened_;
+};
+
+class LocalLiteTxn
+{
+public:
+  explicit LocalLiteTxn(LocalLiteRocksDBStore *store);
+
+  bool insertRow(const LocalLiteTableDef &table,
+                 const std::string &encodedRow,
+                 uint64_t *rowId,
+                 std::string *error);
+
+private:
+  LocalLiteTxn(const LocalLiteTxn &);
+  LocalLiteTxn &operator=(const LocalLiteTxn &);
+
+  LocalLiteRocksDBStore *store_;
 };
 
 #endif

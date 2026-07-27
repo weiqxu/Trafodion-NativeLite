@@ -118,6 +118,12 @@ Validation:
 
 ### Phase 2: Statement-Level Atomic Writes
 
+Status: initial autocommit facade implemented for local table INSERT. Row-id
+allocation and row persistence now go through one `LocalLiteTxn::insertRow()`
+operation protected by the local storage manager mutex. Because catalog
+metadata and table rows still live in separate RocksDB databases, this phase
+does not yet claim cross-process or crash-atomic multi-DB commit semantics.
+
 Make every autocommit statement atomic at the local storage layer.
 
 Tasks:
@@ -259,12 +265,10 @@ Phase 1 is now implemented for the current local-lite process model:
 - Same-process row-id allocation is protected by the manager mutex.
 - The RocksDB SQLCI smoke includes a self-join regression over one local table.
 
-The next implementation step should be Phase 2:
+The next implementation step should be Phase 3:
 
-1. Introduce an executor-facing `LocalLiteTxn` autocommit facade.
-2. Replace direct `allocateRowId()` plus `putRow()` calls in
-   `LocalLiteHbaseInsertTcb` with one statement operation.
-3. Use a write batch or documented critical section to make row-id metadata and
-   row persistence fail as one statement unit.
-4. Add regression coverage for multi-row insert failure behavior and same-process
-   concurrent inserts.
+1. Add statement snapshot acquisition to `LocalLiteTxn`.
+2. Make `LocalLiteHbaseScanTcb` scan through the transaction facade.
+3. Release snapshots when the statement finishes, errors, or is cancelled.
+4. Add regression coverage that repeated scans in one statement observe a stable
+   view.

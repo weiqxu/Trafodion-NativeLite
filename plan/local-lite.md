@@ -65,6 +65,9 @@ Implemented:
   plans. It evaluates the compiler-generated insert expression, normalizes the
   executor row into the local canonical binary aligned row layout, and persists
   the `LLBR1` payload through RocksDB.
+- Local table inserts now go through an autocommit `LocalLiteTxn` facade, which
+  combines row-id allocation and row persistence into one local storage manager
+  operation instead of issuing separate calls from the executor TCB.
 - Local RocksDB storage now shares catalog/table handles inside the local-lite
   process module, so multiple executor scans of the same table in one statement
   no longer reopen the same RocksDB path and collide on RocksDB `LOCK`.

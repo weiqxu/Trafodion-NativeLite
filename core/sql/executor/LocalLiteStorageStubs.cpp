@@ -926,10 +926,9 @@ private:
                                      &encodedRow, error))
       return false;
 
+    LocalLiteTxn txn(&store_);
     uint64_t rowId = 0;
-    if (!store_.allocateRowId(table_, &rowId, error))
-      return false;
-    if (!store_.putRow(table_, rowId, encodedRow, error))
+    if (!txn.insertRow(table_, encodedRow, &rowId, error))
       return false;
 
     matches_++;
