@@ -242,6 +242,15 @@ Validation:
 
 ### Phase 6: Optional TMF Integration Boundary
 
+Status: initial executor-bound transaction facade implemented. `LocalLiteTxnManager`
+now exposes executor-bound begin/commit/rollback entry points and records both a
+local transaction id and the executor transaction id token for the active local
+transaction. The local-lite transaction TCB path calls these facade methods.
+When a real `ExTransaction` id is available the facade can bind to it; in the
+current TMF-disabled local-lite path the executor transaction object identity is
+used as a local binding token. Scan and insert TCBs still talk only to
+`LocalLiteTxn` and do not receive TMF-specific state directly.
+
 Only consider this phase after local-lite has stable local transaction behavior.
 
 Tasks:
@@ -251,12 +260,15 @@ Tasks:
   full TMF/DTM/RMS stack is available.
 - Do not expose TMF-specific concepts directly inside local table scan/insert
   TCBs.
+- Add a real TMF-backed implementation after a full service stack is available.
 
 Validation:
 
 - Existing local autocommit and explicit local transaction tests still pass.
 - TMF-enabled builds can route transaction ids through the same facade.
 - TMF-disabled local-lite builds do not require transaction service processes.
+- Runtime structure checks assert that local-lite transaction statements call
+  executor-bound facade methods.
 
 ## Design Decisions
 

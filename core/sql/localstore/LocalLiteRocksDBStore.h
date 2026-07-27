@@ -112,10 +112,17 @@ private:
 class LocalLiteTxnManager
 {
 public:
+  static const int64_t INVALID_EXECUTOR_TXN_ID = -1;
+
   static bool begin(std::string *error);
+  static bool beginForExecutor(int64_t executorTxnId, std::string *error);
   static bool commit(std::string *error);
+  static bool commitForExecutor(int64_t executorTxnId, std::string *error);
   static bool rollback(std::string *error);
+  static bool rollbackForExecutor(int64_t executorTxnId, std::string *error);
   static bool active();
+  static uint64_t currentLocalTxnId();
+  static int64_t currentExecutorTxnId();
 };
 
 #endif

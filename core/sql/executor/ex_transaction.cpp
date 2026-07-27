@@ -36,6 +36,7 @@
  */
 
 #include  <stdlib.h>
+#include  <stdint.h>
 
 // TEMP TEMP TEMP
 #include <stdio.h>
@@ -60,6 +61,18 @@
 
 #ifdef TRAF_LOCAL_LITE
 #include "LocalLiteRocksDBStore.h"
+
+static int64_t localLiteExecutorTxnId(ExTransaction *ta)
+{
+  if (!ta)
+    return LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
+
+  Int64 executorTxnId = ta->getExeXnId();
+  if (executorTxnId != Int64(-1))
+    return static_cast<int64_t>(executorTxnId);
+
+  return static_cast<int64_t>(reinterpret_cast<intptr_t>(ta));
+}
 #endif
 
 ExTransaction::ExTransaction(CliGlobals * cliGlob, CollHeap *heap)
@@ -1120,7 +1133,8 @@ short ExTransTcb::work()
 	      case BEGIN_: {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::begin(&localLiteError))
+	        if (!LocalLiteTxnManager::beginForExecutor(
+	                localLiteExecutorTxnId(ta), &localLiteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
@@ -1158,7 +1172,8 @@ short ExTransTcb::work()
 	      case COMMIT_: {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::commit(&localLiteError))
+	        if (!LocalLiteTxnManager::commitForExecutor(
+	                localLiteExecutorTxnId(ta), &localLiteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
@@ -1217,7 +1232,8 @@ short ExTransTcb::work()
 	      case ROLLBACK_:  {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::rollback(&localLiteError))
+	        if (!LocalLiteTxnManager::rollbackForExecutor(
+	                localLiteExecutorTxnId(ta), &localLiteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
@@ -1278,7 +1294,8 @@ short ExTransTcb::work()
 	      case ROLLBACK_WAITED_:  {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::rollback(&localLiteError))
+	        if (!LocalLiteTxnManager::rollbackForExecutor(
+	                localLiteExecutorTxnId(ta), &localLiteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());

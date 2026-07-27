@@ -612,12 +612,15 @@ class LocalLiteTxnState
 {
 public:
   LocalLiteTxnState()
-    : active_(false)
+    : active_(false),
+      nextLocalTxnId_(1),
+      localTxnId_(0),
+      executorTxnId_(LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID)
   {
     pthread_mutex_init(&mutex_, NULL);
   }
 
-  bool begin(std::string *error)
+  bool begin(int64_t executorTxnId, std::string *error)
   {
     LocalLiteMutexGuard guard(&mutex_);
     if (active_)
@@ -627,11 +630,15 @@ public:
       }
 
     pendingTables_.clear();
+    localTxnId_ = nextLocalTxnId_++;
+    if (nextLocalTxnId_ == 0)
+      nextLocalTxnId_ = 1;
+    executorTxnId_ = executorTxnId;
     active_ = true;
     return true;
   }
 
-  bool commit(std::string *error)
+  bool commit(int64_t executorTxnId, std::string *error)
   {
     PendingMap pending;
     {
@@ -641,8 +648,15 @@ public:
           setError(error, "no active local-lite transaction");
           return false;
         }
+      if (!matchesExecutorTxnId(executorTxnId))
+        {
+          setError(error, "local-lite transaction context mismatch");
+          return false;
+        }
 
       pending.swap(pendingTables_);
+      localTxnId_ = 0;
+      executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
       active_ = false;
     }
 
@@ -660,16 +674,23 @@ public:
     return true;
   }
 
-  bool rollback(std::string *error)
+  bool rollback(int64_t executorTxnId, std::string *error)
   {
     LocalLiteMutexGuard guard(&mutex_);
     if (!active_)
       {
-        setError(error, "no active local-lite transaction");
+          setError(error, "no active local-lite transaction");
+          return false;
+        }
+    if (!matchesExecutorTxnId(executorTxnId))
+      {
+        setError(error, "local-lite transaction context mismatch");
         return false;
       }
 
     pendingTables_.clear();
+    localTxnId_ = 0;
+    executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
     active_ = false;
     return true;
   }
@@ -678,6 +699,19 @@ public:
   {
     LocalLiteMutexGuard guard(&mutex_);
     return active_;
+  }
+
+  uint64_t currentLocalTxnId()
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    return active_ ? localTxnId_ : 0;
+  }
+
+  int64_t currentExecutorTxnId()
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    return active_ ? executorTxnId_
+                   : LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
   }
 
   bool insertRow(LocalLiteRocksDBStore *store,
@@ -766,10 +800,20 @@ private:
   };
   typedef std::map<std::string, PendingTable> PendingMap;
 
+  bool matchesExecutorTxnId(int64_t executorTxnId) const
+  {
+    return executorTxnId == LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID ||
+           executorTxnId_ == LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID ||
+           executorTxnId == executorTxnId_;
+  }
+
   LocalLiteTxnState(const LocalLiteTxnState &);
   LocalLiteTxnState &operator=(const LocalLiteTxnState &);
 
   bool active_;
+  uint64_t nextLocalTxnId_;
+  uint64_t localTxnId_;
+  int64_t executorTxnId_;
   PendingMap pendingTables_;
   pthread_mutex_t mutex_;
 };
@@ -1129,22 +1173,50 @@ bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
 
 bool LocalLiteTxnManager::begin(std::string *error)
 {
-  return LocalLiteTxnState::instance().begin(error);
+  return beginForExecutor(INVALID_EXECUTOR_TXN_ID, error);
+}
+
+bool LocalLiteTxnManager::beginForExecutor(int64_t executorTxnId,
+                                           std::string *error)
+{
+  return LocalLiteTxnState::instance().begin(executorTxnId, error);
 }
 
 bool LocalLiteTxnManager::commit(std::string *error)
 {
-  return LocalLiteTxnState::instance().commit(error);
+  return commitForExecutor(INVALID_EXECUTOR_TXN_ID, error);
+}
+
+bool LocalLiteTxnManager::commitForExecutor(int64_t executorTxnId,
+                                            std::string *error)
+{
+  return LocalLiteTxnState::instance().commit(executorTxnId, error);
 }
 
 bool LocalLiteTxnManager::rollback(std::string *error)
 {
-  return LocalLiteTxnState::instance().rollback(error);
+  return rollbackForExecutor(INVALID_EXECUTOR_TXN_ID, error);
+}
+
+bool LocalLiteTxnManager::rollbackForExecutor(int64_t executorTxnId,
+                                              std::string *error)
+{
+  return LocalLiteTxnState::instance().rollback(executorTxnId, error);
 }
 
 bool LocalLiteTxnManager::active()
 {
   return LocalLiteTxnState::instance().active();
+}
+
+uint64_t LocalLiteTxnManager::currentLocalTxnId()
+{
+  return LocalLiteTxnState::instance().currentLocalTxnId();
+}
+
+int64_t LocalLiteTxnManager::currentExecutorTxnId()
+{
+  return LocalLiteTxnState::instance().currentExecutorTxnId();
 }
 
 #endif

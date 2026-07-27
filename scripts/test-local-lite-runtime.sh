@@ -22,6 +22,7 @@ cmp_ddl_table="$repo_root/core/sql/sqlcomp/CmpSeabaseDDLtable.cpp"
 gen_precode="$repo_root/core/sql/generator/GenPreCode.cpp"
 gen_relmisc="$repo_root/core/sql/generator/GenRelMisc.cpp"
 ex_ddl="$repo_root/core/sql/executor/ex_ddl.cpp"
+ex_transaction="$repo_root/core/sql/executor/ex_transaction.cpp"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -57,6 +58,20 @@ grep -q 'LocalLiteProjectBinaryRow' "$storage_stubs" ||
   fail "local-lite executor scan must project from binary persisted rows"
 grep -q 'LocalLiteNormalizeBinaryRow' "$storage_stubs" ||
   fail "local-lite executor insert must persist normalized executor binary aligned rows"
+grep -q 'beginForExecutor' "$localstore_header" ||
+  fail "local-lite transaction manager must expose executor-bound begin"
+grep -q 'commitForExecutor' "$localstore_header" ||
+  fail "local-lite transaction manager must expose executor-bound commit"
+grep -q 'rollbackForExecutor' "$localstore_header" ||
+  fail "local-lite transaction manager must expose executor-bound rollback"
+grep -q 'currentExecutorTxnId' "$localstore_header" ||
+  fail "local-lite transaction manager must expose current executor transaction id"
+grep -q 'LocalLiteTxnManager::beginForExecutor' "$ex_transaction" ||
+  fail "transaction TCB must begin local-lite transactions through executor-bound facade"
+grep -q 'LocalLiteTxnManager::commitForExecutor' "$ex_transaction" ||
+  fail "transaction TCB must commit local-lite transactions through executor-bound facade"
+grep -q 'LocalLiteTxnManager::rollbackForExecutor' "$ex_transaction" ||
+  fail "transaction TCB must rollback local-lite transactions through executor-bound facade"
 if grep -q 'LocalLiteDecodeFields' "$storage_stubs"; then
   fail "local-lite executor scan must not decode SQLCI text field rows"
 fi
