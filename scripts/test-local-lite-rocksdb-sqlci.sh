@@ -25,6 +25,15 @@ run_sqlci() {
     "$sqlci"
 }
 
+run_sqlci_trace_scan() {
+  env TRAF_HOME="$traf_home" \
+    TRAF_LOCAL_LITE=1 \
+    TRAF_LOCAL_LITE_TRACE_SCAN=1 \
+    TRAF_LOCAL_STORE_DIR="$store_dir" \
+    LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
+    "$sqlci"
+}
+
 ldd_output=$(
   env LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" ldd "$sqlci"
 )
@@ -216,6 +225,31 @@ unique_duplicate_count=$(grep -c 'duplicate local-lite unique key' <<<"$unique_k
   fail "unique key duplicate diagnostics missing"
 grep -q -- '--- 0 row(s) selected.' <<<"$unique_key_output" ||
   fail "unique key rollback did not discard pending row"
+
+trace_setup_output=$(
+  printf "CREATE TABLE pk_trace(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_trace VALUES (7, 'seven'), (8, 'eight');\nexit;\n" |
+    run_sqlci
+)
+grep -q -- '--- 2 row(s) inserted.' <<<"$trace_setup_output" ||
+  fail "trace setup table did not insert rows"
+
+trace_pk_output=$(
+  printf "SELECT b FROM pk_trace WHERE a = 7;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -q 'seven' <<<"$trace_pk_output" ||
+  fail "primary-key trace query did not return row"
+grep -q 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_pk_output" ||
+  fail "primary-key equality query did not use local-lite get-row scan"
+
+trace_full_output=$(
+  printf "SELECT a FROM pk_trace WHERE b = 'seven';\nDROP TABLE pk_trace;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -Eq '^ *7 *$' <<<"$trace_full_output" ||
+  fail "non-key trace query did not return row"
+grep -q 'LOCAL_LITE_SCAN_FULL' <<<"$trace_full_output" ||
+  fail "non-key predicate query did not fall back to full executor scan"
 
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |

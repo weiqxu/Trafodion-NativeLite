@@ -3185,11 +3185,34 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   indexFilesDesc->filesDesc()->setAudited(TRUE);
   indexDesc->indexesDesc()->files_desc = indexFilesDesc;
 
-  TrafDesc *keyDesc = TrafAllocateDDLdesc(DESC_KEYS_TYPE, heap);
-  keyDesc->keysDesc()->keyseqnumber = 1;
-  keyDesc->keysDesc()->tablecolnumber = 0;
-  keyDesc->keysDesc()->setDescending(FALSE);
-  indexDesc->indexesDesc()->keys_desc = keyDesc;
+  TrafDesc *firstKeyDesc = NULL;
+  TrafDesc *lastKeyDesc = NULL;
+  size_t keyCount = table.primaryKeyColumns.empty()
+      ? static_cast<size_t>(1)
+      : table.primaryKeyColumns.size();
+  for (size_t i = 0; i < keyCount; i++)
+    {
+      size_t tableColNumber = table.primaryKeyColumns.empty()
+          ? static_cast<size_t>(0)
+          : table.primaryKeyColumns[i];
+      if (tableColNumber >= table.columns.size())
+        {
+          *error = "invalid local-lite primary key metadata";
+          return NULL;
+        }
+
+      TrafDesc *keyDesc = TrafAllocateDDLdesc(DESC_KEYS_TYPE, heap);
+      keyDesc->keysDesc()->keyseqnumber = static_cast<Lng32>(i + 1);
+      keyDesc->keysDesc()->tablecolnumber =
+          static_cast<Lng32>(tableColNumber);
+      keyDesc->keysDesc()->setDescending(FALSE);
+      if (!firstKeyDesc)
+        firstKeyDesc = keyDesc;
+      else
+        lastKeyDesc->next = keyDesc;
+      lastKeyDesc = keyDesc;
+    }
+  indexDesc->indexesDesc()->keys_desc = firstKeyDesc;
   tableDesc->tableDesc()->indexes_desc = indexDesc;
 
   return tableDesc;

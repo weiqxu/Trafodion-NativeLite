@@ -21,10 +21,21 @@
 #include "sql_buffer.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <string>
 #include <vector>
+
+static void localLiteTraceScan(const char *path, const char *tableName)
+{
+  const char *trace = getenv("TRAF_LOCAL_LITE_TRACE_SCAN");
+  if (!trace || !trace[0])
+    return;
+  fprintf(stderr, "LOCAL_LITE_SCAN_%s table=%s\n",
+          path ? path : "UNKNOWN",
+          tableName ? tableName : "");
+}
 
 extern "C" const char *trafLocalLiteUnsupportedStorage()
 {
@@ -368,8 +379,12 @@ private:
     if (!loadGetRows(&txn, &handledGetRows, error))
       return false;
     if (handledGetRows)
-      return true;
+      {
+        localLiteTraceScan("GET_ROW", scanTdb().getTableName());
+        return true;
+      }
 
+    localLiteTraceScan("FULL", scanTdb().getTableName());
     return txn.scanRows(table_, &rows_, error);
   }
 
@@ -429,6 +444,9 @@ private:
         return false;
       }
 
+    if (strncmp(rawKey, "LLPK1:", 6) == 0)
+      return decodeHexGetRowKey(rawKey + 6, storageKey, error);
+
     if (rawKey[0] != 'P' && rawKey[0] != 'U')
       {
         short len = 0;
@@ -450,6 +468,44 @@ private:
 
     storageKey->assign(rawKey, strlen(rawKey));
     return true;
+  }
+
+  bool decodeHexGetRowKey(const char *hex,
+                          std::string *storageKey,
+                          std::string *error)
+  {
+    size_t len = strlen(hex);
+    if ((len % 2) != 0)
+      {
+        *error = "invalid local-lite hex get row id length";
+        return false;
+      }
+
+    storageKey->clear();
+    storageKey->reserve(len / 2);
+    for (size_t i = 0; i < len; i += 2)
+      {
+        int hi = decodeHexDigit(hex[i]);
+        int lo = decodeHexDigit(hex[i + 1]);
+        if (hi < 0 || lo < 0)
+          {
+            *error = "invalid local-lite hex get row id";
+            return false;
+          }
+        storageKey->push_back(static_cast<char>((hi << 4) | lo));
+      }
+    return true;
+  }
+
+  int decodeHexDigit(char c)
+  {
+    if (c >= '0' && c <= '9')
+      return c - '0';
+    if (c >= 'a' && c <= 'f')
+      return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+      return c - 'A' + 10;
+    return -1;
   }
 
   bool isLocalLiteStorageKey(const std::string &storageKey)

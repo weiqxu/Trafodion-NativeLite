@@ -65,6 +65,8 @@ grep -q 'listOfGetRows' "$storage_stubs" ||
   fail "local-lite executor scan must consume optimized get-row requests"
 grep -q 'LocalLiteTxn::getRowByKey' "$localstore_source" ||
   fail "local-lite get-row access must go through the transaction facade"
+grep -q 'TRAF_LOCAL_LITE_TRACE_SCAN' "$storage_stubs" ||
+  fail "local-lite executor scan must expose test-only scan path tracing"
 grep -q 'LocalLiteProjectBinaryRow' "$storage_stubs" ||
   fail "local-lite executor scan must project from binary persisted rows"
 grep -q 'LocalLiteNormalizeBinaryRow' "$storage_stubs" ||
@@ -145,6 +147,12 @@ grep -q 'xnNeeded() = FALSE' "$gen_precode" ||
   fail "generator pre-code must mark local-lite CREATE/DROP as no transaction"
 grep -q 'localLiteRewritePrimaryGetRows' "$gen_precode" ||
   fail "generator pre-code must map primary-key equality to local-lite get-row keys"
+grep -Fq 'table.primaryKeyColumns[i]' "$repo_root/core/sql/optimizer/NATable.cpp" ||
+  fail "local-lite NATable must expose real primary-key column ordinals"
+grep -q 'LOCAL_LITE_SCAN_GET_ROW' "$local_sqlci_smoke" ||
+  fail "SQLCI smoke must verify primary-key equality uses get-row scan"
+grep -q 'LOCAL_LITE_SCAN_FULL' "$local_sqlci_smoke" ||
+  fail "SQLCI smoke must verify non-key predicates fall back to full scan"
 grep -q 'ddl_tdb->setHbaseDDL(TRUE)' "$gen_relmisc" ||
   fail "generator must route local-lite CREATE/DROP through PROCESSDDL"
 grep -q 'switchToCmpContext' "$ex_ddl" ||

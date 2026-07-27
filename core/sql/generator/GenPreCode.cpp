@@ -185,10 +185,15 @@ static NABoolean localLiteConstValueToText(ValueId valueId,
                                            std::string *text)
 {
   ItemExpr *expr = valueId.getItemExpr();
-  if (!expr || expr->getOperatorType() != ITM_CONSTANT)
+  if (!expr)
     return FALSE;
 
-  ConstValue *cv = static_cast<ConstValue *>(expr);
+  NABoolean negate = FALSE;
+  ConstValue *cv = expr->castToConstValue(negate);
+  if (!cv && expr->getOperatorType() == ITM_CACHE_PARAM)
+    cv = static_cast<ConstantParameter *>(expr)->getConstVal();
+  if (!cv || negate)
+    return FALSE;
   if (cv->isNull())
     return FALSE;
 
@@ -222,13 +227,113 @@ static NABoolean localLiteConstValueToText(ValueId valueId,
   return FALSE;
 }
 
+static NABoolean localLiteColumnPosition(ValueId valueId,
+                                         size_t *position)
+{
+  ItemExpr *expr = valueId.getItemExpr();
+  if (!expr)
+    return FALSE;
+
+  if (expr->getOperatorType() == ITM_BASECOLUMN)
+    {
+      NAColumn *column = ((BaseColumn *)expr)->getNAColumn();
+      if (!column)
+        return FALSE;
+      *position = static_cast<size_t>(column->getPosition());
+      return TRUE;
+    }
+
+  if (expr->getOperatorType() == ITM_INDEXCOLUMN)
+    {
+      NAColumn *column = ((IndexColumn *)expr)->getNAColumn();
+      if (!column)
+        return FALSE;
+      *position = static_cast<size_t>(column->getPosition());
+      return TRUE;
+    }
+
+  ValueIdSet columns;
+  expr->findAll(ITM_BASECOLUMN, columns, TRUE, TRUE);
+  expr->findAll(ITM_INDEXCOLUMN, columns, TRUE, TRUE);
+  if (columns.entries() != 1)
+    return FALSE;
+
+  ValueId columnId = columns.init();
+  if (!columns.next(columnId))
+    return FALSE;
+  return localLiteColumnPosition(columnId, position);
+}
+
+static NABoolean localLiteMatchColumnConstEquality(ItemExpr *predicate,
+                                                   size_t *columnPosition,
+                                                   std::string *field)
+{
+  if (!predicate || predicate->getOperatorType() != ITM_EQUAL)
+    return FALSE;
+
+  ValueId left = predicate->child(0)->getValueId();
+  ValueId right = predicate->child(1)->getValueId();
+
+  if (localLiteColumnPosition(left, columnPosition) &&
+      localLiteConstValueToText(right, field))
+    return TRUE;
+
+  if (localLiteColumnPosition(right, columnPosition) &&
+      localLiteConstValueToText(left, field))
+    return TRUE;
+
+  return FALSE;
+}
+
+static NABoolean localLiteMatchVEGColumnConstEquality(ItemExpr *predicate,
+                                                      size_t *columnPosition,
+                                                      std::string *field)
+{
+  if (!predicate ||
+      predicate->getOperatorType() != ITM_VEG_PREDICATE)
+    return FALSE;
+
+  VEGPredicate *vegPred = static_cast<VEGPredicate *>(predicate);
+  const ValueIdSet &members = vegPred->getVEG()->getAllValues();
+
+  ValueId constId = NULL_VALUE_ID;
+  for (ValueId member = members.init();
+       members.next(member);
+       members.advance(member))
+    {
+      std::string value;
+      if (localLiteConstValueToText(member, &value))
+        {
+          constId = member;
+          *field = value;
+          break;
+        }
+    }
+
+  if (constId == NULL_VALUE_ID)
+    return FALSE;
+
+  for (ValueId member = members.init();
+       members.next(member);
+       members.advance(member))
+    {
+      if (member == constId)
+        continue;
+
+      if (localLiteColumnPosition(member, columnPosition))
+        return TRUE;
+    }
+
+  return FALSE;
+}
+
 static NABoolean localLiteBuildPrimaryKeyForSearchKey(
     const LocalLiteTableDef &table,
     HbaseSearchKey *searchKey,
     std::string *rowKey)
 {
   if (!searchKey ||
-      !searchKey->isUnique() ||
+      !searchKey->areAllChosenPredsEqualPreds() ||
       table.primaryKeyColumns.empty() ||
       searchKey->getCoveredLeadingKeys() !=
           static_cast<Int32>(table.primaryKeyColumns.size()))
@@ -252,6 +357,66 @@ static NABoolean localLiteBuildPrimaryKeyForSearchKey(
                                                 &error) ? TRUE : FALSE;
 }
 
+static NABoolean localLiteBuildPrimaryKeyFromPredicates(
+    const LocalLiteTableDef &table,
+    const ValueIdSet &predicates,
+    std::string *rowKey)
+{
+  if (table.primaryKeyColumns.empty())
+    return FALSE;
+
+  std::vector<std::string> keyFields(table.primaryKeyColumns.size());
+  std::vector<bool> found(table.primaryKeyColumns.size(), false);
+
+  for (ValueId predId = predicates.init();
+       predicates.next(predId);
+       predicates.advance(predId))
+    {
+      ItemExpr *pred = predId.getItemExpr();
+      size_t columnPosition = 0;
+      std::string field;
+      if (!localLiteMatchColumnConstEquality(pred,
+                                             &columnPosition,
+                                             &field) &&
+          !localLiteMatchVEGColumnConstEquality(pred,
+                                                &columnPosition,
+                                                &field))
+        continue;
+
+      for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+        {
+          if (table.primaryKeyColumns[i] == columnPosition)
+            {
+              keyFields[i] = field;
+              found[i] = true;
+              break;
+            }
+        }
+    }
+
+  for (size_t i = 0; i < found.size(); i++)
+    if (!found[i])
+      return FALSE;
+
+  std::string error;
+  return LocalLiteBuildPrimaryKeyFromTextFields(table, keyFields, rowKey,
+                                                &error) ? TRUE : FALSE;
+}
+
+static std::string localLiteEncodeGetRowKey(const std::string &rowKey)
+{
+  static const char hex[] = "0123456789abcdef";
+  std::string encoded("LLPK1:");
+  encoded.reserve(encoded.size() + rowKey.size() * 2);
+  for (size_t i = 0; i < rowKey.size(); i++)
+    {
+      unsigned char c = static_cast<unsigned char>(rowKey[i]);
+      encoded += hex[c >> 4];
+      encoded += hex[c & 0x0f];
+    }
+  return encoded;
+}
+
 static NABoolean localLiteRewritePrimaryGetRows(
     TableDesc *tdesc,
     NAList<HbaseSearchKey*> &searchKeys,
@@ -272,12 +437,37 @@ static NABoolean localLiteRewritePrimaryGetRows(
       std::string rowKey;
       if (!localLiteBuildPrimaryKeyForSearchKey(table, searchKeys[i], &rowKey))
         return FALSE;
+      rowKey = localLiteEncodeGetRowKey(rowKey);
       localGetSpec.rowIds_.insert(NAString(rowKey.data(),
                                            static_cast<Int32>(rowKey.size())));
     }
 
   if (localGetSpec.rowIds_.entries() == 0)
     return FALSE;
+
+  listOfUniqueRows.clear();
+  listOfUniqueRows.insert(localGetSpec);
+  return TRUE;
+}
+
+static NABoolean localLiteRewritePrimaryGetRowsFromPredicates(
+    TableDesc *tdesc,
+    const ValueIdSet &predicates,
+    ListOfUniqueRows &listOfUniqueRows)
+{
+  LocalLiteTableDef table;
+  if (!localLiteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
+    return FALSE;
+
+  std::string rowKey;
+  if (!localLiteBuildPrimaryKeyFromPredicates(table, predicates, &rowKey))
+    return FALSE;
+  rowKey = localLiteEncodeGetRowKey(rowKey);
+
+  HbaseUniqueRows localGetSpec;
+  localGetSpec.rowTS_ = -1;
+  localGetSpec.rowIds_.insert(NAString(rowKey.data(),
+                                       static_cast<Int32>(rowKey.size())));
 
   listOfUniqueRows.clear();
   listOfUniqueRows.insert(localGetSpec);
@@ -399,6 +589,15 @@ static NABoolean processConstHBaseKeys(Generator * generator,
         {
           localLiteRewritePrimaryGetRows(tdesc, mySearchKeys,
                                          listOfUpdUniqueRows);
+          if (listOfUpdUniqueRows.entries() == 0)
+            {
+              ValueIdSet localLitePreds;
+              localLitePreds += executorPreds;
+              localLitePreds += relExpr->getSelectionPred();
+              localLitePreds += skey->getFullKeyPredicates();
+              localLiteRewritePrimaryGetRowsFromPredicates(
+                  tdesc, localLitePreds, listOfUpdUniqueRows);
+            }
         }
 #endif
 
@@ -12429,6 +12628,19 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
 
   if (! FileScan::preCodeGen(generator,externalInputs,pulledNewInputs))
     return NULL;
+
+#ifdef TRAF_LOCAL_LITE
+  if (listOfRangeRows_.entries() == 0 && listOfUniqueRows_.entries() == 0)
+    {
+      ValueIdSet localLitePreds;
+      localLitePreds += executorPred();
+      localLitePreds += selectionPred();
+      if (getSearchKey())
+        localLitePreds += getSearchKey()->getFullKeyPredicates();
+      localLiteRewritePrimaryGetRowsFromPredicates(
+          getTableDesc(), localLitePreds, listOfUniqueRows_);
+    }
+#endif
 
   //compute isUnique:
   NABoolean isUnique = FALSE;
