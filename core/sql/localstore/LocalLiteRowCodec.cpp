@@ -1475,9 +1475,19 @@ bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
   for (UInt32 i = 0; i < destTd->numAttrs(); i++)
     {
       size_t sourceIndex = sourceIndexes[i];
+      // Logical local-lite UNIQUE indexes are scanned from the base row.
+      // Generator metadata can still describe the covering index tuple, whose
+      // trailing base-column ordinals are one slot past the base row layout.
+      if (sourceIndex >= columns.size() && sourceIndex > 0)
+        sourceIndex--;
       if (sourceIndex >= columns.size())
         {
-          setError(error, "local-lite binary projection source index out of range");
+          char msg[160];
+          snprintf(msg, sizeof(msg),
+                   "local-lite binary projection source index out of range: %lu of %lu",
+                   static_cast<unsigned long>(sourceIndex),
+                   static_cast<unsigned long>(columns.size()));
+          setError(error, msg);
           return false;
         }
       Attributes *dest = destTd->getAttr(i);

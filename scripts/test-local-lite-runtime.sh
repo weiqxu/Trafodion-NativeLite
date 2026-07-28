@@ -149,6 +149,10 @@ grep -q 'localLiteRewritePrimaryGetRows' "$gen_precode" ||
   fail "generator pre-code must map primary-key equality to local-lite get-row keys"
 grep -Fq 'table.primaryKeyColumns[i]' "$repo_root/core/sql/optimizer/NATable.cpp" ||
   fail "local-lite NATable must expose real primary-key column ordinals"
+grep -Fq 'table.uniqueKeyColumns' "$repo_root/core/sql/optimizer/NATable.cpp" ||
+  fail "local-lite NATable must expose UNIQUE key metadata"
+grep -Fq 'setUnique(TRUE)' "$repo_root/core/sql/optimizer/NATable.cpp" ||
+  fail "local-lite NATable UNIQUE metadata must create unique access paths"
 grep -q 'LOCAL_LITE_SCAN_GET_ROW' "$local_sqlci_smoke" ||
   fail "SQLCI smoke must verify primary-key equality uses get-row scan"
 grep -q 'LOCAL_LITE_SCAN_FULL' "$local_sqlci_smoke" ||

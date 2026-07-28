@@ -225,11 +225,16 @@ literals can now be encoded into deterministic get-row keys, including negative
 predicate forms that the compiler represents as constant expressions rather than
 plain `ConstValue`s. UNIQUE-key equality predicates can now be mapped to
 deterministic `U`-prefixed get-row keys when the predicate supplies all columns
-of one unique key. Unsupported literal types and non-key predicates still fall
-back to full executor scan. SQLCI smoke now enables a test-only executor trace
-to assert that integer primary-key, NUMERIC/DECIMAL/BigNum primary-key, and
-UNIQUE-key equality use the get-row path while non-key predicates use full scan
-fallback.
+of one unique key. Local-lite NATable synthesis now exposes primary-key and
+UNIQUE-key metadata to the optimizer. UNIQUE keys are represented as logical
+unique access paths that keep the physical scan name on the base local table;
+the executor resolves `U` records back to the persisted base `LLBR1` row.
+Local-lite DML also skips generic secondary-index maintenance because the
+storage layer maintains `U` uniqueness records in the same RocksDB table.
+Unsupported literal types and non-key predicates still fall back to full
+executor scan. SQLCI smoke now enables a test-only executor trace to assert that
+integer primary-key, NUMERIC/DECIMAL/BigNum primary-key, and UNIQUE-key equality
+use the get-row path while non-key predicates use full scan fallback.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -245,6 +250,8 @@ Tasks:
   stable.
 - Teach local-lite scan/get TCBs to consume optimized key access before exposing
   local-lite primary keys as optimizer-visible key metadata.
+- Expose local-lite UNIQUE keys as optimizer-visible logical access paths while
+  keeping executor scan storage on the base local table.
 
 Validation:
 
@@ -316,12 +323,12 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The next implementation step should expose local-lite key metadata more broadly
-now that literal key fallback coverage is in place:
+The next implementation step should harden optimizer-facing coverage now that
+local-lite key metadata is visible:
 
-1. Expose local-lite primary-key and UNIQUE-key metadata broadly to the
-   optimizer.
-2. Keep local-lite scan/get fallback behavior for unsupported literal shapes and
+1. Add focused plan/explain regression coverage for primary-key and UNIQUE-key
+   equality so changes in access-path selection are visible.
+2. Refine UNIQUE get-row predicate handling to remove only predicates covered by
+   the logical unique key and keep residual predicates evaluated by the executor.
+3. Keep local-lite scan/get fallback behavior for unsupported literal shapes and
    non-key predicates.
-3. Add optimizer-facing regression coverage once metadata exposure changes plan
-   behavior is covered.

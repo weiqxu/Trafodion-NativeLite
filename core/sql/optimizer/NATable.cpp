@@ -2858,6 +2858,49 @@ static char *localLiteCopyToHeap(const std::string &s, NAMemory *heap)
   return out;
 }
 
+static TrafDesc *localLiteMakeKeyDesc(size_t keySeqNumber,
+                                      size_t tableColNumber,
+                                      const std::string &columnName,
+                                      NAMemory *heap)
+{
+  TrafDesc *keyDesc = TrafAllocateDDLdesc(DESC_KEYS_TYPE, heap);
+  keyDesc->keysDesc()->keyseqnumber = static_cast<Lng32>(keySeqNumber);
+  keyDesc->keysDesc()->tablecolnumber = static_cast<Lng32>(tableColNumber);
+  keyDesc->keysDesc()->setDescending(FALSE);
+  keyDesc->keysDesc()->keyname = localLiteCopyToHeap(columnName, heap);
+  keyDesc->keysDesc()->hbaseColFam =
+      localLiteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
+  char qual[32];
+  snprintf(qual, sizeof(qual), "%lu",
+           static_cast<unsigned long>(tableColNumber + 1));
+  keyDesc->keysDesc()->hbaseColQual = localLiteCopyToHeap(qual, heap);
+  return keyDesc;
+}
+
+static bool localLiteAppendKeyDesc(TrafDesc **firstKeyDesc,
+                                   TrafDesc **lastKeyDesc,
+                                   const LocalLiteTableDef &table,
+                                   size_t keySeqNumber,
+                                   size_t tableColNumber,
+                                   NAMemory *heap,
+                                   std::string *error)
+{
+  if (tableColNumber >= table.columns.size())
+    {
+      *error = "invalid local-lite key metadata";
+      return false;
+    }
+
+  TrafDesc *keyDesc = localLiteMakeKeyDesc(
+      keySeqNumber, tableColNumber, table.columns[tableColNumber].name, heap);
+  if (!*firstKeyDesc)
+    *firstKeyDesc = keyDesc;
+  else
+    (*lastKeyDesc)->next = keyDesc;
+  *lastKeyDesc = keyDesc;
+  return true;
+}
+
 static std::string localLiteUpper(const std::string &s)
 {
   std::string out = s;
@@ -3201,19 +3244,107 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           return NULL;
         }
 
-      TrafDesc *keyDesc = TrafAllocateDDLdesc(DESC_KEYS_TYPE, heap);
-      keyDesc->keysDesc()->keyseqnumber = static_cast<Lng32>(i + 1);
-      keyDesc->keysDesc()->tablecolnumber =
-          static_cast<Lng32>(tableColNumber);
-      keyDesc->keysDesc()->setDescending(FALSE);
-      if (!firstKeyDesc)
-        firstKeyDesc = keyDesc;
-      else
-        lastKeyDesc->next = keyDesc;
-      lastKeyDesc = keyDesc;
+      if (!localLiteAppendKeyDesc(&firstKeyDesc,
+                                  &lastKeyDesc,
+                                  table,
+                                  i + 1,
+                                  tableColNumber,
+                                  heap,
+                                  error))
+        return NULL;
     }
   indexDesc->indexesDesc()->keys_desc = firstKeyDesc;
   tableDesc->tableDesc()->indexes_desc = indexDesc;
+
+  TrafDesc *lastIndexDesc = indexDesc;
+  for (size_t uniqueIndex = 0; uniqueIndex < table.uniqueKeyColumns.size();
+       uniqueIndex++)
+    {
+      const std::vector<size_t> &uniqueColumns =
+        table.uniqueKeyColumns[uniqueIndex];
+      if (uniqueColumns.empty())
+        {
+          *error = "invalid local-lite unique key metadata";
+          return NULL;
+        }
+
+      TrafDesc *uniqueDesc = TrafAllocateDDLdesc(DESC_INDEXES_TYPE, heap);
+      uniqueDesc->indexesDesc()->tablename = tableDesc->tableDesc()->tablename;
+      uniqueDesc->indexesDesc()->indexname = tableDesc->tableDesc()->tablename;
+      uniqueDesc->indexesDesc()->keytag =
+          static_cast<Int32>(uniqueIndex + 1);
+      uniqueDesc->indexesDesc()->indexUID =
+          static_cast<Int64>(table.objectUid + uniqueIndex + 1);
+      uniqueDesc->indexesDesc()->record_length =
+          tableDesc->tableDesc()->record_length;
+      uniqueDesc->indexesDesc()->colcount = tableDesc->tableDesc()->colcount;
+      uniqueDesc->indexesDesc()->blocksize = 4096;
+      uniqueDesc->indexesDesc()->setUnique(TRUE);
+      uniqueDesc->indexesDesc()->setRowFormat(COM_ALIGNED_FORMAT_TYPE);
+      uniqueDesc->indexesDesc()->setPartitioningScheme(COM_NO_PARTITIONING);
+
+      TrafDesc *uniqueFilesDesc = TrafAllocateDDLdesc(DESC_FILES_TYPE, heap);
+      uniqueFilesDesc->filesDesc()->setAudited(TRUE);
+      uniqueDesc->indexesDesc()->files_desc = uniqueFilesDesc;
+
+      TrafDesc *firstUniqueKeyDesc = NULL;
+      TrafDesc *lastUniqueKeyDesc = NULL;
+      size_t keySeq = 1;
+      std::vector<bool> keyColumnSeen(table.columns.size(), false);
+      for (size_t i = 0; i < uniqueColumns.size(); i++, keySeq++)
+        {
+          if (!localLiteAppendKeyDesc(&firstUniqueKeyDesc,
+                                      &lastUniqueKeyDesc,
+                                      table,
+                                      keySeq,
+                                      uniqueColumns[i],
+                                      heap,
+                                      error))
+            return NULL;
+          keyColumnSeen[uniqueColumns[i]] = true;
+        }
+      for (size_t i = 0; i < keyCount; i++)
+        {
+          size_t tableColNumber = table.primaryKeyColumns.empty()
+              ? static_cast<size_t>(0)
+              : table.primaryKeyColumns[i];
+          if (keyColumnSeen[tableColNumber])
+            continue;
+          if (!localLiteAppendKeyDesc(&firstUniqueKeyDesc,
+                                      &lastUniqueKeyDesc,
+                                      table,
+                                      keySeq,
+                                      tableColNumber,
+                                      heap,
+                                      error))
+            return NULL;
+          keyColumnSeen[tableColNumber] = true;
+          keySeq++;
+        }
+
+      uniqueDesc->indexesDesc()->keys_desc = firstUniqueKeyDesc;
+
+      TrafDesc *firstNonKeyDesc = NULL;
+      TrafDesc *lastNonKeyDesc = NULL;
+      size_t nonKeySeq = 1;
+      for (size_t i = 0; i < table.columns.size(); i++)
+        {
+          if (keyColumnSeen[i])
+            continue;
+          if (!localLiteAppendKeyDesc(&firstNonKeyDesc,
+                                      &lastNonKeyDesc,
+                                      table,
+                                      nonKeySeq++,
+                                      i,
+                                      heap,
+                                      error))
+            return NULL;
+        }
+      uniqueDesc->indexesDesc()->non_keys_desc = firstNonKeyDesc;
+
+      lastIndexDesc->next = uniqueDesc;
+      lastIndexDesc = uniqueDesc;
+    }
 
   return tableDesc;
 }

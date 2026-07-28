@@ -13047,6 +13047,11 @@ RelExpr * GenericUpdate::bindNode(BindWA *bindWA)
   if (naTable && naTable->isHbaseTable())
     hbaseOper() = TRUE;
 
+#ifdef TRAF_LOCAL_LITE
+  if (getenv("TRAF_LOCAL_LITE") && naTable && naTable->isHbaseTable())
+    setNoIMneeded(TRUE);
+#endif
+
   if (naTable && naTable->isHbaseMapTable() &&
       (CmpCommon::getDefault(TRAF_HBASE_MAPPED_TABLES_IUD) == DF_OFF))
     {
@@ -18183,4 +18188,3 @@ RelExpr * OSIMControl::bindNode(BindWA *bindWA)
 
   return ControlAbstractClass::bindNode(bindWA);
 }
-

@@ -759,10 +759,19 @@ static NABoolean processConstHBaseKeys(Generator * generator,
               localLitePreds += relExpr->getSelectionPred();
               localLitePreds += skey->getFullKeyPredicates();
               if (localLiteRewritePrimaryGetRowsFromPredicates(
-                      tdesc, localLitePreds, listOfUpdUniqueRows) ||
-                  localLiteRewriteUniqueGetRowsFromPredicates(
                       tdesc, localLitePreds, listOfUpdUniqueRows))
                 listOfUpdSubsetRows.clear();
+              else if (localLiteRewriteUniqueGetRowsFromPredicates(
+                           tdesc, localLitePreds, listOfUpdUniqueRows))
+                {
+                  listOfUpdSubsetRows.clear();
+                  if (relExpr->getOperatorType() == REL_HBASE_ACCESS)
+                    {
+                      HbaseAccess *hba = static_cast<HbaseAccess *>(relExpr);
+                      hba->executorPred().clear();
+                      hba->selectionPred().clear();
+                    }
+                }
             }
         }
 #endif
@@ -12802,10 +12811,15 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
   if (getSearchKey())
     localLitePreds += getSearchKey()->getFullKeyPredicates();
   if (localLiteRewritePrimaryGetRowsFromPredicates(
-          getTableDesc(), localLitePreds, listOfUniqueRows_) ||
-      localLiteRewriteUniqueGetRowsFromPredicates(
           getTableDesc(), localLitePreds, listOfUniqueRows_))
     listOfRangeRows_.clear();
+  else if (localLiteRewriteUniqueGetRowsFromPredicates(
+             getTableDesc(), localLitePreds, listOfUniqueRows_))
+    {
+      listOfRangeRows_.clear();
+      executorPred().clear();
+      selectionPred().clear();
+    }
 #endif
 
   //compute isUnique:

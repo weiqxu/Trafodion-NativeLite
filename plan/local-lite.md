@@ -438,6 +438,10 @@ optimizer synthesizes a minimal `TrafDesc` tree on the NATable heap:
 - User column descriptors from catalog column metadata.
 - A minimal primary index descriptor and key descriptor, reusing the existing
   HBase/Seabase scan TDB shape as the carrier for the local RocksDB scan TCB.
+- Logical UNIQUE access-path descriptors for local-lite `UNIQUE` metadata. These
+  descriptors expose unique keys to the optimizer but keep the physical
+  `indexname` on the base local table because local-lite stores `U` uniqueness
+  records in the same RocksDB table rather than in separate index tables.
 
 The current type mapper covers the local DDL v1 scalar surface needed for
 binding: signed tiny/small/int/large integers, real/float, double, `CHAR`,
@@ -458,6 +462,10 @@ TCB loads table metadata and rows from `LocalLiteRocksDBStore`, uses
 `LocalLiteRowCodec` to project the persisted binary aligned payload through the
 fetched-column list, writes those values into the compiler-generated binary
 aligned row descriptor, and returns rows through the normal executor up queue.
+Encoded local-lite get-row requests are consumed through
+`LocalLiteTxn::getRowByKey()`. Primary-key requests use deterministic `P`
+records. UNIQUE-key requests use deterministic `U` records and resolve back to
+the base persisted `LLBR1` row before projection.
 
 This replaces the previous SQLCI `SELECT *` bypass.
 
@@ -469,6 +477,9 @@ TCB evaluates the compiler-generated `convertExpr_`, then
 `LocalLiteRowCodec` normalizes that executor-produced row into the local
 canonical binary aligned table layout and persists the `LLBR1` payload through
 `LocalLiteRocksDBStore`.
+In local-lite mode the binder marks HBase-style DML as not needing generic index
+maintenance; the local storage layer maintains local `U` uniqueness records for
+UNIQUE constraints in the base RocksDB table.
 
 This replaces the previous SQLCI `INSERT INTO ... VALUES` bypass. INSERT type
 conversion and expression evaluation now come from the compiler/executor path
