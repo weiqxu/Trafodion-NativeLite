@@ -65,6 +65,13 @@ grep -q 'listOfGetRows' "$storage_stubs" ||
   fail "local-lite executor scan must consume optimized get-row requests"
 grep -q 'LocalLiteTxn::getRowByKey' "$localstore_source" ||
   fail "local-lite get-row access must go through the transaction facade"
+grep -q 'LocalLiteTxn txn' "$storage_stubs" ||
+  fail "local-lite executor scan/insert TCBs must use the transaction facade"
+if grep -q 'allocateRowId' "$localstore_header" ||
+   grep -q 'LocalLiteRocksDBStore::allocateRowId' "$localstore_source" ||
+   grep -q 'LocalLiteRocksDBStore::putRow' "$localstore_source"; then
+  fail "local-lite store must not expose legacy row-id allocation or direct row put APIs"
+fi
 grep -q 'TRAF_LOCAL_LITE_TRACE_SCAN' "$storage_stubs" ||
   fail "local-lite executor scan must expose test-only scan path tracing"
 grep -q 'LocalLiteProjectBinaryRow' "$storage_stubs" ||

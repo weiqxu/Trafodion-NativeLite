@@ -1242,33 +1242,6 @@ bool LocalLiteRocksDBStore::loadTable(const std::string &catalog,
   return decodeTable(encoded, table, error);
 }
 
-bool LocalLiteRocksDBStore::allocateRowId(const LocalLiteTableDef &table,
-                                          uint64_t *rowId,
-                                          std::string *error)
-{
-  if (!open(error))
-    return false;
-
-  LocalLiteMutexGuard guard(LocalLiteStorageManager::instance().mutex());
-
-  LocalLiteTableDef loaded;
-  if (!loadTable(table.catalog, table.schema, table.name, &loaded, error))
-    return false;
-
-  *rowId = loaded.nextRowId++;
-  std::string key = tableKey(loaded.catalog, loaded.schema, loaded.name);
-  std::string value = encodeTable(loaded);
-  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
-  char *err = NULL;
-  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(),
-              writeOptions,
-              key.data(), key.size(), value.data(), value.size(), &err);
-  rocksdb_writeoptions_destroy(writeOptions);
-  if (!checkRocksError(err, "update local-lite row id metadata", error))
-    return false;
-  return true;
-}
-
 bool LocalLiteRocksDBStore::insertRow(const LocalLiteTableDef &table,
                                       const std::string &encodedRow,
                                       uint64_t *rowId,
@@ -1279,32 +1252,6 @@ bool LocalLiteRocksDBStore::insertRow(const LocalLiteTableDef &table,
 
   return LocalLiteStorageManager::instance().insertRow(table, encodedRow,
                                                        rowId, error);
-}
-
-bool LocalLiteRocksDBStore::putRow(const LocalLiteTableDef &table,
-                                   uint64_t rowId,
-                                   const std::string &encodedRow,
-                                   std::string *error)
-{
-  if (!open(error))
-    return false;
-
-  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(tablePath(table),
-                                                               false,
-                                                               error);
-  if (!db)
-    return false;
-
-  std::string key;
-  appendUint64(key, rowId);
-  std::string value = encodeRowValue(encodedRow);
-  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
-  char *err = NULL;
-  rocksdb_put(db, writeOptions, key.data(), key.size(), value.data(), value.size(), &err);
-  rocksdb_writeoptions_destroy(writeOptions);
-  if (!checkRocksError(err, "write local-lite row", error))
-    return false;
-  return true;
 }
 
 bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,

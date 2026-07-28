@@ -67,7 +67,8 @@ Implemented:
   the `LLBR1` payload through RocksDB.
 - Local table inserts now go through an autocommit `LocalLiteTxn` facade, which
   combines row-id allocation and row persistence into one local storage manager
-  operation instead of issuing separate calls from the executor TCB.
+  operation instead of issuing separate calls from the executor TCB. The legacy
+  public store APIs for direct row-id allocation and row put have been removed.
 - Local table scans now go through the `LocalLiteTxn` facade and bind RocksDB
   iterators to a snapshot while materializing scan rows.
 - Local-lite `BEGIN WORK`, `COMMIT WORK`, and `ROLLBACK WORK` now use an
@@ -561,14 +562,19 @@ Completed:
   compiler DDL checks.
 - Operational usage documentation for the current sqlci entry point and
   compiler/executor-backed RocksDB table path.
+- Local store public API cleanup that prevents local executor writes from
+  bypassing `LocalLiteTxn::insertRow()`.
 
 Remaining, in suggested implementation order:
 
-1. Broaden executor expression coverage for scans and inserts beyond the
+1. Add runtime coverage for concurrent or overlapping local-lite scans/writes
+   that exercises shared RocksDB handles and row-id allocation under the
+   transaction facade.
+2. Broaden executor expression coverage for scans and inserts beyond the
    current smoke predicates and VALUES expressions.
 
-The next task to start is **Broaden executor expression coverage for local
-table INSERT/SCAN paths**.
+The next task to start is **Concurrent/overlapping local-lite scan/write
+runtime coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

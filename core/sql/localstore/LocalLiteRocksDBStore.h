@@ -68,17 +68,10 @@ public:
                  LocalLiteTableDef *table,
                  std::string *error);
 
-  bool allocateRowId(const LocalLiteTableDef &table,
-                     uint64_t *rowId,
-                     std::string *error);
   bool insertRow(const LocalLiteTableDef &table,
                  const std::string &encodedRow,
                  uint64_t *rowId,
                  std::string *error);
-  bool putRow(const LocalLiteTableDef &table,
-              uint64_t rowId,
-              const std::string &encodedRow,
-              std::string *error);
   bool getRowByKey(const LocalLiteTableDef &table,
                    const std::string &storageKey,
                    LocalLiteRow *row,

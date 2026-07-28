@@ -126,9 +126,11 @@ Validation:
 
 Status: initial autocommit facade implemented for local table INSERT. Row-id
 allocation and row persistence now go through one `LocalLiteTxn::insertRow()`
-operation protected by the local storage manager mutex. Because catalog
-metadata and table rows still live in separate RocksDB databases, this phase
-does not yet claim cross-process or crash-atomic multi-DB commit semantics.
+operation protected by the local storage manager mutex. The old public
+`allocateRowId()` and direct `putRow()` store APIs have been removed, so local
+executor writes cannot bypass the transaction facade. Because catalog metadata
+and table rows still live in separate RocksDB databases, this phase does not yet
+claim cross-process or crash-atomic multi-DB commit semantics.
 
 Make every autocommit statement atomic at the local storage layer.
 
@@ -331,12 +333,13 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The next implementation step should move from key-access correctness to storage
-ownership/concurrency hardening:
+The storage API audit removed the legacy direct row-id allocation and row-put
+entry points from the public local store surface. The next implementation step
+should extend storage ownership/concurrency hardening with runtime coverage:
 
-1. Audit remaining local-lite RocksDB open paths and confirm all executor scan
-   and insert TCBs use process-local shared handles.
-2. Add regression coverage for concurrent or overlapping scans/writes that would
+1. Add regression coverage for concurrent or overlapping scans/writes that would
    previously hit RocksDB `LOCK` conflicts or row-id races.
+2. Audit any newly added local-lite RocksDB open paths and confirm executor scan
+   and insert TCBs continue to use process-local shared handles.
 3. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus
    full-scan behavior while changing storage ownership.
