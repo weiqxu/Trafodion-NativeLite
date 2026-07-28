@@ -131,6 +131,9 @@ operation protected by the local storage manager mutex. The old public
 executor writes cannot bypass the transaction facade. Because catalog metadata
 and table rows still live in separate RocksDB databases, this phase does not yet
 claim cross-process or crash-atomic multi-DB commit semantics.
+Same-process concurrent write coverage now exercises multiple writer threads
+plus an overlapping scanner through the local transaction facade and validates
+contiguous, duplicate-free row ids.
 
 Make every autocommit statement atomic at the local storage layer.
 
@@ -334,11 +337,15 @@ side-records, RocksDB metadata, or the transaction manager layer.
 ## Immediate Next Implementation Step
 
 The storage API audit removed the legacy direct row-id allocation and row-put
-entry points from the public local store surface. The next implementation step
-should extend storage ownership/concurrency hardening with runtime coverage:
+entry points from the public local store surface. Same-process writer/scan
+runtime coverage now guards the shared handle and row-id allocation path. The
+next implementation step should continue storage/concurrency hardening at the
+documented process boundary:
 
-1. Add regression coverage for concurrent or overlapping scans/writes that would
-   previously hit RocksDB `LOCK` conflicts or row-id races.
+1. Document and enforce the cross-process boundary for a shared
+   `TRAF_LOCAL_STORE_DIR`, since RocksDB still provides process-level DB locks
+   and local-lite does not yet include a storage service or cross-process lock
+   manager.
 2. Audit any newly added local-lite RocksDB open paths and confirm executor scan
    and insert TCBs continue to use process-local shared handles.
 3. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus

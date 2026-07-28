@@ -564,17 +564,19 @@ Completed:
   compiler/executor-backed RocksDB table path.
 - Local store public API cleanup that prevents local executor writes from
   bypassing `LocalLiteTxn::insertRow()`.
+- Same-process local store concurrency probe covering multiple writer threads,
+  overlapping scans, shared RocksDB handles, and duplicate-free row-id
+  allocation through the transaction facade.
 
 Remaining, in suggested implementation order:
 
-1. Add runtime coverage for concurrent or overlapping local-lite scans/writes
-   that exercises shared RocksDB handles and row-id allocation under the
-   transaction facade.
+1. Document and enforce the current cross-process local store boundary for a
+   shared `TRAF_LOCAL_STORE_DIR`.
 2. Broaden executor expression coverage for scans and inserts beyond the
    current smoke predicates and VALUES expressions.
 
-The next task to start is **Concurrent/overlapping local-lite scan/write
-runtime coverage**.
+The next task to start is **Cross-process local store boundary enforcement and
+documentation**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

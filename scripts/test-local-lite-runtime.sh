@@ -13,6 +13,7 @@ generator_makefile="$repo_root/core/sql/nskgmake/generator/Makefile"
 sqlcmd_source="$repo_root/core/sql/sqlci/SqlCmd.cpp"
 local_sql_handler="$repo_root/core/sql/sqlci/LocalLiteSqlTable.cpp"
 local_sqlci_smoke="$repo_root/scripts/test-local-lite-rocksdb-sqlci.sh"
+local_store_concurrency="$repo_root/scripts/test-local-lite-store-concurrency.sh"
 storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
 localstore_dir="$repo_root/core/sql/localstore"
 localstore_header="$localstore_dir/LocalLiteRocksDBStore.h"
@@ -115,6 +116,8 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
   fail "DML processing must route local-lite table statements before CLI prepare"
 [[ -f "$local_sql_handler" ]] || fail "missing local-lite SQL table handler: $local_sql_handler"
 [[ -f "$local_sqlci_smoke" ]] || fail "missing local-lite RocksDB SQLCI smoke test: $local_sqlci_smoke"
+[[ -x "$local_store_concurrency" ]] ||
+  fail "missing executable local-lite store concurrency test: $local_store_concurrency"
 [[ -f "$localstore_header" ]] || fail "missing local store header: $localstore_header"
 [[ -f "$localstore_source" ]] || fail "missing local store source: $localstore_source"
 grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_header" ||
