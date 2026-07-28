@@ -48,6 +48,9 @@ The important storage limits are:
 This means the current implementation is appropriate for serial smoke tests,
 same-process scan reuse, and single-process explicit SQL transaction smoke, but
 not yet for cross-process concurrent writers or crash-atomic multi-table commit.
+Cross-process attempts to open the same `TRAF_LOCAL_STORE_DIR` are rejected by
+RocksDB's DB lock and are now surfaced as an explicit local-lite process-boundary
+diagnostic.
 
 ## Trafodion Transaction Model To Preserve
 
@@ -338,14 +341,13 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 The storage API audit removed the legacy direct row-id allocation and row-put
 entry points from the public local store surface. Same-process writer/scan
-runtime coverage now guards the shared handle and row-id allocation path. The
-next implementation step should continue storage/concurrency hardening at the
-documented process boundary:
+runtime coverage now guards the shared handle and row-id allocation path.
+Cross-process shared-store attempts now receive a local-lite diagnostic that
+names the `TRAF_LOCAL_STORE_DIR` boundary. The next implementation step should
+return to executor expression coverage:
 
-1. Document and enforce the cross-process boundary for a shared
-   `TRAF_LOCAL_STORE_DIR`, since RocksDB still provides process-level DB locks
-   and local-lite does not yet include a storage service or cross-process lock
-   manager.
+1. Broaden executor expression coverage for local table scan predicates and
+   insert value expressions beyond the current smoke cases.
 2. Audit any newly added local-lite RocksDB open paths and confirm executor scan
    and insert TCBs continue to use process-local shared handles.
 3. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus

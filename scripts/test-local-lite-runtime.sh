@@ -14,6 +14,7 @@ sqlcmd_source="$repo_root/core/sql/sqlci/SqlCmd.cpp"
 local_sql_handler="$repo_root/core/sql/sqlci/LocalLiteSqlTable.cpp"
 local_sqlci_smoke="$repo_root/scripts/test-local-lite-rocksdb-sqlci.sh"
 local_store_concurrency="$repo_root/scripts/test-local-lite-store-concurrency.sh"
+local_store_process_boundary="$repo_root/scripts/test-local-lite-store-process-boundary.sh"
 storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
 localstore_dir="$repo_root/core/sql/localstore"
 localstore_header="$localstore_dir/LocalLiteRocksDBStore.h"
@@ -118,6 +119,8 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
 [[ -f "$local_sqlci_smoke" ]] || fail "missing local-lite RocksDB SQLCI smoke test: $local_sqlci_smoke"
 [[ -x "$local_store_concurrency" ]] ||
   fail "missing executable local-lite store concurrency test: $local_store_concurrency"
+[[ -x "$local_store_process_boundary" ]] ||
+  fail "missing executable local-lite store process-boundary test: $local_store_process_boundary"
 [[ -f "$localstore_header" ]] || fail "missing local store header: $localstore_header"
 [[ -f "$localstore_source" ]] || fail "missing local store source: $localstore_source"
 grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_header" ||
@@ -125,6 +128,8 @@ grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_header" ||
 grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_source" ||
   fail "local-lite row codec must build primary keys from compiler literals"
 grep -q 'TRAF_LOCAL_STORE_DIR' "$localstore_source" || fail "local store must support TRAF_LOCAL_STORE_DIR override"
+grep -q 'already open by another' "$localstore_source" ||
+  fail "local store must explain cross-process RocksDB lock failures"
 grep -q 'localstore/rocksdb' "$localstore_source" || fail "local store must default under TRAF_VAR/localstore/rocksdb"
 if grep -q 'processCreate' "$local_sql_handler"; then
   fail "SQLCI handler must not parse CREATE TABLE after compiler DDL migration"

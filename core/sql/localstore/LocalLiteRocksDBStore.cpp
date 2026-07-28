@@ -10,6 +10,7 @@
 #include "LocalLiteRowCodec.h"
 
 #include <errno.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,11 +30,46 @@ static void setError(std::string *error, const std::string &message)
     *error = message;
 }
 
+static bool containsNoCase(const std::string &s, const char *needle)
+{
+  size_t needleLen = strlen(needle);
+  if (needleLen == 0 || s.size() < needleLen)
+    return false;
+
+  for (size_t i = 0; i <= s.size() - needleLen; i++)
+    {
+      size_t j = 0;
+      for (; j < needleLen; j++)
+        {
+          unsigned char a = static_cast<unsigned char>(s[i + j]);
+          unsigned char b = static_cast<unsigned char>(needle[j]);
+          if (tolower(a) != tolower(b))
+            break;
+        }
+      if (j == needleLen)
+        return true;
+    }
+  return false;
+}
+
 static bool checkRocksError(char *err, const std::string &prefix, std::string *error)
 {
   if (!err)
     return true;
-  setError(error, prefix + ": " + err);
+  std::string rocksError(err);
+  if (containsNoCase(rocksError, "/LOCK") ||
+      containsNoCase(rocksError, " lock ") ||
+      containsNoCase(rocksError, "lock hold"))
+    {
+      setError(error,
+               prefix + ": local-lite store is already open by another "
+               "process; use one sqlci process per TRAF_LOCAL_STORE_DIR or "
+               "choose a different TRAF_LOCAL_STORE_DIR: " + rocksError);
+    }
+  else
+    {
+      setError(error, prefix + ": " + rocksError);
+    }
   rocksdb_free(err);
   return false;
 }

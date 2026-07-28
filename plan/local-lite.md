@@ -567,16 +567,17 @@ Completed:
 - Same-process local store concurrency probe covering multiple writer threads,
   overlapping scans, shared RocksDB handles, and duplicate-free row-id
   allocation through the transaction facade.
+- Cross-process shared-store boundary enforcement for `TRAF_LOCAL_STORE_DIR`:
+  a second process that tries to open an already-held local store receives an
+  explicit local-lite diagnostic instead of a raw RocksDB `LOCK` message.
 
 Remaining, in suggested implementation order:
 
-1. Document and enforce the current cross-process local store boundary for a
-   shared `TRAF_LOCAL_STORE_DIR`.
-2. Broaden executor expression coverage for scans and inserts beyond the
+1. Broaden executor expression coverage for scans and inserts beyond the
    current smoke predicates and VALUES expressions.
 
-The next task to start is **Cross-process local store boundary enforcement and
-documentation**.
+The next task to start is **Broaden executor expression coverage for local
+table INSERT/SCAN paths**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
