@@ -343,11 +343,14 @@ The storage API audit removed the legacy direct row-id allocation and row-put
 entry points from the public local store surface. Same-process writer/scan
 runtime coverage now guards the shared handle and row-id allocation path.
 Cross-process shared-store attempts now receive a local-lite diagnostic that
-names the `TRAF_LOCAL_STORE_DIR` boundary. The next implementation step should
-return to executor expression coverage:
+names the `TRAF_LOCAL_STORE_DIR` boundary. SQLCI smoke now also covers broader
+executor INSERT/SCAN expressions, including `CASE`, string concatenation,
+`BETWEEN`, `IN`, `LIKE`, and `OR` predicates. The next implementation step
+should widen executor query-shape coverage:
 
-1. Broaden executor expression coverage for local table scan predicates and
-   insert value expressions beyond the current smoke cases.
+1. Add broader query-shape runtime coverage on local tables, especially
+   aggregation, ordering, and additional join forms that still exercise executor
+   scan TCBs.
 2. Audit any newly added local-lite RocksDB open paths and confirm executor scan
    and insert TCBs continue to use process-local shared handles.
 3. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus

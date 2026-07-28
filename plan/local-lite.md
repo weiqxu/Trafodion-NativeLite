@@ -570,14 +570,17 @@ Completed:
 - Cross-process shared-store boundary enforcement for `TRAF_LOCAL_STORE_DIR`:
   a second process that tries to open an already-held local store receives an
   explicit local-lite diagnostic instead of a raw RocksDB `LOCK` message.
+- Broader executor expression smoke coverage for local table INSERT/SCAN paths,
+  including `CASE`, string concatenation, `BETWEEN`, `IN`, `LIKE`, and `OR`
+  predicates.
 
 Remaining, in suggested implementation order:
 
-1. Broaden executor expression coverage for scans and inserts beyond the
-   current smoke predicates and VALUES expressions.
+1. Add broader query-shape runtime coverage on local tables, especially
+   aggregation, ordering, and additional join forms that still exercise
+   executor scan TCBs.
 
-The next task to start is **Broaden executor expression coverage for local
-table INSERT/SCAN paths**.
+The next task to start is **Broader local table query-shape runtime coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

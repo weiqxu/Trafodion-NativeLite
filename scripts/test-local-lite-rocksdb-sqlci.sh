@@ -184,6 +184,22 @@ null_expr_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$null_expr_ou
 [[ "$null_expr_selected_count" -ge 5 ]] ||
   fail "NULL/expression scans did not each report one selected row"
 
+compound_expr_output=$(
+  printf "CREATE TABLE expr_t(a INT, b VARCHAR(20), c INT);\nINSERT INTO expr_t VALUES (1 + 4, 'ab' || 'cd', CASE WHEN 1 = 1 THEN 10 ELSE 20 END), (2, CAST('prefix' AS VARCHAR(20)), 30), (7, 'needle', 40);\nSELECT b FROM expr_t WHERE a BETWEEN 4 AND 6 AND c IN (10, 11);\nSELECT b FROM expr_t WHERE b LIKE 'pre%%';\nSELECT b FROM expr_t WHERE a = 7 OR c = 30;\nDROP TABLE expr_t;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'abcd' <<<"$compound_expr_output" ||
+  fail "compound INSERT expressions did not persist concatenated CASE row"
+grep -q 'prefix' <<<"$compound_expr_output" ||
+  fail "LIKE predicate scan did not return CAST expression row"
+grep -q 'needle' <<<"$compound_expr_output" ||
+  fail "OR predicate scan did not return matching row"
+compound_expr_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$compound_expr_output")
+[[ "$compound_expr_selected_count" -ge 2 ]] ||
+  fail "compound executor expression scans did not report one-row results"
+grep -q -- '--- 2 row(s) selected.' <<<"$compound_expr_output" ||
+  fail "OR predicate scan did not report two selected rows"
+
 transaction_output=$(
   printf "CREATE TABLE tx(a INT, b VARCHAR(20));\nBEGIN WORK;\nINSERT INTO tx VALUES (1, 'rollback');\nSELECT b FROM tx WHERE a = 1;\nROLLBACK WORK;\nSELECT b FROM tx WHERE a = 1;\nBEGIN WORK;\nINSERT INTO tx VALUES (2, 'commit');\nCOMMIT WORK;\nSELECT b FROM tx WHERE a = 2;\nDROP TABLE tx;\nexit;\n" |
     run_sqlci
