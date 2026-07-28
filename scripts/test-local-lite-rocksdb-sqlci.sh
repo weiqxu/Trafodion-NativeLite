@@ -277,11 +277,16 @@ unique_trace_insert_count=$(grep -c -- '--- 2 row(s) inserted.' <<<"$trace_uniqu
   fail "unique trace setup table did not insert rows"
 
 trace_unique_output=$(
-  printf "SELECT b FROM uq_trace WHERE a = 7;\nSELECT b FROM uq_num_trace WHERE a = 12.34;\nSELECT b FROM uq_num_trace WHERE a = -0.50;\nSELECT b FROM uq_dec_trace WHERE a = 12.34;\nSELECT b FROM uq_dec_trace WHERE a = -0.50;\nDROP TABLE uq_trace;\nDROP TABLE uq_num_trace;\nDROP TABLE uq_dec_trace;\nexit;\n" |
+  printf "SELECT b FROM uq_trace WHERE a = 7;\nSELECT b FROM uq_trace WHERE a = 7 AND b = 'seven';\nSELECT b FROM uq_trace WHERE a = 7 AND b = 'miss';\nSELECT b FROM uq_num_trace WHERE a = 12.34;\nSELECT b FROM uq_num_trace WHERE a = -0.50;\nSELECT b FROM uq_dec_trace WHERE a = 12.34;\nSELECT b FROM uq_dec_trace WHERE a = -0.50;\nDROP TABLE uq_trace;\nDROP TABLE uq_num_trace;\nDROP TABLE uq_dec_trace;\nexit;\n" |
     run_sqlci_trace_scan 2>&1
 )
 grep -q 'seven' <<<"$trace_unique_output" ||
   fail "unique-key trace query did not return row"
+unique_seven_count=$(grep -c 'seven' <<<"$trace_unique_output")
+[[ "$unique_seven_count" -ge 2 ]] ||
+  fail "unique-key get-row query with matching residual predicate did not return row"
+grep -q -- '--- 0 row(s) selected.' <<<"$trace_unique_output" ||
+  fail "unique-key get-row query did not preserve residual predicate filtering"
 grep -q 'unum' <<<"$trace_unique_output" ||
   fail "numeric unique-key trace query did not return row"
 grep -q 'uneg' <<<"$trace_unique_output" ||
@@ -291,7 +296,7 @@ grep -q 'udpos' <<<"$trace_unique_output" ||
 grep -q 'udneg' <<<"$trace_unique_output" ||
   fail "negative decimal unique-key trace query did not return row"
 unique_get_row_count=$(grep -c 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_unique_output")
-[[ "$unique_get_row_count" -ge 5 ]] ||
+[[ "$unique_get_row_count" -ge 7 ]] ||
   fail "unique-key equality queries did not use local-lite get-row scan"
 
 trace_full_output=$(
@@ -302,6 +307,23 @@ grep -Eq '^ *7 *$' <<<"$trace_full_output" ||
   fail "non-key trace query did not return row"
 grep -q 'LOCAL_LITE_SCAN_FULL' <<<"$trace_full_output" ||
   fail "non-key predicate query did not fall back to full executor scan"
+
+explain_output=$(
+  printf "CONTROL QUERY DEFAULT GENERATE_EXPLAIN 'ON';\nCREATE TABLE pk_plan(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_plan VALUES (7, 'seven');\nPREPARE xx FROM SELECT b FROM pk_plan WHERE a = 7;\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'XX'));\nCREATE TABLE uq_plan(a INT, b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_plan VALUES (7, 'seven');\nPREPARE xx FROM SELECT b FROM uq_plan WHERE a = 7 AND b = 'seven';\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'XX'));\nDROP TABLE pk_plan;\nDROP TABLE uq_plan;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'TRAFODION_SCAN' <<<"$explain_output" ||
+  fail "local-lite explain did not include Trafodion scan operator"
+grep -q 'scan_type: subset scan of table TRAFODION.SEABASE.PK_PLAN' <<<"$explain_output" ||
+  fail "primary-key equality explain did not show subset scan"
+grep -q 'scan_type: subset scan of table TRAFODION.SEABASE.UQ_PLAN' <<<"$explain_output" ||
+  fail "unique-key equality explain did not show subset scan"
+grep -q 'key_columns: A' <<<"$explain_output" ||
+  fail "local-lite key equality explain did not expose key column"
+grep -q 'executor_predicates: (B =' <<<"$explain_output" ||
+  fail "unique-key equality explain did not preserve residual executor predicate"
+grep -q 'probes: 1' <<<"$explain_output" ||
+  fail "local-lite key equality explain did not show single-probe access"
 
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |

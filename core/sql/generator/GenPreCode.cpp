@@ -463,7 +463,8 @@ static NABoolean localLiteBuildKeyFieldsFromPredicates(
     const LocalLiteTableDef &table,
     const std::vector<size_t> &keyColumns,
     const ValueIdSet &predicates,
-    std::vector<std::string> *keyFields)
+    std::vector<std::string> *keyFields,
+    ValueIdSet *coveredPredicates = NULL)
 {
   if (keyColumns.empty() || !keyFields)
     return FALSE;
@@ -471,6 +472,7 @@ static NABoolean localLiteBuildKeyFieldsFromPredicates(
   keyFields->clear();
   keyFields->resize(keyColumns.size());
   std::vector<bool> found(keyColumns.size(), false);
+  ValueIdSet matchedPredicates;
 
   for (ValueId predId = predicates.init();
        predicates.next(predId);
@@ -493,6 +495,7 @@ static NABoolean localLiteBuildKeyFieldsFromPredicates(
             {
               (*keyFields)[i] = field;
               found[i] = true;
+              matchedPredicates += predId;
               break;
             }
         }
@@ -502,6 +505,8 @@ static NABoolean localLiteBuildKeyFieldsFromPredicates(
     if (!found[i])
       return FALSE;
 
+  if (coveredPredicates)
+    *coveredPredicates += matchedPredicates;
   return TRUE;
 }
 
@@ -597,7 +602,8 @@ static NABoolean localLiteRewritePrimaryGetRowsFromPredicates(
 static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
     TableDesc *tdesc,
     const ValueIdSet &predicates,
-    ListOfUniqueRows &listOfUniqueRows)
+    ListOfUniqueRows &listOfUniqueRows,
+    ValueIdSet *coveredPredicates = NULL)
 {
   LocalLiteTableDef table;
   if (!localLiteLoadTable(tdesc, &table) || table.uniqueKeyColumns.empty())
@@ -607,9 +613,10 @@ static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
        keyIndex++)
     {
       std::vector<std::string> keyFields;
+      ValueIdSet matchedPredicates;
       if (!localLiteBuildKeyFieldsFromPredicates(
               table, table.uniqueKeyColumns[keyIndex], predicates,
-              &keyFields))
+              &keyFields, &matchedPredicates))
         continue;
 
       std::string rowKey;
@@ -629,6 +636,8 @@ static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
 
       listOfUniqueRows.clear();
       listOfUniqueRows.insert(localGetSpec);
+      if (coveredPredicates)
+        *coveredPredicates += matchedPredicates;
       return TRUE;
     }
 
@@ -758,18 +767,20 @@ static NABoolean processConstHBaseKeys(Generator * generator,
               localLitePreds += executorPreds;
               localLitePreds += relExpr->getSelectionPred();
               localLitePreds += skey->getFullKeyPredicates();
+              ValueIdSet coveredPredicates;
               if (localLiteRewritePrimaryGetRowsFromPredicates(
                       tdesc, localLitePreds, listOfUpdUniqueRows))
                 listOfUpdSubsetRows.clear();
               else if (localLiteRewriteUniqueGetRowsFromPredicates(
-                           tdesc, localLitePreds, listOfUpdUniqueRows))
+                           tdesc, localLitePreds, listOfUpdUniqueRows,
+                           &coveredPredicates))
                 {
                   listOfUpdSubsetRows.clear();
                   if (relExpr->getOperatorType() == REL_HBASE_ACCESS)
                     {
                       HbaseAccess *hba = static_cast<HbaseAccess *>(relExpr);
-                      hba->executorPred().clear();
-                      hba->selectionPred().clear();
+                      hba->executorPred().subtractSet(coveredPredicates);
+                      hba->selectionPred().subtractSet(coveredPredicates);
                     }
                 }
             }
@@ -12810,15 +12821,17 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
   localLitePreds += selectionPred();
   if (getSearchKey())
     localLitePreds += getSearchKey()->getFullKeyPredicates();
+  ValueIdSet coveredPredicates;
   if (localLiteRewritePrimaryGetRowsFromPredicates(
           getTableDesc(), localLitePreds, listOfUniqueRows_))
     listOfRangeRows_.clear();
   else if (localLiteRewriteUniqueGetRowsFromPredicates(
-             getTableDesc(), localLitePreds, listOfUniqueRows_))
+             getTableDesc(), localLitePreds, listOfUniqueRows_,
+             &coveredPredicates))
     {
       listOfRangeRows_.clear();
-      executorPred().clear();
-      selectionPred().clear();
+      executorPred().subtractSet(coveredPredicates);
+      selectionPred().subtractSet(coveredPredicates);
     }
 #endif
 

@@ -231,10 +231,14 @@ unique access paths that keep the physical scan name on the base local table;
 the executor resolves `U` records back to the persisted base `LLBR1` row.
 Local-lite DML also skips generic secondary-index maintenance because the
 storage layer maintains `U` uniqueness records in the same RocksDB table.
-Unsupported literal types and non-key predicates still fall back to full
-executor scan. SQLCI smoke now enables a test-only executor trace to assert that
-integer primary-key, NUMERIC/DECIMAL/BigNum primary-key, and UNIQUE-key equality
-use the get-row path while non-key predicates use full scan fallback.
+UNIQUE get-row rewrite removes only predicates covered by the logical unique key
+and leaves residual predicates for executor evaluation. Unsupported literal
+types and non-key predicates still fall back to full executor scan. SQLCI smoke
+now enables a test-only executor trace to assert that integer primary-key,
+NUMERIC/DECIMAL/BigNum primary-key, and UNIQUE-key equality use the get-row path
+while non-key predicates use full scan fallback. The same smoke also checks
+EXPLAIN output for primary-key and UNIQUE-key equality subset scans, key column
+metadata, single-probe access, and residual executor predicates.
 
 Move closer to the original Trafodion HBase/TiKV-style key model.
 
@@ -259,11 +263,15 @@ Validation:
   other.
 - Primary-key scans use deterministic encoded keys.
 - Unique-key equality scans use deterministic encoded secondary keys.
+- Unique-key equality scans preserve residual executor predicates.
+- EXPLAIN output shows primary-key and UNIQUE-key equality as subset scans with
+  key columns and single-probe access.
 - Keyless table inserts continue to work through the internal row id path.
 - `CREATE TABLE pk_t(a INT PRIMARY KEY, ...)`, `CREATE TABLE uq_t(...,
   UNIQUE(a))`, duplicate insert diagnostics, transaction read-own-write,
-  rollback, primary-key/unique-key get-row trace assertions, and keyless table
-  regression are covered by the RocksDB SQLCI smoke.
+  rollback, primary-key/unique-key get-row trace assertions, explain subset-scan
+  assertions, and keyless table regression are covered by the RocksDB SQLCI
+  smoke.
 
 ### Phase 6: Optional TMF Integration Boundary
 
@@ -323,12 +331,12 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The next implementation step should harden optimizer-facing coverage now that
-local-lite key metadata is visible:
+The next implementation step should move from key-access correctness to storage
+ownership/concurrency hardening:
 
-1. Add focused plan/explain regression coverage for primary-key and UNIQUE-key
-   equality so changes in access-path selection are visible.
-2. Refine UNIQUE get-row predicate handling to remove only predicates covered by
-   the logical unique key and keep residual predicates evaluated by the executor.
-3. Keep local-lite scan/get fallback behavior for unsupported literal shapes and
-   non-key predicates.
+1. Audit remaining local-lite RocksDB open paths and confirm all executor scan
+   and insert TCBs use process-local shared handles.
+2. Add regression coverage for concurrent or overlapping scans/writes that would
+   previously hit RocksDB `LOCK` conflicts or row-id races.
+3. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus
+   full-scan behavior while changing storage ownership.
