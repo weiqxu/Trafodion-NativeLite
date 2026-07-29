@@ -99,6 +99,38 @@ if grep -q 'LOCK' <<<"$self_join_output"; then
   fail "self-join over local-lite table hit RocksDB LOCK"
 fi
 
+query_shape_output=$(
+  printf "CREATE TABLE shape_t(a INT, b VARCHAR(20), c INT);\nINSERT INTO shape_t VALUES (1, 'one', 10), (2, 'two', 20), (3, 'two', 30), (4, 'four', 20);\nSELECT a, b FROM shape_t ORDER BY c DESC, a ASC;\nSELECT l.b, r.a FROM shape_t l JOIN shape_t r ON l.c = r.c WHERE l.a = 2 ORDER BY r.a;\nSELECT l.a, r.b FROM shape_t l LEFT JOIN shape_t r ON l.a = r.a AND r.b = 'missing' WHERE l.a = 1;\nDROP TABLE shape_t;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -Eq '^ *3[[:space:]]+two[[:space:]]*$' <<<"$query_shape_output" ||
+  fail "ORDER BY query did not return highest c row first"
+grep -Eq '^two[[:space:]]+4[[:space:]]*$' <<<"$query_shape_output" ||
+  fail "inner join query did not return same-c matching row"
+grep -q '          1  ?' <<<"$query_shape_output" ||
+  fail "left join query did not preserve unmatched left row"
+query_shape_scan_count=$(grep -c 'LOCAL_LITE_SCAN_FULL' <<<"$query_shape_output")
+[[ "$query_shape_scan_count" -ge 5 ]] ||
+  fail "query-shape coverage did not exercise executor scan TCBs"
+if grep -q 'LOCK' <<<"$query_shape_output"; then
+  fail "query-shape local-lite coverage hit RocksDB LOCK"
+fi
+
+aggregate_expr_output=$(
+  printf "CREATE TABLE agg_expr_t(g INT, v INT);\nINSERT INTO agg_expr_t VALUES (1, 10), (1, 20), (2, 5), (NULL, 7), (NULL, 8);\nSELECT COUNT(*), SUM(v), MIN(v), MAX(v), AVG(v) FROM agg_expr_t;\nSELECT COUNT(*), SUM(v) + COUNT(*) FROM agg_expr_t WHERE g IS NULL;\nDROP TABLE agg_expr_t;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -Eq '^ *5[[:space:]]+50[[:space:]]+5[[:space:]]+20[[:space:]]+10[[:space:]]*$' <<<"$aggregate_expr_output" ||
+  fail "aggregate expression query did not return expected all-row aggregates"
+grep -Eq '^ *2[[:space:]]+17[[:space:]]*$' <<<"$aggregate_expr_output" ||
+  fail "aggregate expression query over NULL-filtered rows did not return expected result"
+aggregate_expr_scan_count=$(grep -c 'LOCAL_LITE_SCAN_FULL' <<<"$aggregate_expr_output")
+[[ "$aggregate_expr_scan_count" -ge 2 ]] ||
+  fail "aggregate expression coverage did not exercise executor scan TCBs"
+if grep -q 'LOCK' <<<"$aggregate_expr_output"; then
+  fail "aggregate expression local-lite coverage hit RocksDB LOCK"
+fi
+
 error_output=$(
   printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
     run_sqlci

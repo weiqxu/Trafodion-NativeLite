@@ -345,13 +345,19 @@ runtime coverage now guards the shared handle and row-id allocation path.
 Cross-process shared-store attempts now receive a local-lite diagnostic that
 names the `TRAF_LOCAL_STORE_DIR` boundary. SQLCI smoke now also covers broader
 executor INSERT/SCAN expressions, including `CASE`, string concatenation,
-`BETWEEN`, `IN`, `LIKE`, and `OR` predicates. The next implementation step
-should widen executor query-shape coverage:
+`BETWEEN`, `IN`, `LIKE`, and `OR` predicates. Query-shape smoke now covers
+`ORDER BY`, self-join, inner join, and left join over local table executor scan
+TCBs. Ungrouped aggregate expression smoke now covers `COUNT`, `SUM`, `MIN`,
+`MAX`, `AVG`, aggregate arithmetic, and aggregate input filtering over NULL
+values. Grouped aggregate probing found a current correctness gap: duplicate
+group keys are split into separate groups, and `HAVING SUM(v)` can be pushed
+into the scan as a row predicate such as `v >= constant`. The next
+implementation step should fix grouped aggregate correctness:
 
-1. Add broader query-shape runtime coverage on local tables, especially
-   aggregation, ordering, and additional join forms that still exercise executor
-   scan TCBs.
-2. Audit any newly added local-lite RocksDB open paths and confirm executor scan
+1. Fix duplicate group-key and NULL group-key handling for local table scans.
+2. Prevent aggregate `HAVING` predicates from being pushed into local-lite scan
+   row predicates before aggregation.
+3. Audit any newly added local-lite RocksDB open paths and confirm executor scan
    and insert TCBs continue to use process-local shared handles.
-3. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus
+4. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus
    full-scan behavior while changing storage ownership.

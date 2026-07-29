@@ -316,15 +316,17 @@ Supported local-lite `sqlci` behavior:
   through the compiler DDL path; single-row and multi-row
   `INSERT INTO ... VALUES (...)` bind and execute through the local RocksDB
   executor insert TCB; local table `SELECT` statements bind through the local
-  catalog NATable and run through the local RocksDB executor scan TCB.
+  catalog NATable and run through the local RocksDB executor scan TCB. Runtime
+  coverage includes projection, predicates, ordering, self-join, inner join,
+  left join, and ungrouped aggregate expression query shapes.
 - Basic scalar expressions, arithmetic, and string operations.
 - `exit;` and `quit;`.
 
 Unsupported behavior:
 
-- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`, joins,
-  grouping, ordering, broad type coverage, constraints, privileges,
-  and transactions.
+- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`, grouped
+  aggregate correctness, broad type coverage, constraints beyond local-lite
+  primary/unique keys, privileges, and distributed transactions.
 - HBase-backed metadata/storage operations.
 - HDFS, HBase, Hive, ORC, bulk load/unload, and LOB storage access.
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
@@ -573,14 +575,23 @@ Completed:
 - Broader executor expression smoke coverage for local table INSERT/SCAN paths,
   including `CASE`, string concatenation, `BETWEEN`, `IN`, `LIKE`, and `OR`
   predicates.
+- Broader local table query-shape smoke coverage for executor scan TCBs,
+  including `ORDER BY`, self-join, inner join, and left join.
+- Ungrouped aggregate expression smoke coverage for local table scans,
+  including `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, aggregate arithmetic, and
+  aggregate input filtering over NULL values.
+- Grouped aggregate probing found a current local-lite correctness gap:
+  duplicate group keys are split into separate groups, and `HAVING SUM(v)` can
+  be pushed into the scan as a row predicate such as `v >= constant`.
 
 Remaining, in suggested implementation order:
 
-1. Add broader query-shape runtime coverage on local tables, especially
-   aggregation, ordering, and additional join forms that still exercise
-   executor scan TCBs.
+1. Fix grouped aggregate correctness for local table scans, including duplicate
+   group keys, NULL group keys, and `HAVING` predicates that must stay above the
+   aggregate.
 
-The next task to start is **Broader local table query-shape runtime coverage**.
+The next task to start is **Grouped aggregate correctness for local table
+scans**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
