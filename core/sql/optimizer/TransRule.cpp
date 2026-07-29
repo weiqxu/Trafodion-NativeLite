@@ -3921,14 +3921,6 @@ NABoolean GroupByEliminationRule::topMatch(RelExpr * expr,
   if (grby->isRollup())
     return FALSE;
 
-#ifdef TRAF_LOCAL_LITE
-  // Local-lite can synthesize storage row identity independently from user
-  // columns. Until that identity is represented precisely in optimizer
-  // metadata, do not rewrite COUNT/SUM into per-row values based on a uniqueness
-  // proof that may have come from HBase clustering-key assumptions.
-  return FALSE;
-#endif
-
   return (grby->child(0).getGroupAttr()->isUnique(grby->groupExpr()));
 }
 

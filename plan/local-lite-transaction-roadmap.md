@@ -165,7 +165,10 @@ Validation:
 Status: initial scan facade implemented. Local table scans now call
 `LocalLiteTxn::scanRows()`, and RocksDB iterators are bound to a snapshot for
 the duration of each scan materialization. A statement-wide snapshot shared by
-multiple scan TCBs still requires a future local transaction context.
+multiple scan TCBs still requires a future local transaction context. Keyless
+scan metadata now exposes the internal RocksDB row id as a hidden `SYSKEY`, and
+the scan TCB materializes that system value separately from the `LLBR1` user
+column payload.
 
 Give scans a stable statement snapshot.
 
@@ -350,16 +353,16 @@ executor INSERT/SCAN expressions, including `CASE`, string concatenation,
 TCBs. Ungrouped aggregate expression smoke now covers `COUNT`, `SUM`, `MIN`,
 `MAX`, `AVG`, aggregate arithmetic, and aggregate input filtering over NULL
 values. Grouped aggregate smoke now covers duplicate group keys, NULL group
-keys, aggregate input filtering, and `HAVING` above the aggregate. Local-lite
-keeps executor groupby plans by disabling groupby elimination and the matching
-hash/sort groupby implementation rejection under `TRAF_LOCAL_LITE`, avoiding
-incorrect uniqueness assumptions from HBase-style key metadata. The next
-implementation step should clean up the underlying metadata model:
+keys, nullable UNIQUE group keys, aggregate input filtering, and `HAVING` above
+the aggregate. Local-lite
+uses hidden `SYSKEY` NATable/NAFileSet metadata for keyless RocksDB row identity,
+so normal groupby elimination and implementation rules no longer require
+local-lite guards. SQLCI EXPLAIN smoke verifies the SYSKEY metadata and retained
+groupby operator. The next implementation step should complete statement read
+consistency:
 
-1. Audit local-lite NATable/NAFileSet key metadata for keyless tables.
-2. Decide whether to represent the RocksDB synthetic row identity as a hidden
-   clustering key instead of relying on local-lite rule guards.
-3. Audit any newly added local-lite RocksDB open paths and confirm executor scan
-   and insert TCBs continue to use process-local shared handles.
-4. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus
-   full-scan behavior while changing storage ownership.
+1. Add statement snapshot ownership to the local transaction context.
+2. Make all scan TCBs in one statement acquire the same snapshot token.
+3. Release the shared snapshot on statement completion, cancellation, or error.
+4. Keep SQLCI trace and EXPLAIN smoke as guards for get-row, full-scan, and
+   grouped aggregate behavior.

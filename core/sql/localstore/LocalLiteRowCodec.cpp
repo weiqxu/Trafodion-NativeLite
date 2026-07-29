@@ -907,7 +907,12 @@ bool LocalLiteNormalizeBinaryRow(const LocalLiteTableDef &table,
       setError(error, "local-lite insert missing executor row");
       return false;
     }
-  if (srcTd->numAttrs() != table.columns.size())
+  UInt32 sourceOffset = 0;
+  if (table.primaryKeyColumns.empty() &&
+      srcTd->numAttrs() == table.columns.size() + 1)
+    // Storage allocates SYSKEY, so LLBR1 contains catalog user columns only.
+    sourceOffset = 1;
+  else if (srcTd->numAttrs() != table.columns.size())
     {
       setError(error, "local-lite insert row does not match table column count");
       return false;
@@ -921,9 +926,10 @@ bool LocalLiteNormalizeBinaryRow(const LocalLiteTableDef &table,
   std::string row(rowLen, '\0');
   initializeCanonicalRow(columns, &row[0], row.size());
 
-  for (UInt32 i = 0; i < srcTd->numAttrs(); i++)
+  for (UInt32 i = 0; i < table.columns.size(); i++)
     {
-      if (!copyAttrToCanonical(srcRow, srcRowLen, srcTd->getAttr(i), srcTd,
+      if (!copyAttrToCanonical(srcRow, srcRowLen,
+                               srcTd->getAttr(i + sourceOffset), srcTd,
                                &row[0], columns[i], error))
         return false;
     }
@@ -1407,6 +1413,7 @@ static bool copyStoredToDest(const std::string &storedRow,
 
 bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
                                const std::string &encoded,
+                               uint64_t syntheticRowId,
                                const std::vector<size_t> &sourceIndexes,
                                ExpTupleDesc *destTd,
                                char *destRow,
@@ -1475,6 +1482,21 @@ bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
   for (UInt32 i = 0; i < destTd->numAttrs(); i++)
     {
       size_t sourceIndex = sourceIndexes[i];
+      Attributes *dest = destTd->getAttr(i);
+      if (table.primaryKeyColumns.empty() &&
+          sourceIndex == columns.size())
+        {
+          if (!dest || dest->getLength() < sizeof(Int64))
+            {
+              setError(error, "local-lite SYSKEY destination is invalid");
+              return false;
+            }
+          Int64 syskey = static_cast<Int64>(syntheticRowId);
+          str_cpy_all(destRow + dest->getOffset(),
+                      reinterpret_cast<const char *>(&syskey),
+                      sizeof(syskey));
+          continue;
+        }
       // Logical local-lite UNIQUE indexes are scanned from the base row.
       // Generator metadata can still describe the covering index tuple, whose
       // trailing base-column ordinals are one slot past the base row layout.
@@ -1490,7 +1512,6 @@ bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
           setError(error, msg);
           return false;
         }
-      Attributes *dest = destTd->getAttr(i);
       if (!copyStoredToDest(storedRow, columns[sourceIndex], dest, destRow,
                             &rowLen, &voaOffset, &lengthOffset, &dataOffset,
                             &firstVar, destTd, error))

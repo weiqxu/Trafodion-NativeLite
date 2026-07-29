@@ -9,6 +9,7 @@
 
 #ifdef TRAF_LOCAL_LITE
 
+#include <stdint.h>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,7 @@ bool LocalLiteNormalizeBinaryRow(const LocalLiteTableDef &table,
 
 bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
                                const std::string &encoded,
+                               uint64_t syntheticRowId,
                                const std::vector<size_t> &sourceIndexes,
                                ExpTupleDesc *destTd,
                                char *destRow,

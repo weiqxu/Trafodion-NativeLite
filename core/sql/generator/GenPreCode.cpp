@@ -342,6 +342,12 @@ static NABoolean localLiteColumnPosition(ValueId valueId,
       if (!column)
         return FALSE;
       *position = static_cast<size_t>(column->getPosition());
+      if (column->getNATable() &&
+          column->getNATable()->getClusteringIndex() &&
+          column->getNATable()->getClusteringIndex()->hasSyskey() &&
+          !column->isSyskeyColumn() &&
+          *position > 0)
+        (*position)--;
       return TRUE;
     }
 
@@ -351,6 +357,12 @@ static NABoolean localLiteColumnPosition(ValueId valueId,
       if (!column)
         return FALSE;
       *position = static_cast<size_t>(column->getPosition());
+      if (column->getNATable() &&
+          column->getNATable()->getClusteringIndex() &&
+          column->getNATable()->getClusteringIndex()->hasSyskey() &&
+          !column->isSyskeyColumn() &&
+          *position > 0)
+        (*position)--;
       return TRUE;
     }
 

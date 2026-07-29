@@ -442,6 +442,8 @@ optimizer synthesizes a minimal `TrafDesc` tree on the NATable heap:
 - User column descriptors from catalog column metadata.
 - A minimal primary index descriptor and key descriptor, reusing the existing
   HBase/Seabase scan TDB shape as the carrier for the local RocksDB scan TCB.
+  Keyless tables expose the internal RocksDB row id as a hidden `SYSKEY`
+  clustering column instead of treating the first user column as unique.
 - Logical UNIQUE access-path descriptors for local-lite `UNIQUE` metadata. These
   descriptors expose unique keys to the optimizer but keep the physical
   `indexname` on the base local table because local-lite stores `U` uniqueness
@@ -531,8 +533,8 @@ above.
 
 ### Current Task Status
 
-Last updated after preserving executor groupby plans for local-lite scans and
-covering grouped aggregate correctness over duplicate and NULL group keys.
+Last updated after representing keyless RocksDB row identity as hidden optimizer
+`SYSKEY` metadata and removing the local-lite groupby rule guards.
 
 Completed:
 
@@ -581,19 +583,20 @@ Completed:
   including `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, aggregate arithmetic, and
   aggregate input filtering over NULL values.
 - Grouped aggregate correctness for local table scans, including duplicate
-  group keys, NULL group keys, aggregate input filtering, and `HAVING`
-  predicates evaluated above the aggregate. Local-lite disables groupby
-  elimination and the matching hash/sort groupby implementation rejection
-  because current HBase-style key metadata can overstate user-column uniqueness
-  for RocksDB-backed rows.
+  group keys, NULL group keys, nullable UNIQUE group keys, aggregate input
+  filtering, and `HAVING` predicates evaluated above the aggregate.
+- Keyless NATable/NAFileSet metadata exposes the synthetic RocksDB row identity
+  as a hidden `SYSKEY` clustering key. Executor scans materialize that value
+  from `LocalLiteRow::rowId`, executor inserts ignore the generated SYSKEY
+  placeholder when building `LLBR1`, and normal groupby elimination rules can
+  rely on optimizer key metadata without local-lite rule guards.
 
 Remaining, in suggested implementation order:
 
-1. Audit local-lite optimizer metadata for keyless tables and decide whether to
-   model the synthetic RocksDB row identity as a hidden clustering key instead
-   of relying on rule-level guards.
+1. Share one statement snapshot across all local-lite scan TCBs in a statement
+   instead of acquiring an independent RocksDB snapshot per materialized scan.
 
-The next task to start is **Local-lite optimizer key metadata cleanup**.
+The next task to start is **Statement-wide local-lite scan snapshots**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

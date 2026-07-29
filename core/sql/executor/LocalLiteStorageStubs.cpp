@@ -568,14 +568,16 @@ private:
     workAtp_->getTupp(scanTdb().convertTuppIndex_).setDataPointer(convertRow_);
 
     unsigned int asciiLen = 0;
-    if (!LocalLiteProjectBinaryRow(table_, row.value, asciiSourceIndexes,
+    if (!LocalLiteProjectBinaryRow(table_, row.value, row.rowId,
+                                   asciiSourceIndexes,
                                    asciiTd, asciiRow_,
                                    scanTdb().asciiRowLen_,
                                    &asciiLen, error))
       return false;
 
     unsigned int convertLen = 0;
-    if (!LocalLiteProjectBinaryRow(table_, row.value, convertSourceIndexes,
+    if (!LocalLiteProjectBinaryRow(table_, row.value, row.rowId,
+                                   convertSourceIndexes,
                                    convertTd, convertRow_,
                                    scanTdb().convertRowLen_,
                                    &convertLen, error))

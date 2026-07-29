@@ -132,7 +132,7 @@ if grep -q 'LOCK' <<<"$aggregate_expr_output"; then
 fi
 
 grouped_aggregate_output=$(
-  printf "CREATE TABLE agg_group_t(g INT, v INT);\nINSERT INTO agg_group_t VALUES (1, 10), (1, 20), (2, 5), (NULL, 7), (NULL, 8);\nSELECT g, COUNT(*), SUM(v) FROM agg_group_t GROUP BY g ORDER BY g;\nSELECT g, COUNT(*), SUM(v) FROM agg_group_t GROUP BY g HAVING SUM(v) >= 15 ORDER BY g;\nSELECT COUNT(*), SUM(v), MIN(v), MAX(v), AVG(v) FROM agg_group_t WHERE g = 1;\nDROP TABLE agg_group_t;\nexit;\n" |
+  printf "CREATE TABLE agg_group_t(g INT, v INT);\nINSERT INTO agg_group_t VALUES (1, 10), (1, 20), (2, 5), (NULL, 7), (NULL, 8);\nSELECT g, COUNT(*), SUM(v) FROM agg_group_t GROUP BY g ORDER BY g;\nSELECT g, COUNT(*), SUM(v) FROM agg_group_t GROUP BY g HAVING SUM(v) >= 15 ORDER BY g;\nSELECT COUNT(*), SUM(v), MIN(v), MAX(v), AVG(v) FROM agg_group_t WHERE g = 1;\nCREATE TABLE agg_unique_t(g INT, v INT, UNIQUE(g));\nINSERT INTO agg_unique_t VALUES (1, 10), (2, 20), (NULL, 40), (NULL, 50);\nSELECT g, COUNT(*), SUM(v) FROM agg_unique_t GROUP BY g ORDER BY g;\nDROP TABLE agg_group_t;\nDROP TABLE agg_unique_t;\nexit;\n" |
     run_sqlci_trace_scan 2>&1
 )
 grep -Eq '^ *1[[:space:]]+2[[:space:]]+30[[:space:]]*$' <<<"$grouped_aggregate_output" ||
@@ -146,8 +146,10 @@ grouped_having_count=$(grep -Ec '^ *(1|\?)[[:space:]]+2[[:space:]]+(30|15)[[:spa
   fail "grouped aggregate HAVING did not return expected qualifying groups"
 grep -Eq '^ *2[[:space:]]+30[[:space:]]+10[[:space:]]+20[[:space:]]+15[[:space:]]*$' <<<"$grouped_aggregate_output" ||
   fail "aggregate over filtered grouped table did not return expected result"
+grep -Eq '^ *\?[[:space:]]+2[[:space:]]+90[[:space:]]*$' <<<"$grouped_aggregate_output" ||
+  fail "grouped aggregate over nullable UNIQUE key did not merge NULL rows"
 grouped_aggregate_scan_count=$(grep -c 'LOCAL_LITE_SCAN_FULL' <<<"$grouped_aggregate_output")
-[[ "$grouped_aggregate_scan_count" -ge 3 ]] ||
+[[ "$grouped_aggregate_scan_count" -ge 4 ]] ||
   fail "grouped aggregate coverage did not exercise executor scan TCBs"
 if grep -q 'LOCK' <<<"$grouped_aggregate_output"; then
   fail "grouped aggregate local-lite coverage hit RocksDB LOCK"
@@ -379,7 +381,7 @@ grep -q 'LOCAL_LITE_SCAN_FULL' <<<"$trace_full_output" ||
   fail "non-key predicate query did not fall back to full executor scan"
 
 explain_output=$(
-  printf "CONTROL QUERY DEFAULT GENERATE_EXPLAIN 'ON';\nCREATE TABLE pk_plan(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_plan VALUES (7, 'seven');\nPREPARE xx FROM SELECT b FROM pk_plan WHERE a = 7;\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'XX'));\nCREATE TABLE uq_plan(a INT, b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_plan VALUES (7, 'seven');\nPREPARE xx FROM SELECT b FROM uq_plan WHERE a = 7 AND b = 'seven';\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'XX'));\nDROP TABLE pk_plan;\nDROP TABLE uq_plan;\nexit;\n" |
+  printf "CONTROL QUERY DEFAULT GENERATE_EXPLAIN 'ON';\nCREATE TABLE pk_plan(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_plan VALUES (7, 'seven');\nPREPARE xx FROM SELECT b FROM pk_plan WHERE a = 7;\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'XX'));\nCREATE TABLE uq_plan(a INT, b VARCHAR(20), UNIQUE(a));\nINSERT INTO uq_plan VALUES (7, 'seven');\nPREPARE xx FROM SELECT b FROM uq_plan WHERE a = 7 AND b = 'seven';\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'XX'));\nCREATE TABLE keyless_plan(g INT, v INT);\nINSERT INTO keyless_plan VALUES (1, 10), (1, 20), (2, 5);\nPREPARE xx FROM SELECT g, COUNT(*), SUM(v) FROM keyless_plan GROUP BY g;\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'XX'));\nDROP TABLE pk_plan;\nDROP TABLE uq_plan;\nDROP TABLE keyless_plan;\nexit;\n" |
     run_sqlci
 )
 grep -q 'TRAFODION_SCAN' <<<"$explain_output" ||
@@ -394,6 +396,10 @@ grep -q 'executor_predicates: (B =' <<<"$explain_output" ||
   fail "unique-key equality explain did not preserve residual executor predicate"
 grep -q 'probes: 1' <<<"$explain_output" ||
   fail "local-lite key equality explain did not show single-probe access"
+grep -q 'key_columns: SYSKEY' <<<"$explain_output" ||
+  fail "keyless local-lite explain did not expose synthetic SYSKEY metadata"
+grep -Eq 'HASH_GROUPBY|SORT_GROUPBY' <<<"$explain_output" ||
+  fail "keyless grouped aggregate plan eliminated the required groupby"
 
 unsupported_output=$(
   printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |

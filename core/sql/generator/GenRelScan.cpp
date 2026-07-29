@@ -2984,6 +2984,36 @@ short HbaseAccess::codeGen(Generator * generator)
 
   Queue * listOfFetchedColNames = NULL;
   char * pkeyColName = NULL;
+#ifdef TRAF_LOCAL_LITE
+  if ((getTableDesc()->getNATable()->isSeabaseTable()) &&
+      (isAlignedFormat))
+    {
+      // Local-lite projects individual columns from one canonical LLBR1 row.
+      // Preserve each physical source ordinal, including the SYSKEY marker.
+      listOfFetchedColNames = new(space) Queue(space);
+
+      for (CollIndex c = 0; c < numColumns; c++)
+        {
+          ItemExpr *colNode =
+              columnList[c].getValueDesc()->getItemExpr();
+          const NAColumn *nac = NULL;
+          if (colNode->getOperatorType() == ITM_BASECOLUMN)
+            nac = ((BaseColumn *)colNode)->getNAColumn();
+          else if (colNode->getOperatorType() == ITM_INDEXCOLUMN)
+            nac = ((IndexColumn *)colNode)->getNAColumn();
+          else
+            GenAssert(0, "local-lite fetched column is not a table column");
+
+          NAString cnInList;
+          HbaseAccess::createHbaseColId(
+              nac, cnInList,
+              (getIndexDesc()->getNAFileSet()->getKeytag() != 0));
+          listOfFetchedColNames->insert(
+              space->AllocateAndCopyToAlignedSpace(cnInList, 0));
+        }
+    }
+  else
+#endif
   if ((getTableDesc()->getNATable()->isSeabaseTable()) &&
       (isAlignedFormat))
     {
