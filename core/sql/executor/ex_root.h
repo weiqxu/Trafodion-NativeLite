@@ -353,6 +353,15 @@ private:
   bool mayPinAudit_;
   bool mayLock_;
 
+#ifdef TRAF_LOCAL_LITE
+  void beginLocalLiteStatement(ExExeStmtGlobals *glob);
+  void endLocalLiteStatement();
+
+  const void *localLiteStatementOwner_;
+  UInt64 localLiteStatementExecutionId_;
+  NABoolean localLiteStatementActive_;
+#endif
+
   // private methods
   
   // work proc to handle control messages to ESPs, maybe called directly

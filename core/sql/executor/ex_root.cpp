@@ -67,6 +67,10 @@
 #include "ExSMCommon.h"
 #include "ExpHbaseInterface.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#endif
+
 ////////////////////////////////////////////////////////////////////////
 //  TDB procedures
 
@@ -332,6 +336,11 @@ ex_root_tcb::ex_root_tcb(
      cbCommStatus_(0),
       mayPinAudit_(false),
       mayLock_(false)
+#ifdef TRAF_LOCAL_LITE
+      , localLiteStatementOwner_(NULL),
+      localLiteStatementExecutionId_(0),
+      localLiteStatementActive_(FALSE)
+#endif
 {
   tcbChild_ = &child_tcb;
 
@@ -441,6 +450,30 @@ ex_root_tcb::ex_root_tcb(
 
 }
 
+#ifdef TRAF_LOCAL_LITE
+void ex_root_tcb::beginLocalLiteStatement(ExExeStmtGlobals *glob)
+{
+  endLocalLiteStatement();
+  localLiteStatementOwner_ = glob;
+  localLiteStatementExecutionId_ = glob->getExecutionCount();
+  LocalLiteTxnManager::beginStatement(localLiteStatementOwner_,
+                                      localLiteStatementExecutionId_);
+  localLiteStatementActive_ = TRUE;
+}
+
+void ex_root_tcb::endLocalLiteStatement()
+{
+  if (!localLiteStatementActive_)
+    return;
+
+  LocalLiteTxnManager::endStatement(localLiteStatementOwner_,
+                                    localLiteStatementExecutionId_);
+  localLiteStatementOwner_ = NULL;
+  localLiteStatementExecutionId_ = 0;
+  localLiteStatementActive_ = FALSE;
+}
+#endif
+
 ex_root_tcb::~ex_root_tcb()
 {
   freeResources();
@@ -448,6 +481,10 @@ ex_root_tcb::~ex_root_tcb()
 
 void ex_root_tcb::freeResources()
 {
+#ifdef TRAF_LOCAL_LITE
+  endLocalLiteStatement();
+#endif
+
   if (workAtp_)
     {
     workAtp_->release();
@@ -642,6 +679,9 @@ Int32 ex_root_tcb::execute(CliGlobals *cliGlobals,
 {
   Int32 jmpRc = 0;
 
+#ifdef TRAF_LOCAL_LITE
+  endLocalLiteStatement();
+#endif
 
   ExMasterStmtGlobals *master_glob = glob->castToExMasterStmtGlobals();
 
@@ -914,6 +954,10 @@ Int32 ex_root_tcb::execute(CliGlobals *cliGlobals,
   cpuLimitExceeded_ = FALSE;
 
   master_glob->incExecutionCount();
+
+#ifdef TRAF_LOCAL_LITE
+  beginLocalLiteStatement(master_glob);
+#endif
 
   if (root_tdb().getQueryUsesSM() && cliGlobals->getEnvironment()->smEnabled())
   {
@@ -1631,6 +1675,9 @@ Int32 ex_root_tcb::fetch(CliGlobals *cliGlobals,
 	  {
 	  completeOutstandingCancelMsgs();
 	  glob->testAllQueues();
+#ifdef TRAF_LOCAL_LITE
+          endLocalLiteStatement();
+#endif
 	  }
 
 	if (dontReturn)
@@ -1919,6 +1966,10 @@ Int32 ex_root_tcb::oltExecute(ExExeStmtGlobals * glob,
 			    Descriptor * output_desc,
 			    ComDiagsArea*& diagsArea)
 {
+#ifdef TRAF_LOCAL_LITE
+  endLocalLiteStatement();
+#endif
+
   ExMasterStmtGlobals *master_glob = getGlobals()->
 	            castToExExeStmtGlobals()->castToExMasterStmtGlobals(); 
 
@@ -1979,6 +2030,11 @@ Int32 ex_root_tcb::oltExecute(ExExeStmtGlobals * glob,
 	  master_glob,
           mStats, diagsArea) )
     return -1;
+
+#ifdef TRAF_LOCAL_LITE
+  master_glob->incExecutionCount();
+  beginLocalLiteStatement(master_glob);
+#endif
 
   qchild.down->insert();
 
@@ -2137,6 +2193,9 @@ Int32 ex_root_tcb::oltExecute(ExExeStmtGlobals * glob,
 		  retcode = (Int32) diagsArea->mainSQLCODE();
 		}
 	    }
+#ifdef TRAF_LOCAL_LITE
+          endLocalLiteStatement();
+#endif
 	  return retcode;
 	}
 
@@ -2311,6 +2370,9 @@ Int32 ex_root_tcb::cancel(ExExeStmtGlobals * glob, ComDiagsArea *&diagsArea,
   {
     snapshotScanCleanup(diagsArea);
   }
+#ifdef TRAF_LOCAL_LITE
+  endLocalLiteStatement();
+#endif
   return 0;
 }
 
@@ -2457,6 +2519,10 @@ Int32 ex_root_tcb::fatal_error( ExExeStmtGlobals * glob,
                               ComDiagsArea*& diagsArea,
                               NABoolean noFatalDiags)
 {
+#ifdef TRAF_LOCAL_LITE
+  endLocalLiteStatement();
+#endif
+
   if (diagsArea)
     glob->takeGlobalDiagsArea(*diagsArea);
   else if ((diagsArea = glob->getDiagsArea()) != NULL)

@@ -374,7 +374,10 @@ private:
     if (!store_.loadTable(catalog, schema, object, &table_, error))
       return false;
 
-    LocalLiteTxn txn(&store_);
+    ExExeStmtGlobals *statementGlobals =
+      getGlobals()->castToExExeStmtGlobals();
+    LocalLiteTxn txn(&store_, statementGlobals,
+                     statementGlobals->getExecutionCount());
     bool handledGetRows = false;
     if (!loadGetRows(&txn, &handledGetRows, error))
       return false;

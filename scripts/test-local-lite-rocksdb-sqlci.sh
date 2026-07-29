@@ -29,6 +29,7 @@ run_sqlci_trace_scan() {
   env TRAF_HOME="$traf_home" \
     TRAF_LOCAL_LITE=1 \
     TRAF_LOCAL_LITE_TRACE_SCAN=1 \
+    TRAF_LOCAL_LITE_TRACE_SNAPSHOT=1 \
     TRAF_LOCAL_STORE_DIR="$store_dir" \
     LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
     "$sqlci"
@@ -89,7 +90,7 @@ grep -q -- '--- 1 row(s) selected.' <<<"$projection_output" ||
 
 self_join_output=$(
   printf "SELECT t1.b, t2.b FROM t t1, t t2 WHERE t1.a = t2.a AND t1.a = 1;\nexit;\n" |
-    run_sqlci
+    run_sqlci_trace_scan 2>&1
 )
 grep -Eq '^one[[:space:]]+one[[:space:]]*$' <<<"$self_join_output" ||
   fail "self-join over local-lite table did not return expected row"
@@ -98,6 +99,15 @@ grep -q -- '--- 1 row(s) selected.' <<<"$self_join_output" ||
 if grep -q 'LOCK' <<<"$self_join_output"; then
   fail "self-join over local-lite table hit RocksDB LOCK"
 fi
+self_join_snapshot_acquires=$(
+  grep -c 'LOCAL_LITE_SNAPSHOT_ACQUIRE' <<<"$self_join_output"
+)
+[[ "$self_join_snapshot_acquires" -eq 1 ]] ||
+  fail "self-join must acquire one statement snapshot for its shared table"
+grep -q 'LOCAL_LITE_SNAPSHOT_REUSE' <<<"$self_join_output" ||
+  fail "self-join scan TCBs did not reuse the statement snapshot"
+grep -q 'LOCAL_LITE_SNAPSHOT_RELEASE' <<<"$self_join_output" ||
+  fail "self-join statement snapshot was not released at executor completion"
 
 query_shape_output=$(
   printf "CREATE TABLE shape_t(a INT, b VARCHAR(20), c INT);\nINSERT INTO shape_t VALUES (1, 'one', 10), (2, 'two', 20), (3, 'two', 30), (4, 'four', 20);\nSELECT a, b FROM shape_t ORDER BY c DESC, a ASC;\nSELECT l.b, r.a FROM shape_t l JOIN shape_t r ON l.c = r.c WHERE l.a = 2 ORDER BY r.a;\nSELECT l.a, r.b FROM shape_t l LEFT JOIN shape_t r ON l.a = r.a AND r.b = 'missing' WHERE l.a = 1;\nDROP TABLE shape_t;\nexit;\n" |

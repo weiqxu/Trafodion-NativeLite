@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <functional>
 #include <map>
 #include <pthread.h>
 
@@ -28,6 +29,20 @@ static void setError(std::string *error, const std::string &message)
 {
   if (error)
     *error = message;
+}
+
+static void traceStatementSnapshot(const char *action,
+                                   const std::string &tablePath,
+                                   uint64_t statementExecutionId)
+{
+  const char *trace = getenv("TRAF_LOCAL_LITE_TRACE_SNAPSHOT");
+  if (!trace || !trace[0])
+    return;
+
+  fprintf(stderr, "LOCAL_LITE_SNAPSHOT_%s execution=%llu table=%s\n",
+          action,
+          static_cast<unsigned long long>(statementExecutionId),
+          tablePath.c_str());
 }
 
 static bool containsNoCase(const std::string &s, const char *needle)
@@ -481,6 +496,8 @@ public:
     if (refCount_ != 0)
       return;
 
+    releaseAllStatementSnapshotsLocked();
+
     for (TableMap::iterator it = tableDbs_.begin(); it != tableDbs_.end(); ++it)
       rocksdb_close(it->second);
     tableDbs_.clear();
@@ -506,6 +523,105 @@ public:
       return it->second;
 
     return openTableLocked(path, createIfMissing, error);
+  }
+
+  void beginStatement(const void *statementOwner,
+                      uint64_t statementExecutionId)
+  {
+    if (!statementOwner)
+      return;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    for (StatementMap::iterator it = statementSnapshots_.begin();
+         it != statementSnapshots_.end();)
+      {
+        if (it->first.owner == statementOwner)
+          {
+            releaseStatementSnapshotsLocked(it->first, it->second);
+            StatementMap::iterator stale = it++;
+            statementSnapshots_.erase(stale);
+          }
+        else
+          {
+            ++it;
+          }
+      }
+
+    StatementKey key;
+    key.owner = statementOwner;
+    key.executionId = statementExecutionId;
+    statementSnapshots_[key] = SnapshotMap();
+  }
+
+  void endStatement(const void *statementOwner,
+                    uint64_t statementExecutionId)
+  {
+    if (!statementOwner)
+      return;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    StatementKey key;
+    key.owner = statementOwner;
+    key.executionId = statementExecutionId;
+    StatementMap::iterator it = statementSnapshots_.find(key);
+    if (it == statementSnapshots_.end())
+      return;
+
+    releaseStatementSnapshotsLocked(it->first, it->second);
+    statementSnapshots_.erase(it);
+  }
+
+  bool getStatementSnapshot(const std::string &path,
+                            rocksdb_t *db,
+                            const void *statementOwner,
+                            uint64_t statementExecutionId,
+                            const rocksdb_snapshot_t **snapshot,
+                            std::string *error)
+  {
+    if (snapshot)
+      *snapshot = NULL;
+    if (!statementOwner || !snapshot)
+      {
+        setError(error, "missing local-lite statement snapshot context");
+        return false;
+      }
+
+    LocalLiteMutexGuard guard(&mutex_);
+    StatementKey key;
+    key.owner = statementOwner;
+    key.executionId = statementExecutionId;
+    StatementMap::iterator statement = statementSnapshots_.find(key);
+    if (statement == statementSnapshots_.end())
+      {
+        setError(error, "local-lite statement snapshot context is not active");
+        return false;
+      }
+
+    SnapshotMap::iterator existing = statement->second.find(path);
+    if (existing != statement->second.end())
+      {
+        if (existing->second.db != db)
+          {
+            setError(error, "local-lite statement snapshot table handle changed");
+            return false;
+          }
+        *snapshot = existing->second.snapshot;
+        traceStatementSnapshot("REUSE", path, statementExecutionId);
+        return true;
+      }
+
+    StatementSnapshot entry;
+    entry.db = db;
+    entry.snapshot = rocksdb_create_snapshot(db);
+    if (!entry.snapshot)
+      {
+        setError(error, "create local-lite RocksDB statement snapshot failed");
+        return false;
+      }
+    statement->second[path] = entry;
+    *snapshot = entry.snapshot;
+    traceStatementSnapshot("ACQUIRE", path, statementExecutionId);
+    return true;
   }
 
   bool insertRow(const LocalLiteTableDef &table,
@@ -656,6 +772,8 @@ public:
   {
     LocalLiteMutexGuard guard(&mutex_);
 
+    releaseTableSnapshotsLocked(path);
+
     TableMap::iterator it = tableDbs_.find(path);
     if (it == tableDbs_.end())
       return;
@@ -671,6 +789,35 @@ public:
 
 private:
   typedef std::map<std::string, rocksdb_t *> TableMap;
+
+  struct StatementKey
+  {
+    const void *owner;
+    uint64_t executionId;
+  };
+
+  struct StatementKeyLess
+  {
+    bool operator()(const StatementKey &left,
+                    const StatementKey &right) const
+    {
+      std::less<const void *> less;
+      if (less(left.owner, right.owner))
+        return true;
+      if (less(right.owner, left.owner))
+        return false;
+      return left.executionId < right.executionId;
+    }
+  };
+
+  struct StatementSnapshot
+  {
+    rocksdb_t *db;
+    const rocksdb_snapshot_t *snapshot;
+  };
+
+  typedef std::map<std::string, StatementSnapshot> SnapshotMap;
+  typedef std::map<StatementKey, SnapshotMap, StatementKeyLess> StatementMap;
 
   LocalLiteStorageManager()
     : refCount_(0),
@@ -742,9 +889,45 @@ private:
     return checkRocksError(err, errorPrefix, error);
   }
 
+  void releaseStatementSnapshotsLocked(const StatementKey &key,
+                                       SnapshotMap &snapshots)
+  {
+    for (SnapshotMap::iterator it = snapshots.begin();
+         it != snapshots.end(); ++it)
+      {
+        rocksdb_release_snapshot(it->second.db, it->second.snapshot);
+        traceStatementSnapshot("RELEASE", it->first, key.executionId);
+      }
+    snapshots.clear();
+  }
+
+  void releaseTableSnapshotsLocked(const std::string &path)
+  {
+    for (StatementMap::iterator statement = statementSnapshots_.begin();
+         statement != statementSnapshots_.end(); ++statement)
+      {
+        SnapshotMap::iterator snapshot = statement->second.find(path);
+        if (snapshot == statement->second.end())
+          continue;
+        rocksdb_release_snapshot(snapshot->second.db, snapshot->second.snapshot);
+        traceStatementSnapshot("RELEASE", path,
+                               statement->first.executionId);
+        statement->second.erase(snapshot);
+      }
+  }
+
+  void releaseAllStatementSnapshotsLocked()
+  {
+    for (StatementMap::iterator it = statementSnapshots_.begin();
+         it != statementSnapshots_.end(); ++it)
+      releaseStatementSnapshotsLocked(it->first, it->second);
+    statementSnapshots_.clear();
+  }
+
   unsigned int refCount_;
   rocksdb_t *catalogDb_;
   TableMap tableDbs_;
+  StatementMap statementSnapshots_;
   pthread_mutex_t mutex_;
 };
 
@@ -933,10 +1116,13 @@ public:
 
   bool scanRows(LocalLiteRocksDBStore *store,
                 const LocalLiteTableDef &table,
+                const void *statementOwner,
+                uint64_t statementExecutionId,
                 std::vector<LocalLiteRow> *rows,
                 std::string *error)
   {
-    if (!store->scanRows(table, rows, error))
+    if (!store->scanRows(table, statementOwner, statementExecutionId,
+                         rows, error))
       return false;
 
     LocalLiteMutexGuard guard(&mutex_);
@@ -955,6 +1141,8 @@ public:
   bool getRowByKey(LocalLiteRocksDBStore *store,
                    const LocalLiteTableDef &table,
                    const std::string &storageKey,
+                   const void *statementOwner,
+                   uint64_t statementExecutionId,
                    LocalLiteRow *row,
                    bool *found,
                    std::string *error)
@@ -992,7 +1180,8 @@ public:
         }
     }
 
-    return store->getRowByKey(table, storageKey, row, found, error);
+    return store->getRowByKey(table, storageKey, statementOwner,
+                              statementExecutionId, row, found, error);
   }
 
   static LocalLiteTxnState &instance()
@@ -1296,6 +1485,16 @@ bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,
                                         bool *found,
                                         std::string *error)
 {
+  return getRowByKey(table, storageKey, NULL, 0, row, found, error);
+}
+
+static bool getRowByKeyAtSnapshot(rocksdb_t *db,
+                                  const rocksdb_snapshot_t *snapshot,
+                                  const std::string &storageKey,
+                                  LocalLiteRow *row,
+                                  bool *found,
+                                  std::string *error)
+{
   if (found)
     *found = false;
   if (!row || !found)
@@ -1303,16 +1502,10 @@ bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,
       setError(error, "missing local-lite get row output");
       return false;
     }
-  if (!open(error))
-    return false;
-
-  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(tablePath(table),
-                                                               false,
-                                                               error);
-  if (!db)
-    return false;
 
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  if (snapshot)
+    rocksdb_readoptions_set_snapshot(readOptions, snapshot);
   char *err = NULL;
   size_t valueLen = 0;
   char *value = rocksdb_get(db, readOptions,
@@ -1344,14 +1537,51 @@ bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,
   if (storageKey.size() > 0 && storageKey[0] == 'U')
     {
       std::string referencedKey = encodedValue;
-      return getRowByKey(table, referencedKey, row, found, error);
+      return getRowByKeyAtSnapshot(db, snapshot, referencedKey,
+                                   row, found, error);
     }
 
   setError(error, "invalid local-lite row format");
   return false;
 }
 
+bool LocalLiteRocksDBStore::getRowByKey(
+    const LocalLiteTableDef &table,
+    const std::string &storageKey,
+    const void *statementOwner,
+    uint64_t statementExecutionId,
+    LocalLiteRow *row,
+    bool *found,
+    std::string *error)
+{
+  if (!open(error))
+    return false;
+
+  const std::string path = tablePath(table);
+  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(path, false,
+                                                               error);
+  if (!db)
+    return false;
+
+  const rocksdb_snapshot_t *snapshot = NULL;
+  if (statementOwner &&
+      !LocalLiteStorageManager::instance().getStatementSnapshot(
+          path, db, statementOwner, statementExecutionId, &snapshot, error))
+    return false;
+
+  return getRowByKeyAtSnapshot(db, snapshot, storageKey, row, found, error);
+}
+
 bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
+                                     std::vector<LocalLiteRow> *rows,
+                                     std::string *error)
+{
+  return scanRows(table, NULL, 0, rows, error);
+}
+
+bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
+                                     const void *statementOwner,
+                                     uint64_t statementExecutionId,
                                      std::vector<LocalLiteRow> *rows,
                                      std::string *error)
 {
@@ -1360,14 +1590,30 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
   if (!open(error))
     return false;
 
-  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(tablePath(table),
-                                                               false,
+  const std::string path = tablePath(table);
+  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(path, false,
                                                                error);
   if (!db)
     return false;
 
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
-  const rocksdb_snapshot_t *snapshot = rocksdb_create_snapshot(db);
+  const bool ownsSnapshot = (statementOwner == NULL);
+  const rocksdb_snapshot_t *snapshot = NULL;
+  if (ownsSnapshot)
+    snapshot = rocksdb_create_snapshot(db);
+  else if (!LocalLiteStorageManager::instance().getStatementSnapshot(
+               path, db, statementOwner, statementExecutionId,
+               &snapshot, error))
+    {
+      rocksdb_readoptions_destroy(readOptions);
+      return false;
+    }
+  if (!snapshot)
+    {
+      rocksdb_readoptions_destroy(readOptions);
+      setError(error, "create local-lite RocksDB scan snapshot failed");
+      return false;
+    }
   rocksdb_readoptions_set_snapshot(readOptions, snapshot);
   rocksdb_iterator_t *it = rocksdb_create_iterator(db, readOptions);
   for (rocksdb_iter_seek_to_first(it); rocksdb_iter_valid(it); rocksdb_iter_next(it))
@@ -1387,7 +1633,8 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
         {
           rocksdb_iter_destroy(it);
           rocksdb_readoptions_destroy(readOptions);
-          rocksdb_release_snapshot(db, snapshot);
+          if (ownsSnapshot)
+            rocksdb_release_snapshot(db, snapshot);
           return false;
         }
       rows->push_back(row);
@@ -1397,14 +1644,19 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
   rocksdb_iter_get_error(it, &err);
   rocksdb_iter_destroy(it);
   rocksdb_readoptions_destroy(readOptions);
-  rocksdb_release_snapshot(db, snapshot);
+  if (ownsSnapshot)
+    rocksdb_release_snapshot(db, snapshot);
   if (!checkRocksError(err, "scan local-lite rows", error))
     return false;
   return true;
 }
 
-LocalLiteTxn::LocalLiteTxn(LocalLiteRocksDBStore *store)
-  : store_(store)
+LocalLiteTxn::LocalLiteTxn(LocalLiteRocksDBStore *store,
+                           const void *statementOwner,
+                           uint64_t statementExecutionId)
+  : store_(store),
+    statementOwner_(statementOwner),
+    statementExecutionId_(statementExecutionId)
 {
 }
 
@@ -1433,7 +1685,8 @@ bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
       return false;
     }
 
-  return LocalLiteTxnState::instance().scanRows(store_, table, rows, error);
+  return LocalLiteTxnState::instance().scanRows(
+      store_, table, statementOwner_, statementExecutionId_, rows, error);
 }
 
 bool LocalLiteTxn::getRowByKey(const LocalLiteTableDef &table,
@@ -1448,8 +1701,9 @@ bool LocalLiteTxn::getRowByKey(const LocalLiteTableDef &table,
       return false;
     }
 
-  return LocalLiteTxnState::instance().getRowByKey(store_, table, storageKey,
-                                                   row, found, error);
+  return LocalLiteTxnState::instance().getRowByKey(
+      store_, table, storageKey, statementOwner_, statementExecutionId_,
+      row, found, error);
 }
 
 bool LocalLiteTxnManager::begin(std::string *error)
@@ -1498,6 +1752,20 @@ uint64_t LocalLiteTxnManager::currentLocalTxnId()
 int64_t LocalLiteTxnManager::currentExecutorTxnId()
 {
   return LocalLiteTxnState::instance().currentExecutorTxnId();
+}
+
+void LocalLiteTxnManager::beginStatement(const void *statementOwner,
+                                         uint64_t statementExecutionId)
+{
+  LocalLiteStorageManager::instance().beginStatement(statementOwner,
+                                                     statementExecutionId);
+}
+
+void LocalLiteTxnManager::endStatement(const void *statementOwner,
+                                       uint64_t statementExecutionId)
+{
+  LocalLiteStorageManager::instance().endStatement(statementOwner,
+                                                   statementExecutionId);
 }
 
 #endif

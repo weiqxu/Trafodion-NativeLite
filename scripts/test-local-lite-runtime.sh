@@ -15,7 +15,9 @@ local_sql_handler="$repo_root/core/sql/sqlci/LocalLiteSqlTable.cpp"
 local_sqlci_smoke="$repo_root/scripts/test-local-lite-rocksdb-sqlci.sh"
 local_store_concurrency="$repo_root/scripts/test-local-lite-store-concurrency.sh"
 local_store_process_boundary="$repo_root/scripts/test-local-lite-store-process-boundary.sh"
+local_statement_snapshot="$repo_root/scripts/test-local-lite-statement-snapshot.sh"
 storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
+executor_root="$repo_root/core/sql/executor/ex_root.cpp"
 localstore_dir="$repo_root/core/sql/localstore"
 localstore_header="$localstore_dir/LocalLiteRocksDBStore.h"
 localstore_source="$localstore_dir/LocalLiteRocksDBStore.cpp"
@@ -69,6 +71,12 @@ grep -q 'LocalLiteTxn::getRowByKey' "$localstore_source" ||
   fail "local-lite get-row access must go through the transaction facade"
 grep -q 'LocalLiteTxn txn' "$storage_stubs" ||
   fail "local-lite executor scan/insert TCBs must use the transaction facade"
+grep -q 'getExecutionCount' "$storage_stubs" ||
+  fail "local-lite executor scans must bind to the current statement execution"
+grep -q 'LocalLiteTxnManager::beginStatement' "$executor_root" ||
+  fail "executor root must begin the local-lite statement snapshot context"
+grep -q 'LocalLiteTxnManager::endStatement' "$executor_root" ||
+  fail "executor root must release the local-lite statement snapshot context"
 if grep -q 'allocateRowId' "$localstore_header" ||
    grep -q 'LocalLiteRocksDBStore::allocateRowId' "$localstore_source" ||
    grep -q 'LocalLiteRocksDBStore::putRow' "$localstore_source"; then
@@ -121,6 +129,8 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
   fail "missing executable local-lite store concurrency test: $local_store_concurrency"
 [[ -x "$local_store_process_boundary" ]] ||
   fail "missing executable local-lite store process-boundary test: $local_store_process_boundary"
+[[ -x "$local_statement_snapshot" ]] ||
+  fail "missing executable local-lite statement snapshot test: $local_statement_snapshot"
 [[ -f "$localstore_header" ]] || fail "missing local store header: $localstore_header"
 [[ -f "$localstore_source" ]] || fail "missing local store source: $localstore_source"
 grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_header" ||

@@ -69,8 +69,10 @@ Implemented:
   combines row-id allocation and row persistence into one local storage manager
   operation instead of issuing separate calls from the executor TCB. The legacy
   public store APIs for direct row-id allocation and row put have been removed.
-- Local table scans now go through the `LocalLiteTxn` facade and bind RocksDB
-  iterators to a snapshot while materializing scan rows.
+- Local table scans and get-row reads now go through the `LocalLiteTxn` facade
+  with a statement execution token. All scan TCBs that access the same table in
+  one executor statement reuse one RocksDB snapshot, which is released by the
+  executor root at completion, cancellation, fatal error, or teardown.
 - Local-lite `BEGIN WORK`, `COMMIT WORK`, and `ROLLBACK WORK` now use an
   initial local transaction context in single-process SQLCI mode. Transactional
   local INSERTs are buffered until commit, rollback discards them, and scans read
@@ -593,10 +595,10 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Share one statement snapshot across all local-lite scan TCBs in a statement
-   instead of acquiring an independent RocksDB snapshot per materialized scan.
+1. Extend snapshot ownership from one statement to the lifetime of an explicit
+   local transaction, while preserving the pending-write overlay.
 
-The next task to start is **Statement-wide local-lite scan snapshots**.
+The next task to start is **Explicit-transaction repeatable-read snapshots**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

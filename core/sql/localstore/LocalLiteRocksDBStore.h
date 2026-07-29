@@ -38,6 +38,8 @@ struct LocalLiteRow
   std::string value;
 };
 
+class LocalLiteTxnState;
+
 class LocalLiteRocksDBStore
 {
 public:
@@ -82,8 +84,23 @@ public:
                 std::string *error);
 
 private:
+  friend class LocalLiteTxnState;
+
   LocalLiteRocksDBStore(const LocalLiteRocksDBStore &);
   LocalLiteRocksDBStore &operator=(const LocalLiteRocksDBStore &);
+
+  bool getRowByKey(const LocalLiteTableDef &table,
+                   const std::string &storageKey,
+                   const void *statementOwner,
+                   uint64_t statementExecutionId,
+                   LocalLiteRow *row,
+                   bool *found,
+                   std::string *error);
+  bool scanRows(const LocalLiteTableDef &table,
+                const void *statementOwner,
+                uint64_t statementExecutionId,
+                std::vector<LocalLiteRow> *rows,
+                std::string *error);
 
   bool opened_;
 };
@@ -91,7 +108,9 @@ private:
 class LocalLiteTxn
 {
 public:
-  explicit LocalLiteTxn(LocalLiteRocksDBStore *store);
+  explicit LocalLiteTxn(LocalLiteRocksDBStore *store,
+                        const void *statementOwner = 0,
+                        uint64_t statementExecutionId = 0);
 
   bool insertRow(const LocalLiteTableDef &table,
                  const std::string &encodedRow,
@@ -111,6 +130,8 @@ private:
   LocalLiteTxn &operator=(const LocalLiteTxn &);
 
   LocalLiteRocksDBStore *store_;
+  const void *statementOwner_;
+  uint64_t statementExecutionId_;
 };
 
 class LocalLiteTxnManager
@@ -127,6 +148,10 @@ public:
   static bool active();
   static uint64_t currentLocalTxnId();
   static int64_t currentExecutorTxnId();
+  static void beginStatement(const void *statementOwner,
+                             uint64_t statementExecutionId);
+  static void endStatement(const void *statementOwner,
+                           uint64_t statementExecutionId);
 };
 
 #endif

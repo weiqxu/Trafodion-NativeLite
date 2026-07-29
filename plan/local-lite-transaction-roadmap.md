@@ -162,13 +162,20 @@ Validation:
 
 ### Phase 3: Snapshot-Based Statement Reads
 
-Status: initial scan facade implemented. Local table scans now call
-`LocalLiteTxn::scanRows()`, and RocksDB iterators are bound to a snapshot for
-the duration of each scan materialization. A statement-wide snapshot shared by
-multiple scan TCBs still requires a future local transaction context. Keyless
-scan metadata now exposes the internal RocksDB row id as a hidden `SYSKEY`, and
-the scan TCB materializes that system value separately from the `LLBR1` user
-column payload.
+Status: implemented for statement-wide reads of each local RocksDB table.
+Executor root begin/end hooks identify a prepared statement execution with the
+statement globals pointer plus execution count. `LocalLiteTxn` uses that token
+for both full scans and get-row access, and every scan TCB that reads the same
+table in that execution reuses one RocksDB snapshot. The root releases all
+snapshots at end-of-data, cancellation, fatal error, or TCB teardown. A later
+execution receives a new context and new snapshots.
+
+RocksDB snapshots are database-local. Because each local table currently has a
+separate RocksDB database, this phase gives repeatable reads for repeated access
+to one table, but does not claim a single atomic snapshot instant across
+different local tables. Keyless scan metadata continues to expose the internal
+RocksDB row id as a hidden `SYSKEY`, and the scan TCB materializes that system
+value separately from the `LLBR1` user column payload.
 
 Give scans a stable statement snapshot.
 
@@ -186,6 +193,11 @@ Validation:
   by executor semantics.
 - Predicate and projection tests continue to pass for all supported scalar
   types.
+- The standalone statement snapshot probe verifies that full scan and get-row
+  access do not see a row inserted after snapshot acquisition, while the next
+  execution does.
+- SQLCI self-join trace verifies one snapshot acquire, snapshot reuse by the
+  second scan TCB, and release at statement completion.
 
 ### Phase 4: Explicit Local Transactions
 
@@ -358,11 +370,14 @@ the aggregate. Local-lite
 uses hidden `SYSKEY` NATable/NAFileSet metadata for keyless RocksDB row identity,
 so normal groupby elimination and implementation rules no longer require
 local-lite guards. SQLCI EXPLAIN smoke verifies the SYSKEY metadata and retained
-groupby operator. The next implementation step should complete statement read
-consistency:
+groupby operator. Statement read consistency is now implemented for repeated
+access to each local table. The next implementation step should extend the read
+view across explicit local transaction statements:
 
-1. Add statement snapshot ownership to the local transaction context.
-2. Make all scan TCBs in one statement acquire the same snapshot token.
-3. Release the shared snapshot on statement completion, cancellation, or error.
-4. Keep SQLCI trace and EXPLAIN smoke as guards for get-row, full-scan, and
-   grouped aggregate behavior.
+1. Acquire and retain a transaction read context at `BEGIN WORK`.
+2. Make each statement snapshot resolve from that transaction context while
+   still overlaying the transaction's pending writes.
+3. Release transaction snapshots on `COMMIT WORK`, `ROLLBACK WORK`, fatal
+   error, or context teardown.
+4. Add repeatable-read coverage for two SELECT statements separated by a
+   same-process committed insert.
