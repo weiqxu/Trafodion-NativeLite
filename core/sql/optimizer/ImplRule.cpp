@@ -1792,9 +1792,11 @@ NABoolean SortGroupByRule::topMatch (RelExpr *relExpr,
 
   // Do not apply this rule if the Group By elimination rule
   // can be applied.
+#ifndef TRAF_LOCAL_LITE
   if ( grbyagg->isNotAPartialGroupBy() &&
        grbyagg->child(0).getGroupAttr()->isUnique(grbyagg->groupExpr()) )
     return FALSE;
+#endif
 
   // can't use this algorithm if there are distinct aggregates
   const ValueIdSet &aggrs = grbyagg->aggregateExpr();
@@ -2028,9 +2030,11 @@ NABoolean HashGroupByRule::topMatch (RelExpr *relExpr,
 
   // Do not apply this rule if the Group By elimination rule
   // can be applied.
+#ifndef TRAF_LOCAL_LITE
   if ( grbyagg->isNotAPartialGroupBy() &&
        grbyagg->child(0).getGroupAttr()->isUnique(grbyagg->groupExpr()) )
     return FALSE;
+#endif
 
   // can't use this algorithm if there are distinct aggregates
   const ValueIdSet &aggrs = grbyagg->aggregateExpr();

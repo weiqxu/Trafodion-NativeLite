@@ -349,14 +349,16 @@ executor INSERT/SCAN expressions, including `CASE`, string concatenation,
 `ORDER BY`, self-join, inner join, and left join over local table executor scan
 TCBs. Ungrouped aggregate expression smoke now covers `COUNT`, `SUM`, `MIN`,
 `MAX`, `AVG`, aggregate arithmetic, and aggregate input filtering over NULL
-values. Grouped aggregate probing found a current correctness gap: duplicate
-group keys are split into separate groups, and `HAVING SUM(v)` can be pushed
-into the scan as a row predicate such as `v >= constant`. The next
-implementation step should fix grouped aggregate correctness:
+values. Grouped aggregate smoke now covers duplicate group keys, NULL group
+keys, aggregate input filtering, and `HAVING` above the aggregate. Local-lite
+keeps executor groupby plans by disabling groupby elimination and the matching
+hash/sort groupby implementation rejection under `TRAF_LOCAL_LITE`, avoiding
+incorrect uniqueness assumptions from HBase-style key metadata. The next
+implementation step should clean up the underlying metadata model:
 
-1. Fix duplicate group-key and NULL group-key handling for local table scans.
-2. Prevent aggregate `HAVING` predicates from being pushed into local-lite scan
-   row predicates before aggregation.
+1. Audit local-lite NATable/NAFileSet key metadata for keyless tables.
+2. Decide whether to represent the RocksDB synthetic row identity as a hidden
+   clustering key instead of relying on local-lite rule guards.
 3. Audit any newly added local-lite RocksDB open paths and confirm executor scan
    and insert TCBs continue to use process-local shared handles.
 4. Keep the current SQLCI trace and EXPLAIN smoke as guards for get-row versus

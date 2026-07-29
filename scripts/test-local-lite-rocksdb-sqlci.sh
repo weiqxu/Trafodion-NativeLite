@@ -131,6 +131,28 @@ if grep -q 'LOCK' <<<"$aggregate_expr_output"; then
   fail "aggregate expression local-lite coverage hit RocksDB LOCK"
 fi
 
+grouped_aggregate_output=$(
+  printf "CREATE TABLE agg_group_t(g INT, v INT);\nINSERT INTO agg_group_t VALUES (1, 10), (1, 20), (2, 5), (NULL, 7), (NULL, 8);\nSELECT g, COUNT(*), SUM(v) FROM agg_group_t GROUP BY g ORDER BY g;\nSELECT g, COUNT(*), SUM(v) FROM agg_group_t GROUP BY g HAVING SUM(v) >= 15 ORDER BY g;\nSELECT COUNT(*), SUM(v), MIN(v), MAX(v), AVG(v) FROM agg_group_t WHERE g = 1;\nDROP TABLE agg_group_t;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -Eq '^ *1[[:space:]]+2[[:space:]]+30[[:space:]]*$' <<<"$grouped_aggregate_output" ||
+  fail "grouped aggregate did not merge duplicate non-null group key"
+grep -Eq '^ *2[[:space:]]+1[[:space:]]+5[[:space:]]*$' <<<"$grouped_aggregate_output" ||
+  fail "grouped aggregate did not return singleton group key"
+grep -Eq '^ *\?[[:space:]]+2[[:space:]]+15[[:space:]]*$' <<<"$grouped_aggregate_output" ||
+  fail "grouped aggregate did not merge NULL group key"
+grouped_having_count=$(grep -Ec '^ *(1|\?)[[:space:]]+2[[:space:]]+(30|15)[[:space:]]*$' <<<"$grouped_aggregate_output")
+[[ "$grouped_having_count" -ge 4 ]] ||
+  fail "grouped aggregate HAVING did not return expected qualifying groups"
+grep -Eq '^ *2[[:space:]]+30[[:space:]]+10[[:space:]]+20[[:space:]]+15[[:space:]]*$' <<<"$grouped_aggregate_output" ||
+  fail "aggregate over filtered grouped table did not return expected result"
+grouped_aggregate_scan_count=$(grep -c 'LOCAL_LITE_SCAN_FULL' <<<"$grouped_aggregate_output")
+[[ "$grouped_aggregate_scan_count" -ge 3 ]] ||
+  fail "grouped aggregate coverage did not exercise executor scan TCBs"
+if grep -q 'LOCK' <<<"$grouped_aggregate_output"; then
+  fail "grouped aggregate local-lite coverage hit RocksDB LOCK"
+fi
+
 error_output=$(
   printf "INSERT INTO missing_table VALUES (1);\nINSERT INTO t VALUES (1);\nCREATE TABLE bad_lob(c BLOB(100));\nexit;\n" |
     run_sqlci

@@ -600,7 +600,11 @@ private:
 
     *pass = true;
 
-    *formattedLen = static_cast<Lng32>(convertLen);
+    // HBase scan TCBs return the generated fixed convert row length to their
+    // parent. Local-lite still projects variable columns into that row, but the
+    // parent executor operators such as sort/group compare the generated tuple
+    // shape, not the per-row adjusted payload length.
+    *formattedLen = scanTdb().convertRowLen_;
     return true;
   }
 

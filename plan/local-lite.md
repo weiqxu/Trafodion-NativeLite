@@ -318,15 +318,16 @@ Supported local-lite `sqlci` behavior:
   executor insert TCB; local table `SELECT` statements bind through the local
   catalog NATable and run through the local RocksDB executor scan TCB. Runtime
   coverage includes projection, predicates, ordering, self-join, inner join,
-  left join, and ungrouped aggregate expression query shapes.
+  left join, ungrouped aggregate expression query shapes, and grouped
+  aggregates over duplicate and NULL group keys with `HAVING`.
 - Basic scalar expressions, arithmetic, and string operations.
 - `exit;` and `quit;`.
 
 Unsupported behavior:
 
-- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`, grouped
-  aggregate correctness, broad type coverage, constraints beyond local-lite
-  primary/unique keys, privileges, and distributed transactions.
+- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`, broad
+  type coverage, constraints beyond local-lite primary/unique keys, privileges,
+  and distributed transactions.
 - HBase-backed metadata/storage operations.
 - HDFS, HBase, Hive, ORC, bulk load/unload, and LOB storage access.
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
@@ -530,9 +531,8 @@ above.
 
 ### Current Task Status
 
-Last updated after moving local table INSERT to executor expression evaluation
-and extending the local binary row codec to preserve executor-produced datetime
-values.
+Last updated after preserving executor groupby plans for local-lite scans and
+covering grouped aggregate correctness over duplicate and NULL group keys.
 
 Completed:
 
@@ -580,18 +580,20 @@ Completed:
 - Ungrouped aggregate expression smoke coverage for local table scans,
   including `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, aggregate arithmetic, and
   aggregate input filtering over NULL values.
-- Grouped aggregate probing found a current local-lite correctness gap:
-  duplicate group keys are split into separate groups, and `HAVING SUM(v)` can
-  be pushed into the scan as a row predicate such as `v >= constant`.
+- Grouped aggregate correctness for local table scans, including duplicate
+  group keys, NULL group keys, aggregate input filtering, and `HAVING`
+  predicates evaluated above the aggregate. Local-lite disables groupby
+  elimination and the matching hash/sort groupby implementation rejection
+  because current HBase-style key metadata can overstate user-column uniqueness
+  for RocksDB-backed rows.
 
 Remaining, in suggested implementation order:
 
-1. Fix grouped aggregate correctness for local table scans, including duplicate
-   group keys, NULL group keys, and `HAVING` predicates that must stay above the
-   aggregate.
+1. Audit local-lite optimizer metadata for keyless tables and decide whether to
+   model the synthetic RocksDB row identity as a hidden clustering key instead
+   of relying on rule-level guards.
 
-The next task to start is **Grouped aggregate correctness for local table
-scans**.
+The next task to start is **Local-lite optimizer key metadata cleanup**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
