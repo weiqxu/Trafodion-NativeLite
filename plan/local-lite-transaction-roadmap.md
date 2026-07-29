@@ -201,12 +201,22 @@ Validation:
 
 ### Phase 4: Explicit Local Transactions
 
-Status: initial local transaction context implemented for single-process
-local-lite SQLCI. `BEGIN WORK` creates a pending write set, local table INSERTs
-buffer writes in that set, scans read base RocksDB rows plus own pending writes,
-`ROLLBACK WORK` discards pending rows, and `COMMIT WORK` persists them through
-the existing local insert path. This phase does not yet provide RocksDB
-TransactionDB semantics or all-table atomic commit across failures.
+Status: repeatable-read context implemented for single-process local-lite SQLCI.
+`BEGIN WORK` creates a pending write set and a transaction read context. The
+first access to each table lazily acquires its RocksDB snapshot, and later
+statements in the transaction reuse that snapshot for both full scans and
+get-row reads. Pending INSERT rows are overlaid on that stable base view, so the
+transaction continues to read its own writes. `ROLLBACK WORK` discards pending
+rows and releases the read context; `COMMIT WORK` publishes through the existing
+local insert path and releases it.
+
+Local-lite also disables the HBase coprocessor `COUNT(*)` binder rewrite.
+Transaction aggregates therefore remain normal executor aggregates over the
+same local scan and transaction snapshot path.
+
+This phase does not yet provide RocksDB TransactionDB semantics, atomic
+multi-table commit, or one cross-table snapshot instant because each table uses
+a separate RocksDB database.
 
 Add local transaction behavior for `BEGIN`, `COMMIT`, and `ROLLBACK` without
 starting TMF/DTM/RMS.
@@ -227,6 +237,9 @@ Validation:
 - `BEGIN; INSERT ...; ROLLBACK; SELECT ...` does not show rolled-back rows.
 - `BEGIN; INSERT ...; COMMIT; SELECT ...` shows committed rows.
 - A transaction can read its own writes.
+- Separate SELECT statements in one transaction reuse the same per-table
+  snapshot and do not observe a committed row added after the first read.
+- Full scan and get-row access use the same transaction snapshot.
 - Autocommit behavior remains unchanged outside explicit transactions.
 
 ### Phase 5: Deterministic Row Keys And Conflict Detection
@@ -371,13 +384,15 @@ uses hidden `SYSKEY` NATable/NAFileSet metadata for keyless RocksDB row identity
 so normal groupby elimination and implementation rules no longer require
 local-lite guards. SQLCI EXPLAIN smoke verifies the SYSKEY metadata and retained
 groupby operator. Statement read consistency is now implemented for repeated
-access to each local table. The next implementation step should extend the read
-view across explicit local transaction statements:
+access to each local table, and explicit local transactions now retain that
+read view across statements. The next implementation step should make pending
+transaction publication atomic within each table:
 
-1. Acquire and retain a transaction read context at `BEGIN WORK`.
-2. Make each statement snapshot resolve from that transaction context while
-   still overlaying the transaction's pending writes.
-3. Release transaction snapshots on `COMMIT WORK`, `ROLLBACK WORK`, fatal
-   error, or context teardown.
-4. Add repeatable-read coverage for two SELECT statements separated by a
-   same-process committed insert.
+1. Preflight all pending primary and UNIQUE keys against current committed
+   storage before writing any row.
+2. Publish each table's pending rows and secondary uniqueness records with one
+   RocksDB write batch.
+3. Update keyless row-id metadata consistently with the table batch and retain
+   an explicit diagnostic for the remaining catalog/table multi-DB gap.
+4. Add commit-failure coverage proving that one duplicate does not partially
+   publish earlier rows from the same table.

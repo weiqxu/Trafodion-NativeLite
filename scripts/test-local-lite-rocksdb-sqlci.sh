@@ -267,8 +267,8 @@ grep -q -- '--- 2 row(s) selected.' <<<"$compound_expr_output" ||
   fail "OR predicate scan did not report two selected rows"
 
 transaction_output=$(
-  printf "CREATE TABLE tx(a INT, b VARCHAR(20));\nBEGIN WORK;\nINSERT INTO tx VALUES (1, 'rollback');\nSELECT b FROM tx WHERE a = 1;\nROLLBACK WORK;\nSELECT b FROM tx WHERE a = 1;\nBEGIN WORK;\nINSERT INTO tx VALUES (2, 'commit');\nCOMMIT WORK;\nSELECT b FROM tx WHERE a = 2;\nDROP TABLE tx;\nexit;\n" |
-    run_sqlci
+  printf "CREATE TABLE tx(a INT, b VARCHAR(20));\nBEGIN WORK;\nINSERT INTO tx VALUES (1, 'rollback');\nSELECT b FROM tx WHERE a = 1;\nSELECT COUNT(*) FROM tx;\nROLLBACK WORK;\nSELECT b FROM tx WHERE a = 1;\nBEGIN WORK;\nINSERT INTO tx VALUES (2, 'commit');\nCOMMIT WORK;\nSELECT b FROM tx WHERE a = 2;\nDROP TABLE tx;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
 )
 grep -q 'rollback' <<<"$transaction_output" ||
   fail "local transaction did not read its own pending insert"
@@ -277,8 +277,15 @@ grep -q 'commit' <<<"$transaction_output" ||
 grep -q -- '--- 0 row(s) selected.' <<<"$transaction_output" ||
   fail "local transaction rollback did not discard inserted row"
 transaction_selected_count=$(grep -c -- '--- 1 row(s) selected.' <<<"$transaction_output")
-[[ "$transaction_selected_count" -ge 2 ]] ||
+[[ "$transaction_selected_count" -ge 3 ]] ||
   fail "local transaction scans did not report expected selected rows"
+transaction_full_scan_count=$(grep -c 'LOCAL_LITE_SCAN_FULL' <<<"$transaction_output")
+[[ "$transaction_full_scan_count" -ge 4 ]] ||
+  fail "transaction SELECT and COUNT queries did not use executor full scans"
+grep -q 'LOCAL_LITE_SNAPSHOT_REUSE' <<<"$transaction_output" ||
+  fail "separate SELECT statements did not reuse the transaction snapshot"
+grep -q 'LOCAL_LITE_SNAPSHOT_RELEASE' <<<"$transaction_output" ||
+  fail "transaction snapshot was not released by COMMIT/ROLLBACK"
 
 primary_key_output=$(
   printf "CREATE TABLE pk_t(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_t VALUES (1, 'one');\nSELECT b FROM pk_t WHERE a = 1;\nINSERT INTO pk_t VALUES (1, 'dup');\nBEGIN WORK;\nINSERT INTO pk_t VALUES (2, 'two');\nSELECT b FROM pk_t WHERE a = 2;\nINSERT INTO pk_t VALUES (2, 'dup-pending');\nROLLBACK WORK;\nSELECT b FROM pk_t WHERE a = 2;\nDROP TABLE pk_t;\nexit;\n" |

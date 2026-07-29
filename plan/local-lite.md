@@ -61,6 +61,9 @@ Implemented:
   plans. It scans RocksDB rows, maps the compiler projection through the
   fetched-column list, writes projected values into the compiler-generated
   binary aligned executor row, and returns rows through normal executor queues.
+- Local-lite binding disables the HBase coprocessor `COUNT(*)` rewrite, so
+  scalar aggregates run through the normal executor aggregate over a local
+  executor scan.
 - Local RocksDB executor insert TCB for compiler-generated local table `INSERT`
   plans. It evaluates the compiler-generated insert expression, normalizes the
   executor row into the local canonical binary aligned row layout, and persists
@@ -75,8 +78,9 @@ Implemented:
   executor root at completion, cancellation, fatal error, or teardown.
 - Local-lite `BEGIN WORK`, `COMMIT WORK`, and `ROLLBACK WORK` now use an
   initial local transaction context in single-process SQLCI mode. Transactional
-  local INSERTs are buffered until commit, rollback discards them, and scans read
-  their own pending writes.
+  local INSERTs are buffered until commit, rollback discards them, and scans
+  read their own pending writes over a per-table RocksDB snapshot retained
+  across all statements in the transaction.
 - Local RocksDB storage now shares catalog/table handles inside the local-lite
   process module, so multiple executor scans of the same table in one statement
   no longer reopen the same RocksDB path and collide on RocksDB `LOCK`.
@@ -595,10 +599,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Extend snapshot ownership from one statement to the lifetime of an explicit
-   local transaction, while preserving the pending-write overlay.
+1. Preflight pending transaction keys and publish each table's pending rows
+   with one RocksDB write batch, so a duplicate cannot partially commit earlier
+   rows from that table.
 
-The next task to start is **Explicit-transaction repeatable-read snapshots**.
+The next task to start is **Per-table atomic transaction commit batches**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

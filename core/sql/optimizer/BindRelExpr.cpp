@@ -5390,6 +5390,7 @@ RelExpr *RelRoot::bindNode(BindWA *bindWA)
 
   if (isTrueRoot()) 
     {
+#ifndef TRAF_LOCAL_LITE
       // if this is simple scalar aggregate on a seabase table
       //  (of the form:  select count(*), sum(a) from t; )
       // then transform it so it could be evaluated using hbase co-processor.
@@ -5472,6 +5473,7 @@ RelExpr *RelRoot::bindNode(BindWA *bindWA)
 		} // count aggr
 	    }
 	} // coproc on
+#endif
 
 
       if (child(0) && 

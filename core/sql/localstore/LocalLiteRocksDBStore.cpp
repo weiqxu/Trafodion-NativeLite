@@ -945,25 +945,42 @@ public:
 
   bool begin(int64_t executorTxnId, std::string *error)
   {
-    LocalLiteMutexGuard guard(&mutex_);
-    if (active_)
+    uint64_t transactionId = 0;
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (active_)
+        {
+          setError(error, "local-lite transaction already active");
+          return false;
+        }
+
+      pendingTables_.clear();
+      localTxnId_ = nextLocalTxnId_++;
+      if (nextLocalTxnId_ == 0)
+        nextLocalTxnId_ = 1;
+      executorTxnId_ = executorTxnId;
+      active_ = true;
+      transactionId = localTxnId_;
+    }
+
+    if (!transactionStore_.open(error))
       {
-        setError(error, "local-lite transaction already active");
+        LocalLiteMutexGuard guard(&mutex_);
+        pendingTables_.clear();
+        localTxnId_ = 0;
+        executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
+        active_ = false;
         return false;
       }
 
-    pendingTables_.clear();
-    localTxnId_ = nextLocalTxnId_++;
-    if (nextLocalTxnId_ == 0)
-      nextLocalTxnId_ = 1;
-    executorTxnId_ = executorTxnId;
-    active_ = true;
+    LocalLiteStorageManager::instance().beginStatement(this, transactionId);
     return true;
   }
 
   bool commit(int64_t executorTxnId, std::string *error)
   {
     PendingMap pending;
+    uint64_t transactionId = 0;
     {
       LocalLiteMutexGuard guard(&mutex_);
       if (!active_)
@@ -978,10 +995,14 @@ public:
         }
 
       pending.swap(pendingTables_);
+      transactionId = localTxnId_;
       localTxnId_ = 0;
       executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
       active_ = false;
     }
+
+    LocalLiteStorageManager::instance().endStatement(this, transactionId);
+    transactionStore_.close();
 
     LocalLiteRocksDBStore store;
     for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
@@ -999,22 +1020,29 @@ public:
 
   bool rollback(int64_t executorTxnId, std::string *error)
   {
-    LocalLiteMutexGuard guard(&mutex_);
-    if (!active_)
-      {
+    uint64_t transactionId = 0;
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (!active_)
+        {
           setError(error, "no active local-lite transaction");
           return false;
         }
-    if (!matchesExecutorTxnId(executorTxnId))
-      {
-        setError(error, "local-lite transaction context mismatch");
-        return false;
-      }
+      if (!matchesExecutorTxnId(executorTxnId))
+        {
+          setError(error, "local-lite transaction context mismatch");
+          return false;
+        }
 
-    pendingTables_.clear();
-    localTxnId_ = 0;
-    executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
-    active_ = false;
+      pendingTables_.clear();
+      transactionId = localTxnId_;
+      localTxnId_ = 0;
+      executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
+      active_ = false;
+    }
+
+    LocalLiteStorageManager::instance().endStatement(this, transactionId);
+    transactionStore_.close();
     return true;
   }
 
@@ -1121,7 +1149,18 @@ public:
                 std::vector<LocalLiteRow> *rows,
                 std::string *error)
   {
-    if (!store->scanRows(table, statementOwner, statementExecutionId,
+    const void *readOwner = statementOwner;
+    uint64_t readExecutionId = statementExecutionId;
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (active_)
+        {
+          readOwner = this;
+          readExecutionId = localTxnId_;
+        }
+    }
+
+    if (!store->scanRows(table, readOwner, readExecutionId,
                          rows, error))
       return false;
 
@@ -1155,10 +1194,14 @@ public:
         return false;
       }
 
+    const void *readOwner = statementOwner;
+    uint64_t readExecutionId = statementExecutionId;
     {
       LocalLiteMutexGuard guard(&mutex_);
       if (active_)
         {
+          readOwner = this;
+          readExecutionId = localTxnId_;
           PendingMap::iterator it = pendingTables_.find(tableKey(table));
           if (it != pendingTables_.end())
             {
@@ -1180,8 +1223,8 @@ public:
         }
     }
 
-    return store->getRowByKey(table, storageKey, statementOwner,
-                              statementExecutionId, row, found, error);
+    return store->getRowByKey(table, storageKey, readOwner,
+                              readExecutionId, row, found, error);
   }
 
   static LocalLiteTxnState &instance()
@@ -1259,6 +1302,7 @@ private:
   uint64_t localTxnId_;
   int64_t executorTxnId_;
   PendingMap pendingTables_;
+  LocalLiteRocksDBStore transactionStore_;
   pthread_mutex_t mutex_;
 };
 
