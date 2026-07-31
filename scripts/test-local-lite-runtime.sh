@@ -154,7 +154,7 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
   fail "missing executable local-lite regress runner: $local_regress"
 [[ -x "$local_regress_dir/FILTER" ]] ||
   fail "missing executable local-lite regress output filter"
-for test_number in 001 002 003 004; do
+for test_number in 001 002 003 004 005; do
   [[ -f "$local_regress_dir/TEST$test_number" &&
      -f "$local_regress_dir/EXPECTED$test_number" ]] ||
     fail "local-lite regress lane is missing TEST/EXPECTED$test_number"

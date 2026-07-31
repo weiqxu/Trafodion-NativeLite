@@ -369,6 +369,10 @@ Current cases are:
   and VARCHAR UNIQUE get-row access, NUMERIC/DECIMAL/BigNum values, and
   direct DATE/TIME/TIMESTAMP result materialization from standalone expressions
   and persisted rows.
+- `TEST005`: portable expression and query-shape coverage adapted from legacy
+  core/executor regressions, including CASE, TRIM/concatenation, LIKE/OR,
+  typed and untyped NULL behavior, left-join null instantiation, HAVING, and a
+  scalar aggregate subquery.
 
 Run all cases or a selected subset from the repository root:
 
@@ -582,8 +586,8 @@ above.
 
 ### Current Task Status
 
-Last updated after fixing direct datetime result materialization in standalone
-local-lite SQLCI.
+Last updated after adding portable expression and query-shape SQL to the native
+local-lite regress lane.
 
 Completed:
 
@@ -660,12 +664,20 @@ Completed:
   values instead of external text that would be converted a second time.
   Native `TEST004` validates direct DATE/TIME/TIMESTAMP output from both
   `VALUES` and persisted local rows without explicit character casts.
+- Native `TEST005` moves portable coverage from `core/TEST001`, `core/TEST038`,
+  and `executor/TEST002` into the isolated lane. It validates CASE and string
+  expressions, LIKE/OR predicates, legacy untyped-NULL diagnostics, typed NULL
+  propagation, left-join null instantiation, grouped HAVING, and a scalar
+  aggregate subquery through normal executor plans.
 
 Remaining, in suggested implementation order:
 
-1. Port more compatible `core` and `executor` SQL into the native regress lane.
+1. Port compatible set-operation and derived-table/correlated-subquery SQL from
+   `core` and `executor` into the native regress lane.
+2. Continue moving compatible binder/runtime diagnostic cases into deterministic
+   TEST/EXPECTED coverage.
 
-The next task to start is **Broader native regress SQL coverage**.
+The next task to start is **Set-operation and derived-table regress coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

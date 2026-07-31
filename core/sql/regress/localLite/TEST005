@@ -1,0 +1,93 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable NULL/expression coverage adapted from core/TEST001 and core/TEST038,
+-- plus outer-join and HAVING query shapes adapted from executor/TEST002.
+CREATE TABLE LLREG005_EXPR
+  (id INT PRIMARY KEY,
+   grp INT,
+   code VARCHAR(16),
+   val INT);
+
+INSERT INTO LLREG005_EXPR VALUES
+  (1, 10, 'alpha', 4),
+  (2, 10, ' beta ', NULL),
+  (3, 20, 'alphabet', -7),
+  (4, NULL, NULL, 12),
+  (5, 30, 'gamma', 0);
+
+SELECT id,
+       CASE WHEN val IS NULL THEN -1
+            WHEN val < 0 THEN -val
+            ELSE val END AS normalized,
+       CHAR_LENGTH(TRIM(code)) AS code_len
+  FROM LLREG005_EXPR
+  ORDER BY id;
+
+SELECT id, TRIM(code) || '-x' AS tagged
+  FROM LLREG005_EXPR
+  WHERE code IS NOT NULL
+  ORDER BY id;
+
+SELECT id
+  FROM LLREG005_EXPR
+  WHERE code LIKE 'alpha%'
+     OR (val BETWEEN 0 AND 4 AND grp IN (10, 30))
+  ORDER BY id;
+
+-- Untyped NULL operands retain the legacy core diagnostics.
+SELECT val + NULL FROM LLREG005_EXPR WHERE id = 1;
+SELECT code || NULL FROM LLREG005_EXPR WHERE id = 1;
+
+-- Explicitly typed NULL operands propagate through the expressions.
+SELECT id,
+       val + CAST(NULL AS INT) AS null_num,
+       code || CAST(NULL AS VARCHAR(16)) AS null_text
+  FROM LLREG005_EXPR
+  WHERE id IN (1, 4)
+  ORDER BY id;
+
+CREATE TABLE LLREG005_LOOKUP
+  (grp INT PRIMARY KEY,
+   label VARCHAR(12));
+
+INSERT INTO LLREG005_LOOKUP VALUES
+  (10, 'ten'),
+  (20, 'twenty'),
+  (40, 'forty');
+
+SELECT e.id, l.label
+  FROM LLREG005_EXPR e LEFT JOIN LLREG005_LOOKUP l ON e.grp = l.grp
+  ORDER BY e.id;
+
+SELECT grp,
+       COUNT(*) AS rows_in_group,
+       COUNT(val) AS nonnull_vals,
+       SUM(val) AS total
+  FROM LLREG005_EXPR
+  GROUP BY grp
+  HAVING SUM(val) >= 0
+  ORDER BY grp;
+
+SELECT id
+  FROM LLREG005_EXPR
+  WHERE val > (SELECT AVG(val) FROM LLREG005_EXPR)
+  ORDER BY id;
+
+DROP TABLE LLREG005_LOOKUP;
+DROP TABLE LLREG005_EXPR;
+exit;

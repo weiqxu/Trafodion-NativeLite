@@ -418,6 +418,8 @@ primary/UNIQUE access, NUMERIC/DECIMAL/BigNum, and datetime fields in one wide
 row. Direct datetime result materialization is now complete: the local-lite
 SQLCI prologue enables internal datetime IO before the first user statement,
 and the native lane validates direct DATE/TIME/TIMESTAMP results from standalone
-expressions and persisted rows. Broader work next moves to additional portable
-regress SQL. The transaction-specific multi-table and catalog/table
-crash-atomicity limits remain unchanged.
+expressions and persisted rows. Portable CASE/string/NULL expressions, outer
+join null instantiation, HAVING, and scalar aggregate subqueries are now also
+covered by native `TEST005`. Broader work next moves to set operations and
+derived/correlated subqueries. The transaction-specific multi-table and
+catalog/table crash-atomicity limits remain unchanged.
