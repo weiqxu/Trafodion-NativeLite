@@ -417,6 +417,9 @@ Current cases are:
 - `TEST018`: single-byte `CONVERTTOHEX` over literals and stored CHAR/VARCHAR
   values, including ISO88591 byte boundaries, fixed-width padding, empty
   strings, NULL propagation, `INSERT ... SELECT` assignment, and predicates.
+- `TEST019`: single-byte `CONVERTFROMHEX` round trips, persisted VARCHAR
+  inputs, assignment and predicates, invalid half-byte and runtime odd-length
+  diagnostics, legacy binder diagnostics `4043`/`4068`, and error recovery.
 
 Run all cases or a selected subset from the repository root:
 
@@ -441,7 +444,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST018`. The legacy files remain useful as SQL-shape input, but their
+`TEST019`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -458,11 +461,12 @@ unchanged in local-lite.
 | `ASCII` and `CHAR` code conversion | Covered by `TEST016`, including stored NULL/empty values, ISO88591 `0..255` round trips, scalar subqueries, predicates, and diagnostic `8428` | Explicit UTF8/UCS2 forms and charset translation remain outside this portable increment. |
 | `DATEFORMAT`, `DAYNAME`, and `MONTHNAME` | Covered by `TEST017`, including `DEFAULT`/`USA`/`EUROPEAN` formats, leap-day and year-boundary values, NULL propagation, assignment, and predicates | Existing compiler/executor behavior was sufficient; locale-dependent variants remain outside this portable increment. |
 | `CONVERTTOHEX` over single-byte values | Covered by `TEST018`, including uppercase output, ISO88591 `00`/`7F`/`80`/`FF` boundaries, CHAR padding, VARCHAR length, empty/NULL inputs, assignment, and predicates | UTF8/UCS2 encoding and translation matrices remain outside this portable increment. |
-| `CONVERTFROMHEX` over single-byte values | Compiler/executor candidate, not claimed by the native lane | This is the next deterministic inverse-conversion gap; include round trips plus operand-type and odd-length diagnostics adapted from `compGeneral/TEST006`. |
+| `CONVERTFROMHEX` over single-byte values | Covered by `TEST019`, including byte-boundary round trips, persisted empty/NULL values, assignment, predicates, invalid half-byte and runtime odd-length diagnostic `8428`, binder diagnostics `4043`/`4068`, and post-error recovery | The executor now validates both input half-bytes independently; UTF8/UCS2 conversion remains outside this portable increment. |
+| `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases | Parser/executor candidates, not claimed by the native lane | This is the next deterministic single-byte compatibility gap; adapt portable `TO_HEX` shapes from `seabase/TEST004` and pair them with the inverse aliases. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable single-byte `CONVERTFROMHEX`
-round-trip and diagnostic coverage.
+The next compatibility increment is portable single-byte hex-function alias
+coverage for `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX`.
 
 ## RocksDB Local Store Implementation
 
@@ -821,6 +825,13 @@ Completed:
   boundaries, fixed CHAR padding versus VARCHAR length, empty and NULL inputs,
   `INSERT ... SELECT` assignment, and predicate use. Existing
   compiler/executor behavior required no implementation change.
+- Native `TEST019` adds portable single-byte `CONVERTFROMHEX` round trips and
+  migrates operand-type and odd declared-length diagnostics from
+  `compGeneral/TEST006`. It covers persisted empty/NULL values, assignment,
+  predicates, invalid half-bytes, runtime odd length, binder diagnostics
+  `4043`/`4068`, and post-error recovery. The executor now groups each
+  half-byte validity test independently so an invalid second character cannot
+  pass merely because the first character is numeric.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -828,12 +839,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe portable single-byte `CONVERTFROMHEX` round trips and migrate its
-   operand-type and odd-length diagnostics from `compGeneral/TEST006`,
-   including stored nullable values, assignment, predicates, and post-error
-   recovery.
+1. Probe and migrate portable single-byte `TO_HEX` forms from
+   `seabase/TEST004`, then cover equivalent `HEX`, `UNHEX`, and `FROM_HEX`
+   aliases over literals, stored nullable values, assignment, and predicates.
 
-The next task to start is **Portable single-byte `CONVERTFROMHEX` regress
+The next task to start is **Portable single-byte hex-function alias regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**

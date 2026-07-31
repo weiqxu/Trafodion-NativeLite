@@ -1,0 +1,91 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable single-byte CONVERTFROMHEX coverage adapted from
+-- compGeneral/TEST006 and paired with CONVERTTOHEX for byte-safe output.
+CREATE TABLE LLREG019_HEX_SOURCE
+  (id INT PRIMARY KEY,
+   hex_txt VARCHAR(16));
+
+INSERT INTO LLREG019_HEX_SOURCE VALUES
+  (1, '616263'),
+  (2, ''),
+  (3, '4120'),
+  (4, NULL);
+
+-- Round trips preserve normal text and the complete ISO88591 byte boundaries.
+SELECT CONVERTTOHEX(CONVERTFROMHEX('416230')) AS literal_roundtrip,
+       CONVERTTOHEX(CONVERTFROMHEX('007F80FFA0')) AS boundary_roundtrip
+  FROM (VALUES (1)) AS v(n);
+
+-- Stored VARCHAR inputs preserve their actual length, including empty and
+-- NULL values.
+SELECT id,
+       CONVERTTOHEX(CONVERTFROMHEX(hex_txt)) AS roundtrip_hex,
+       CHAR_LENGTH(CONVERTFROMHEX(hex_txt)) AS decoded_len
+  FROM LLREG019_HEX_SOURCE
+ ORDER BY id;
+
+-- Assignment preserves decoded text, zero length, trailing space, and NULL.
+CREATE TABLE LLREG019_DECODED
+  (id INT PRIMARY KEY,
+   decoded VARCHAR(8));
+
+INSERT INTO LLREG019_DECODED
+SELECT id, CONVERTFROMHEX(hex_txt)
+  FROM LLREG019_HEX_SOURCE;
+
+SELECT id,
+       CONVERTTOHEX(decoded) AS decoded_hex,
+       CHAR_LENGTH(decoded) AS decoded_len
+  FROM LLREG019_DECODED
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG019_HEX_SOURCE
+ WHERE CONVERTFROMHEX(hex_txt) = 'abc'
+ ORDER BY id;
+
+-- Invalid characters in either half-byte and an odd runtime length all raise
+-- the existing executor diagnostic. The 0G case guards the second-half-byte
+-- validation that previously depended on operator precedence.
+SELECT CONVERTTOHEX(CONVERTFROMHEX(hex_txt)) AS bad_second_digit
+  FROM (VALUES ('0G')) AS bad_hex(hex_txt);
+
+SELECT CONVERTTOHEX(CONVERTFROMHEX(hex_txt)) AS bad_first_digit
+  FROM (VALUES ('G0')) AS bad_hex(hex_txt);
+
+SELECT CONVERTTOHEX(CONVERTFROMHEX(CAST('ABC' AS VARCHAR(4))))
+         AS odd_runtime_length
+  FROM (VALUES (1)) AS v(n);
+
+-- Preserve the legacy binder diagnostics for odd declared length and a
+-- non-character operand.
+SELECT CONVERTFROMHEX(CAST('ABC' AS CHAR(3))) AS odd_declared_length
+  FROM (VALUES (1)) AS v(n);
+
+SELECT CONVERTFROMHEX(id) AS non_character_operand
+  FROM LLREG019_HEX_SOURCE
+ WHERE id = 1;
+
+-- Executor and binder errors must not poison later local-table access.
+SELECT COUNT(*) AS recovered_rows
+  FROM LLREG019_HEX_SOURCE;
+
+DROP TABLE LLREG019_DECODED;
+DROP TABLE LLREG019_HEX_SOURCE;
+exit;

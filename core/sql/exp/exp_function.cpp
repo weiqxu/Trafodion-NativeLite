@@ -2112,8 +2112,8 @@ ex_expr::exp_return_type ExFunctionConvertHex::eval(char *op_data[],
       Int32 j = 0;
       while (i < len1)
 	{
-	  if (((op_data[1][i] >= '0') && (op_data[1][i] <= '9')) ||
-	      ((op_data[1][i] >= 'A') && (op_data[1][i] <= 'F')) &&
+	  if ((((op_data[1][i] >= '0') && (op_data[1][i] <= '9')) ||
+	       ((op_data[1][i] >= 'A') && (op_data[1][i] <= 'F'))) &&
 	      (((op_data[1][i+1] >= '0') && (op_data[1][i+1] <= '9')) ||
 	       ((op_data[1][i+1] >= 'A') && (op_data[1][i+1] <= 'F'))))
 	    {
