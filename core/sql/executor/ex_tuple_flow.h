@@ -115,6 +115,10 @@ class ExTupleFlowTcb : public ex_tcb
   ex_queue_pair  qSrc_;
   ex_queue_pair  qTgt_;
 
+#ifdef TRAF_LOCAL_LITE
+  NABoolean localLiteAutocommitTxnStarted_;
+#endif
+
 public:
   // Step in processing the parent row
   enum TupleFlowStep 
@@ -195,4 +199,3 @@ public:
 
 
 #endif
-

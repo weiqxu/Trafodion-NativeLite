@@ -969,6 +969,7 @@ public:
   ex_queue_pair getParentQueue() const { return qparent_; }
   Int32 numChildren() const { return 0; }
   const ex_tcb *getChild(Int32) const { return NULL; }
+  NABoolean isLocalLiteInsert() const { return TRUE; }
 
   ex_tcb_private_state *allocatePstates(Lng32 &numElems, Lng32 &pstateLength)
   {

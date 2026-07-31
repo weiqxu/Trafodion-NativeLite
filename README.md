@@ -12,8 +12,9 @@ Local-lite is not a complete standalone database. It has a narrow
 RocksDB-backed local table path reachable from `sqlci`, but supported queries
 fall through normal compiler/executor execution and use local executor scan and
 insert TCBs. It has single-process local `BEGIN`/`COMMIT`/`ROLLBACK` support,
-but no atomic multi-table commit, indexes, privileges, JDBC/ODBC service path,
-DCS/REST stack, or HBase/HDFS/Hive runtime.
+and autocommit `INSERT ... SELECT` tuple flows publish atomically within one
+table. It has no atomic multi-table commit, indexes, privileges, JDBC/ODBC
+service path, DCS/REST stack, or HBase/HDFS/Hive runtime.
 
 Full details are in:
 

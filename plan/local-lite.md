@@ -55,7 +55,7 @@ Implemented:
   `TRAF_LOCAL_STORE_DIR` or `TRAF_VAR/localstore/rocksdb`.
 - Basic local table SQL in `sqlci`: compiler-routed `CREATE TABLE`,
   `DROP TABLE`, and executor-routed single-row and multi-row
-  `INSERT INTO ... VALUES (...)`.
+  `INSERT INTO ... VALUES (...)` plus `INSERT ... SELECT` tuple flows.
 - Local catalog NATable loading for local-lite RocksDB tables.
 - Local RocksDB executor scan TCB for compiler-generated local table `SELECT`
   plans. It scans RocksDB rows, maps the compiler projection through the
@@ -72,6 +72,10 @@ Implemented:
   combines row-id allocation and row persistence into one local storage manager
   operation instead of issuing separate calls from the executor TCB. The legacy
   public store APIs for direct row-id allocation and row put have been removed.
+- Autocommit tuple flows whose target is `LocalLiteHbaseInsertTcb` open a local
+  transaction before requesting source rows. They publish the pending rows in
+  one per-table RocksDB write batch only after source and target EOD, and roll
+  the pending rows back on source errors, target errors, or cancellation.
 - Local table scans and get-row reads now go through the `LocalLiteTxn` facade
   with a statement execution token. All scan TCBs that access the same table in
   one executor statement reuse one RocksDB snapshot, which is released by the
@@ -320,12 +324,12 @@ Supported local-lite `sqlci` behavior:
 - `SELECT` queries against `VALUES` clauses.
 - Minimal RocksDB local table support: `CREATE TABLE` and `DROP TABLE` route
   through the compiler DDL path; single-row and multi-row
-  `INSERT INTO ... VALUES (...)` bind and execute through the local RocksDB
-  executor insert TCB; local table `SELECT` statements bind through the local
-  catalog NATable and run through the local RocksDB executor scan TCB. Runtime
-  coverage includes projection, predicates, ordering, self-join, inner join,
-  left join, ungrouped aggregate expression query shapes, and grouped
-  aggregates over duplicate and NULL group keys with `HAVING`.
+  `INSERT INTO ... VALUES (...)` and `INSERT ... SELECT` bind and execute through
+  the local RocksDB executor insert TCB; local table `SELECT` statements bind
+  through the local catalog NATable and run through the local RocksDB executor
+  scan TCB. Runtime coverage includes projection, predicates, ordering,
+  self-join, inner join, left join, ungrouped aggregate expression query shapes,
+  and grouped aggregates over duplicate and NULL group keys with `HAVING`.
 - Basic scalar expressions, arithmetic, and string operations.
 - Direct `DATE`, `TIME`, and `TIMESTAMP` result rendering for standalone
   expressions and local table columns.
@@ -385,6 +389,10 @@ Current cases are:
 - `TEST009`: compiler-routed local DDL diagnostics and SQLCI pre-prepare
   diagnostics for unsupported DML, object DDL, native external-table DDL, table
   alteration, and truncation, including post-error base-table verification.
+- `TEST010`: `INSERT ... SELECT` with target-column reordering, source
+  expressions/predicates, a `UNION ALL` source, explicit transaction rollback,
+  autocommit rollback after a late primary-key conflict, and successful
+  post-error transaction cleanup.
 
 Run all cases or a selected subset from the repository root:
 
@@ -403,6 +411,28 @@ The current successful set-operation surface is `UNION ALL` and `UNION`
 distinct. `INTERSECT` and `EXCEPT` remain disabled by the existing binder
 default and are not claimed by the local-lite lane. `TEST007` locks this
 boundary to the existing `3022` diagnostic.
+
+### Legacy Core/Executor Compatibility Audit
+
+The audit compared the portable portions of legacy `core/TEST001`,
+`core/TEST002`, `executor/TEST001`, and `executor/TEST002` with native
+`TEST001` through `TEST010`. The legacy files remain useful as SQL-shape input,
+but their environment setup, object inventory, and EXPECTED output cannot be
+run unchanged in local-lite.
+
+| Legacy area | Native status | Remaining work |
+| --- | --- | --- |
+| Basic table DDL, `INSERT VALUES`, scans, expressions, joins, aggregates, derived tables, subqueries, and `UNION` | Covered by `TEST001`-`TEST006` | Continue migrating only deterministic, service-independent variants. |
+| Binder, executor-value, DDL, and unsupported-surface diagnostics | Covered by `TEST007`-`TEST009` | Add narrow cases only when they protect a local-lite invariant. |
+| `INSERT ... SELECT` | Covered by `TEST010` | Tuple-flow autocommit is now atomic within one target table; cross-table and catalog/table crash atomicity remain out of scope. |
+| SQLCI `PREPARE`/`EXECUTE` lifecycle | Compiler PREPARE is used by existing EXPLAIN smoke, but repeated prepared SELECT/INSERT execution is not in the native lane | This is the next portable coverage gap. |
+| `NATURAL JOIN`, general `SELECT DISTINCT`, `FIRST`/limit shapes, regex, and additional string functions | Compiler/executor candidates, not claimed by the native lane | Probe and migrate after prepared execution coverage. |
+| UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
+
+The next compatibility increment is prepared-statement execution coverage:
+prepare and repeatedly execute local SELECT and INSERT statements, verify
+parameter/result reuse where supported, and confirm recovery after a prepared
+statement error.
 
 ## RocksDB Local Store Implementation
 
@@ -559,7 +589,11 @@ UNIQUE constraints in the base RocksDB table.
 
 This replaces the previous SQLCI `INSERT INTO ... VALUES` bypass. INSERT type
 conversion and expression evaluation now come from the compiler/executor path
-for the supported v1 local table types.
+for the supported v1 local table types. For an insert-select plan, the normal
+`ExTupleFlowTcb` feeds source ATPs to this child. In local-lite, a tuple flow
+whose target identifies itself as a local insert creates an implicit
+`LocalLiteTxn` when there is no explicit transaction, commits after complete
+source/target EOD, and rolls back after child errors or cancellation.
 
 ### SQLCI Handler
 
@@ -603,8 +637,8 @@ above.
 
 ### Current Task Status
 
-Last updated after moving compiler DDL and unsupported-statement diagnostics
-from the SQLCI smoke path into the native regress lane.
+Last updated after making autocommit insert tuple flows atomic and adding native
+`INSERT ... SELECT` regress coverage.
 
 Completed:
 
@@ -708,13 +742,25 @@ Completed:
   the original `3242` diagnostics. It also locks the SQLCI pre-prepare messages
   for unsupported UPDATE/DELETE/MERGE, UPSERT, object DDL, external-table DDL,
   ALTER, and TRUNCATE, then confirms that the base table remains unchanged.
+- Native `TEST010` migrates the basic `INSERT ... SELECT` shapes from legacy
+  executor tests. It covers column reordering, expressions, source filtering,
+  a `UNION ALL` source, explicit rollback, and a late primary-key conflict that
+  must not partially publish earlier tuple-flow rows. A subsequent successful
+  insert confirms that error cleanup releases the implicit local transaction.
+- Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
+  statement transaction when no explicit local transaction is active. The
+  tuple flow commits only after complete source/target EOD and rolls back on
+  either child error or cancellation.
 
 Remaining, in suggested implementation order:
 
-1. Audit the remaining portable `core` and `executor` cases against the native
-   lane and record the next supported SQL gap before expanding the v1 surface.
+1. Add native SQLCI `PREPARE`/`EXECUTE` coverage for repeated local SELECT and
+   INSERT execution, including deterministic post-error recovery.
+2. Probe and migrate the next portable query-shape group (`NATURAL JOIN`,
+   general `SELECT DISTINCT`, and `FIRST`/limit) without expanding unsupported
+   storage or service-stack behavior.
 
-The next task to start is **Native regress compatibility gap audit**.
+The next task to start is **Prepared statement execution regress coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -817,9 +863,9 @@ The next task to start is **Native regress compatibility gap audit**.
 - [x] **Persist local table rows as versioned binary aligned payloads.**
   - Implemented in `core/sql/localstore/LocalLiteRowCodec.cpp` and
     `core/sql/localstore/LocalLiteRowCodec.h`.
-  - Executor `INSERT INTO ... VALUES` now evaluates the compiler-generated
-    insert expression and persists the complete table row as `LLBR1` binary
-    aligned row data through `LocalLiteRocksDBStore`.
+  - Executor `INSERT INTO ... VALUES` and `INSERT ... SELECT` now evaluate the
+    compiler-generated insert expression and persist the complete table row as
+    `LLBR1` binary aligned row data through `LocalLiteRocksDBStore`.
   - Executor scans project directly from the binary payload; the older
     SQLCI-local text-field row payload is no longer used for new rows.
   - Runtime validation covers persisted `INT, VARCHAR` rows across separate
@@ -835,7 +881,7 @@ The next task to start is **Native regress compatibility gap audit**.
     executor-produced insert row into the local canonical binary aligned row
     layout before persistence.
   - Runtime validation covers single-row and multi-row `INSERT INTO ... VALUES`
-    followed by projected executor scans.
+    plus `INSERT ... SELECT`, followed by projected executor scans.
 
 - [x] **Harden predicates for local RocksDB scans.**
   - Ensure predicate-only columns are available to expression evaluation even

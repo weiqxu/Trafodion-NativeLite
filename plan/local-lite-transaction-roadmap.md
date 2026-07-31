@@ -23,7 +23,8 @@ Local-lite currently supports a narrow local table path:
 
 - `CREATE TABLE` and `DROP TABLE` are routed through compiler DDL code and write
   local RocksDB catalog metadata.
-- `INSERT INTO ... VALUES` executes through `LocalLiteHbaseInsertTcb`.
+- `INSERT INTO ... VALUES` and `INSERT ... SELECT` execute through
+  `LocalLiteHbaseInsertTcb`.
 - `SELECT` executes through `LocalLiteHbaseScanTcb`.
 - Executor scan can consume encoded `listOfGetRows()` row-key requests through
   `LocalLiteTxn::getRowByKey()` and falls back to full scan when no get-row
@@ -127,13 +128,16 @@ Validation:
 
 ### Phase 2: Statement-Level Atomic Writes
 
-Status: initial autocommit facade implemented for local table INSERT. Row-id
-allocation and row persistence now go through one `LocalLiteTxn::insertRow()`
-operation protected by the local storage manager mutex. The old public
-`allocateRowId()` and direct `putRow()` store APIs have been removed, so local
-executor writes cannot bypass the transaction facade. Because catalog metadata
-and table rows still live in separate RocksDB databases, this phase does not yet
-claim cross-process or crash-atomic multi-DB commit semantics.
+Status: implemented for local table INSERT, including multi-row tuple-flow
+plans. Row-id allocation and row persistence go through
+`LocalLiteTxn::insertRow()`; an autocommit tuple flow targeting the local insert
+TCB opens an implicit local transaction, commits its pending rows only after
+complete source/target EOD, and rolls back on source errors, target errors, or
+cancellation. The old public `allocateRowId()` and direct `putRow()` store APIs
+have been removed, so local executor writes cannot bypass the transaction
+facade. Because catalog metadata and table rows still live in separate RocksDB
+databases, this phase does not claim cross-process or crash-atomic multi-DB
+commit semantics.
 Same-process concurrent write coverage now exercises multiple writer threads
 plus an overlapping scanner through the local transaction facade and validates
 contiguous, duplicate-free row ids.
@@ -156,6 +160,8 @@ Validation:
 
 - Multi-row `INSERT` either persists all accepted rows for the statement or
   returns an error before reporting success.
+- A late primary-key conflict in autocommit `INSERT ... SELECT` leaves no rows
+  from that statement and does not poison the following statement.
 - Row id allocation does not duplicate under same-process concurrent inserts.
 - Failed insert expression or constraint evaluation does not advance persisted
   row state for that row.
@@ -426,8 +432,11 @@ aggregation and joins over derived tables, and correlated
 deterministic set-operation, INSERT-shape/NOT-NULL, and scalar-subquery
 cardinality diagnostics together with post-error recovery checks. Native
 `TEST008` adds aggregate/subquery binder diagnostics and executor invalid-value,
-overflow, and division-by-zero recovery coverage. Native `TEST009` now locks
+overflow, and division-by-zero recovery coverage. Native `TEST009` locks
 compiler DDL and SQLCI pre-prepare unsupported-statement diagnostics together
-with post-error base-table verification. Broader work next audits the remaining
-portable legacy cases for the next supported SQL gap. The transaction-specific
-multi-table and catalog/table crash-atomicity limits remain unchanged.
+with post-error base-table verification. Native `TEST010` now covers successful
+`INSERT ... SELECT`, explicit rollback, and autocommit tuple-flow rollback when
+a late primary-key conflict follows earlier accepted source rows. The
+compatibility audit identifies prepared SELECT/INSERT execution as the next
+portable regress gap. The transaction-specific multi-table and catalog/table
+crash-atomicity limits remain unchanged.

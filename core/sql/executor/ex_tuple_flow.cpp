@@ -47,6 +47,10 @@
 #include "ExpError.h"
 #include "cli_stdh.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#endif
+
 /////////////////////////////////////////////////////////////////////////
 //
 //  TDB procedures
@@ -96,6 +100,10 @@ ExTupleFlowTcb::ExTupleFlowTcb(const ExTupleFlowTdb &  tuple_flow_tdb,
   qSrc_  = src_tcb.getParentQueue();
   qTgt_  = tgt_tcb.getParentQueue();
 
+#ifdef TRAF_LOCAL_LITE
+  localLiteAutocommitTxnStarted_ = FALSE;
+#endif
+
   ex_cri_desc * from_parent_cri = tuple_flow_tdb.criDescDown_;  
   ex_cri_desc * to_parent_cri   = tuple_flow_tdb.criDescUp_;
 
@@ -136,6 +144,14 @@ ExTupleFlowTcb::~ExTupleFlowTcb()
  
 void ExTupleFlowTcb::freeResources()
 {
+#ifdef TRAF_LOCAL_LITE
+  if (localLiteAutocommitTxnStarted_)
+    {
+      std::string error;
+      LocalLiteTxnManager::rollback(&error);
+      localLiteAutocommitTxnStarted_ = FALSE;
+    }
+#endif
   delete pool_;
   pool_ = 0;
 }
@@ -192,6 +208,40 @@ short ExTupleFlowTcb::work()
 	  {
 	    if (qSrc_.down->isFull())
 	      return WORK_OK;
+
+#ifdef TRAF_LOCAL_LITE
+            // The target receives one request per source row. Keep those rows
+            // pending until the complete source/target flow reaches EOD.
+            if (tcbTgt_->isLocalLiteInsert() &&
+                !LocalLiteTxnManager::active())
+              {
+                std::string error;
+                if (!LocalLiteTxnManager::begin(&error))
+                  {
+                    if (qParent_.up->isFull())
+                      return WORK_OK;
+
+                    ex_queue_entry *upEntry = qParent_.up->getTailEntry();
+                    upEntry->copyAtp(pentry_down);
+                    ComDiagsArea *diags =
+                      ComDiagsArea::allocate(getGlobals()->getDefaultHeap());
+                    *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
+                           << DgString0(error.c_str());
+                    upEntry->setDiagsArea(diags);
+                    upEntry->upState.status = ex_queue::Q_SQLERROR;
+                    upEntry->upState.downIndex = qParent_.down->getHeadIndex();
+                    upEntry->upState.parentIndex =
+                      pentry_down->downState.parentIndex;
+                    upEntry->upState.setMatchNo(0);
+                    qParent_.up->insert();
+
+                    pstate.init();
+                    pstate.step_ = DONE_;
+                    return WORK_CALL_AGAIN;
+                  }
+                localLiteAutocommitTxnStarted_ = TRUE;
+              }
+#endif
 
 	    ex_queue_entry * src_entry = qSrc_.down->getTailEntry();
 
@@ -695,6 +745,16 @@ short ExTupleFlowTcb::work()
             // insert Q_SQLERROR into the parent up queue
             if ((pstate.srcEOD_ == TRUE)  &&  !pstate.tgtRequests_)
               {
+#ifdef TRAF_LOCAL_LITE
+                // An error or cancellation has drained both children. Discard
+                // every row staged by this implicit statement transaction.
+                if (localLiteAutocommitTxnStarted_)
+                  {
+                    std::string error;
+                    LocalLiteTxnManager::rollback(&error);
+                    localLiteAutocommitTxnStarted_ = FALSE;
+                  }
+#endif
 	        pstate.step_ = DONE_; 
               }
             else
@@ -706,6 +766,39 @@ short ExTupleFlowTcb::work()
 	  {
 	    if (qParent_.up->isFull())
 	      return WORK_OK;
+
+#ifdef TRAF_LOCAL_LITE
+            // Publish only after all source rows and target replies completed.
+            if (localLiteAutocommitTxnStarted_)
+              {
+                std::string error;
+                if (!LocalLiteTxnManager::commit(&error))
+                  {
+                    localLiteAutocommitTxnStarted_ = FALSE;
+
+                    ex_queue_entry *upEntry = qParent_.up->getTailEntry();
+                    upEntry->copyAtp(pentry_down);
+                    ComDiagsArea *diags = upEntry->getDiagsArea();
+                    if (!diags)
+                      {
+                        diags = ComDiagsArea::allocate(
+                            getGlobals()->getDefaultHeap());
+                        upEntry->setDiagsArea(diags);
+                      }
+                    *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
+                           << DgString0(error.c_str());
+                    upEntry->upState.status = ex_queue::Q_SQLERROR;
+                    upEntry->upState.downIndex =
+                      qParent_.down->getHeadIndex();
+                    upEntry->upState.parentIndex =
+                      pentry_down->downState.parentIndex;
+                    upEntry->upState.setMatchNo(pstate.matchCount_);
+                    qParent_.up->insert();
+                    return WORK_CALL_AGAIN;
+                  }
+                localLiteAutocommitTxnStarted_ = FALSE;
+              }
+#endif
 	    
 	    ex_queue_entry * pentry = qParent_.up->getTailEntry();
 
@@ -834,8 +927,6 @@ ex_tcb_private_state * ExTupleFlowPrivateState::allocate_new(const ex_tcb *tcb)
 {
   return new(((ex_tcb *)tcb)->getSpace()) ExTupleFlowPrivateState((ExTupleFlowTcb *) tcb);
 }
-
-
 
 
 

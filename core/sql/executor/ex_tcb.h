@@ -176,6 +176,12 @@ public:
 
   ComTdb::ex_node_type getNodeType() const { return nodeType_; }
 
+#ifdef TRAF_LOCAL_LITE
+  // Used by tuple flow to give compiler-generated local INSERT plans one
+  // statement-atomic transaction boundary.
+  virtual NABoolean isLocalLiteInsert() const { return FALSE; }
+#endif
+
   // QSTUFF
   NABoolean isHoldable() const { return holdable_; }
   // setHoldable is redefined by the partition access tcb
