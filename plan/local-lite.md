@@ -393,6 +393,9 @@ Current cases are:
   expressions/predicates, a `UNION ALL` source, explicit transaction rollback,
   autocommit rollback after a late primary-key conflict, and successful
   post-error transaction cleanup.
+- `TEST011`: repeated prepared SELECT and INSERT execution, fresh snapshots and
+  result reuse, SQLCI parameter rebinding, prepared-statement name replacement,
+  and successful execution after a prepared INSERT duplicate-key error.
 
 Run all cases or a selected subset from the repository root:
 
@@ -416,7 +419,7 @@ boundary to the existing `3022` diagnostic.
 
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002` with native
-`TEST001` through `TEST010`. The legacy files remain useful as SQL-shape input,
+`TEST001` through `TEST011`. The legacy files remain useful as SQL-shape input,
 but their environment setup, object inventory, and EXPECTED output cannot be
 run unchanged in local-lite.
 
@@ -425,14 +428,14 @@ run unchanged in local-lite.
 | Basic table DDL, `INSERT VALUES`, scans, expressions, joins, aggregates, derived tables, subqueries, and `UNION` | Covered by `TEST001`-`TEST006` | Continue migrating only deterministic, service-independent variants. |
 | Binder, executor-value, DDL, and unsupported-surface diagnostics | Covered by `TEST007`-`TEST009` | Add narrow cases only when they protect a local-lite invariant. |
 | `INSERT ... SELECT` | Covered by `TEST010` | Tuple-flow autocommit is now atomic within one target table; cross-table and catalog/table crash atomicity remain out of scope. |
-| SQLCI `PREPARE`/`EXECUTE` lifecycle | Compiler PREPARE is used by existing EXPLAIN smoke, but repeated prepared SELECT/INSERT execution is not in the native lane | This is the next portable coverage gap. |
-| `NATURAL JOIN`, general `SELECT DISTINCT`, `FIRST`/limit shapes, regex, and additional string functions | Compiler/executor candidates, not claimed by the native lane | Probe and migrate after prepared execution coverage. |
+| SQLCI `PREPARE`/`EXECUTE` lifecycle | Covered by `TEST011`, including repeated SELECT/INSERT, new parameter values, name replacement, fresh SELECT results, and post-error recovery | Add cases only when they protect another prepared-execution invariant. |
+| `NATURAL JOIN`, general `SELECT DISTINCT`, `FIRST`/limit shapes, regex, and additional string functions | Compiler/executor candidates, not claimed by the native lane | This is the next portable coverage gap. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is prepared-statement execution coverage:
-prepare and repeatedly execute local SELECT and INSERT statements, verify
-parameter/result reuse where supported, and confirm recovery after a prepared
-statement error.
+The next compatibility increment is portable query-shape coverage: probe and
+migrate deterministic `NATURAL JOIN`, general `SELECT DISTINCT`, and
+`FIRST`/limit cases without expanding unsupported storage or service-stack
+behavior.
 
 ## RocksDB Local Store Implementation
 
@@ -637,8 +640,7 @@ above.
 
 ### Current Task Status
 
-Last updated after making autocommit insert tuple flows atomic and adding native
-`INSERT ... SELECT` regress coverage.
+Last updated after adding native prepared-statement execution regress coverage.
 
 Completed:
 
@@ -747,6 +749,10 @@ Completed:
   a `UNION ALL` source, explicit rollback, and a late primary-key conflict that
   must not partially publish earlier tuple-flow rows. A subsequent successful
   insert confirms that error cleanup releases the implicit local transaction.
+- Native `TEST011` migrates the prepared SELECT/INSERT lifecycle from legacy
+  executor/core tests. It covers repeated SELECT execution against fresh local
+  snapshots, SQLCI parameter rebinding for SELECT and INSERT, prepared-statement
+  name replacement, and deterministic recovery after a duplicate-key error.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -754,13 +760,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Add native SQLCI `PREPARE`/`EXECUTE` coverage for repeated local SELECT and
-   INSERT execution, including deterministic post-error recovery.
-2. Probe and migrate the next portable query-shape group (`NATURAL JOIN`,
+1. Probe and migrate the next portable query-shape group (`NATURAL JOIN`,
    general `SELECT DISTINCT`, and `FIRST`/limit) without expanding unsupported
    storage or service-stack behavior.
 
-The next task to start is **Prepared statement execution regress coverage**.
+The next task to start is **Portable query-shape regress coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

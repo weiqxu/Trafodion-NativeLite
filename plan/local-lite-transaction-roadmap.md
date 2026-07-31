@@ -436,7 +436,10 @@ overflow, and division-by-zero recovery coverage. Native `TEST009` locks
 compiler DDL and SQLCI pre-prepare unsupported-statement diagnostics together
 with post-error base-table verification. Native `TEST010` now covers successful
 `INSERT ... SELECT`, explicit rollback, and autocommit tuple-flow rollback when
-a late primary-key conflict follows earlier accepted source rows. The
-compatibility audit identifies prepared SELECT/INSERT execution as the next
-portable regress gap. The transaction-specific multi-table and catalog/table
-crash-atomicity limits remain unchanged.
+a late primary-key conflict follows earlier accepted source rows. Native
+`TEST011` adds repeated prepared SELECT/INSERT execution, parameter rebinding,
+fresh execution snapshots, statement-name replacement, and post-error recovery.
+The compatibility audit now identifies portable `NATURAL JOIN`, general
+`SELECT DISTINCT`, and `FIRST`/limit query shapes as the next regress gap. The
+transaction-specific multi-table and catalog/table crash-atomicity limits
+remain unchanged.
