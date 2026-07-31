@@ -399,6 +399,9 @@ Current cases are:
 - `TEST012`: base-table and derived-table `NATURAL JOIN`, single- and
   multi-column `SELECT DISTINCT`, ordered `FIRST`, legacy `[ANY n]`-style
   `LIMIT`, and correlated `FIRST` over local table scans.
+- `TEST013`: ASCII string functions over local `VARCHAR` rows, positive and
+  negated POSIX `REGEXP` predicates with NULL input, invalid-pattern diagnostic
+  `8452`, and successful table access after the executor error.
 
 Run all cases or a selected subset from the repository root:
 
@@ -421,10 +424,11 @@ boundary to the existing `3022` diagnostic.
 ### Legacy Core/Executor Compatibility Audit
 
 The audit compared the portable portions of legacy `core/TEST001`,
-`core/TEST002`, `executor/TEST001`, and `executor/TEST002` with native
-`TEST001` through `TEST012`. The legacy files remain useful as SQL-shape input,
-but their environment setup, object inventory, and EXPECTED output cannot be
-run unchanged in local-lite.
+`core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
+string-function subset of `charsets/TEST313`, with native `TEST001` through
+`TEST013`. The legacy files remain useful as SQL-shape input, but their
+environment setup, object inventory, and EXPECTED output cannot be run
+unchanged in local-lite.
 
 | Legacy area | Native status | Remaining work |
 | --- | --- | --- |
@@ -433,12 +437,12 @@ run unchanged in local-lite.
 | `INSERT ... SELECT` | Covered by `TEST010` | Tuple-flow autocommit is now atomic within one target table; cross-table and catalog/table crash atomicity remain out of scope. |
 | SQLCI `PREPARE`/`EXECUTE` lifecycle | Covered by `TEST011`, including repeated SELECT/INSERT, new parameter values, name replacement, fresh SELECT results, and post-error recovery | Add cases only when they protect another prepared-execution invariant. |
 | `NATURAL JOIN`, general `SELECT DISTINCT`, and `FIRST`/limit shapes | Covered by `TEST012`, including correlated `FIRST` through ProbeCache | `LIMIT` intentionally retains Trafodion's legacy `[ANY n]` semantics rather than ordered `FIRST` semantics. |
-| Regex and additional string functions | Compiler/executor candidates, not claimed by the native lane | This is the next portable coverage gap. |
+| POSIX `REGEXP` and additional ASCII string functions | Covered by `TEST013`, including NULL propagation, invalid-pattern `8452`, and post-error recovery | UCS2/UTF8 conversion, collation, and large-length character boundaries remain outside this portable increment. |
+| `GROUP_CONCAT` ordering, `DISTINCT`, and separator forms | Compiler/executor candidate, not claimed by the native lane | This is the next portable coverage gap. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable regex and additional string
-function coverage without expanding unsupported storage or service-stack
-behavior.
+The next compatibility increment is portable `GROUP_CONCAT` aggregate coverage
+without expanding unsupported storage or service-stack behavior.
 
 ## RocksDB Local Store Implementation
 
@@ -761,6 +765,12 @@ Completed:
   Its correlated `FIRST` case also guards scan code generation: columns supplied
   as characteristic inputs must not be appended to the inner scan's physical
   fetched-column list and remapped to the inner row ATP.
+- Native `TEST013` migrates POSIX `REGEXP` predicates from legacy
+  `executor/TEST002` and portable ASCII string functions from
+  `charsets/TEST313`. It covers stored nullable `VARCHAR` inputs for
+  `UPPER`/`LOWER`, substring/position/replacement, left/right/padding, plus
+  standalone repeat, length, insert, trim, and space expressions. An invalid
+  pattern locks diagnostic `8452`, followed by a successful table read.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -768,10 +778,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe and migrate portable regex and additional string-function cases
-   without expanding unsupported storage or service-stack behavior.
+1. Probe and migrate portable `GROUP_CONCAT` aggregate cases, including ordered,
+   `DISTINCT`, custom-separator, NULL, and grouped forms, without expanding
+   unsupported storage or service-stack behavior.
 
-The next task to start is **Portable regex and string-function regress
+The next task to start is **Portable `GROUP_CONCAT` aggregate regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**

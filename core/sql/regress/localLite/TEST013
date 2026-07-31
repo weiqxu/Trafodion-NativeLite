@@ -1,0 +1,103 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable REGEXP coverage adapted from executor/TEST002 and ASCII string
+-- functions adapted from charsets/TEST313.
+CREATE TABLE LLREG013_TEXT_ROWS
+  (id INT PRIMARY KEY,
+   txt VARCHAR(40));
+
+INSERT INTO LLREG013_TEXT_ROWS VALUES
+  (1, 'Alpha123'),
+  (2, ' beta '),
+  (3, '123'),
+  (4, '123a'),
+  (5, 'dev@trafodion.org'),
+  (6, '127.0.0.1'),
+  (7, 'xyZxy'),
+  (8, NULL);
+
+SELECT id,
+       UPPER(TRIM(txt)) AS upper_txt,
+       LOWER(TRIM(txt)) AS lower_txt
+  FROM LLREG013_TEXT_ROWS
+ WHERE id IN (1, 2, 7, 8)
+ ORDER BY id;
+
+SELECT id,
+       SUBSTRING(txt FROM 2 FOR 4) AS sliced,
+       POSITION('a' IN LOWER(txt)) AS a_position,
+       REPLACE(TRIM(txt), 'a', 'X') AS replaced
+  FROM LLREG013_TEXT_ROWS
+ WHERE id IN (1, 2, 7, 8)
+ ORDER BY id;
+
+SELECT id,
+       LEFT(TRIM(txt), 3) AS left_txt,
+       RIGHT(TRIM(txt), 3) AS right_txt,
+       LPAD(TRIM(txt), 10, '.') AS left_padded,
+       RPAD(TRIM(txt), 10, '.') AS right_padded
+  FROM LLREG013_TEXT_ROWS
+ WHERE id IN (2, 7, 8)
+ ORDER BY id;
+
+SELECT REPEAT('ab', 3) AS repeated,
+       CHAR_LENGTH('alpha') AS chars,
+       OCTET_LENGTH('alpha') AS octets
+  FROM (VALUES (1)) AS v(n);
+
+SELECT INSERT('abcghi', 4, 0, 'def') AS inserted_txt,
+       SUBSTR('abcdefghi', 2, 4) AS short_txt,
+       LTRIM('   left') AS left_trimmed,
+       RTRIM('right   ') AS right_trimmed,
+       CHAR_LENGTH(SPACE(3)) AS space_count
+  FROM (VALUES (1)) AS v(n);
+
+SELECT id
+  FROM LLREG013_TEXT_ROWS
+ WHERE txt REGEXP '^[[:digit:]]+$'
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG013_TEXT_ROWS
+ WHERE txt REGEXP '^[A-Za-z]+[0-9]+$'
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG013_TEXT_ROWS
+ WHERE txt REGEXP '^[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]+$'
+ ORDER BY id;
+
+-- SQL three-valued logic excludes the NULL row from both positive and
+-- negated REGEXP predicates.
+SELECT id
+  FROM LLREG013_TEXT_ROWS
+ WHERE NOT (txt REGEXP '^[[:digit:]]+$')
+ ORDER BY id;
+
+-- Preserve the executor's deterministic POSIX pattern diagnostic.
+SELECT id
+  FROM LLREG013_TEXT_ROWS
+ WHERE txt REGEXP '[^\';
+
+-- A REGEXP evaluation error must not poison the session or table snapshot.
+SELECT id, LOWER(txt) AS recovered_txt
+  FROM LLREG013_TEXT_ROWS
+ WHERE id = 5;
+
+DROP TABLE LLREG013_TEXT_ROWS;
+exit;

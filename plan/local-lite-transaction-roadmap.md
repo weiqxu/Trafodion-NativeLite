@@ -442,6 +442,9 @@ fresh execution snapshots, statement-name replacement, and post-error recovery.
 `TEST012` adds base and derived `NATURAL JOIN`, general `SELECT DISTINCT`,
 ordered `FIRST`, legacy `[ANY n]`-style `LIMIT`, and correlated `FIRST` coverage.
 The correlated case also guards against remapping an outer characteristic input
-as an inner scan column. The compatibility audit now identifies portable regex
-and additional string functions as the next regress gap. The transaction-
-specific multi-table and catalog/table crash-atomicity limits remain unchanged.
+as an inner scan column. `TEST013` adds portable ASCII string functions, POSIX
+`REGEXP` predicates, NULL behavior, invalid-pattern diagnostic `8452`, and
+post-error recovery. The compatibility audit now identifies portable
+`GROUP_CONCAT` aggregate shapes as the next regress gap. The
+transaction-specific multi-table and catalog/table crash-atomicity limits
+remain unchanged.
