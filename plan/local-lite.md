@@ -327,6 +327,8 @@ Supported local-lite `sqlci` behavior:
   left join, ungrouped aggregate expression query shapes, and grouped
   aggregates over duplicate and NULL group keys with `HAVING`.
 - Basic scalar expressions, arithmetic, and string operations.
+- Direct `DATE`, `TIME`, and `TIMESTAMP` result rendering for standalone
+  expressions and local table columns.
 - `exit;` and `quit;`.
 
 Unsupported behavior:
@@ -339,10 +341,6 @@ Unsupported behavior:
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
 - Distributed query execution.
 - Full transaction service behavior through TM/DTM/RMS.
-- Direct uncast `DATE`, `TIME`, and `TIMESTAMP` result rendering in the current
-  standalone SQLCI. Predicates and persisted values are supported; cast these
-  values to `CHAR` when returning them until the result-formatting path is
-  corrected.
 
 ## Local-Lite SQL Regress Lane
 
@@ -369,7 +367,8 @@ Current cases are:
 - `TEST003`: failed UNIQUE COMMIT atomicity and keyless row-id recovery.
 - `TEST004`: mixed aligned executor rows with nullable VARCHAR fields, primary
   and VARCHAR UNIQUE get-row access, NUMERIC/DECIMAL/BigNum values, and
-  DATE/TIME/TIMESTAMP values validated through explicit character conversion.
+  direct DATE/TIME/TIMESTAMP result materialization from standalone expressions
+  and persisted rows.
 
 Run all cases or a selected subset from the repository root:
 
@@ -583,8 +582,8 @@ above.
 
 ### Current Task Status
 
-Last updated after fixing mixed aligned executor rows with indirect VARCHAR
-fields.
+Last updated after fixing direct datetime result materialization in standalone
+local-lite SQLCI.
 
 Completed:
 
@@ -656,15 +655,17 @@ Completed:
   truncated executor tuple. Native `TEST004` covers reverse-order variable
   projection, NULL variable fields, primary/UNIQUE lookups, numeric families,
   and datetime fields in one table.
+- The local-lite SQLCI prologue enables CLI internal-format IO before preparing
+  the first user statement. SQLCI Formatter therefore receives binary datetime
+  values instead of external text that would be converted a second time.
+  Native `TEST004` validates direct DATE/TIME/TIMESTAMP output from both
+  `VALUES` and persisted local rows without explicit character casts.
 
 Remaining, in suggested implementation order:
 
-1. Fix direct `DATE`, `TIME`, and `TIMESTAMP` result materialization in the
-   standalone SQLCI path; this also affects direct datetime expressions over
-   `VALUES`, while explicit conversion to `CHAR` is correct.
-2. Port more compatible `core` and `executor` SQL into the native regress lane.
+1. Port more compatible `core` and `executor` SQL into the native regress lane.
 
-The next task to start is **Direct datetime result materialization**.
+The next task to start is **Broader native regress SQL coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

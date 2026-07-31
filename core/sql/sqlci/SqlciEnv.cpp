@@ -533,6 +533,12 @@ static void SqlciEnv_prologue_to_run(SqlciEnv *sqlciEnv)
 #ifdef TRAF_LOCAL_LITE
   if (NOT sqlciEnv->noBanner())
     sqlciEnv->welcomeMessage();
+
+  // SQLCI's Formatter expects datetime and interval values in their internal
+  // representation. The regular prologue enables that CLI contract below,
+  // but local-lite returns before reaching it to avoid service-stack setup.
+  SqlCmd::executeQuery("SET SESSION DEFAULT INTERNAL_FORMAT_IO 'ON';", sqlciEnv);
+
   sqlciEnv->setDoneWithPrologue(TRUE);
   return;
 #endif

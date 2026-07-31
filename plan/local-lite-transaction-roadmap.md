@@ -415,6 +415,9 @@ unsupported service stack. Mixed aligned executor rows now resolve indirect
 VARCHAR positions through the tuple VOA instead of treating `ExpOffsetMax` as
 a data offset. The native lane covers nullable variable fields together with
 primary/UNIQUE access, NUMERIC/DECIMAL/BigNum, and datetime fields in one wide
-row. Broader local-lite work next moves to direct datetime result
-materialization and additional portable regress SQL; the transaction-specific
-multi-table and catalog/table crash-atomicity limits remain unchanged.
+row. Direct datetime result materialization is now complete: the local-lite
+SQLCI prologue enables internal datetime IO before the first user statement,
+and the native lane validates direct DATE/TIME/TIMESTAMP results from standalone
+expressions and persisted rows. Broader work next moves to additional portable
+regress SQL. The transaction-specific multi-table and catalog/table
+crash-atomicity limits remain unchanged.

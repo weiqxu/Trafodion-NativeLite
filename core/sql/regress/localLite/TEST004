@@ -18,6 +18,12 @@
 -- Mixed executor row layout: datetime coverage adapted from core/TEST038 and
 -- nullable variable-column coverage adapted from executor/TEST063, combined
 -- here with local primary/UNIQUE, exact numeric, and BigNum fields.
+
+-- Standalone expressions must materialize datetime values in display form.
+VALUES
+  (DATE '2026-07-03', TIME '12:34:56',
+   TIMESTAMP '2026-07-03 12:34:56.123456');
+
 CREATE TABLE LLREG004_MIXED
   (id INT PRIMARY KEY,
    v1 VARCHAR(12),
@@ -48,17 +54,17 @@ SELECT id, v3, v2, v1
   ORDER BY id;
 
 -- Primary-key get-row with mixed fixed-width and variable projection.
-SELECT id, v1, n1, CAST(d AS CHAR(10)) AS d_text, v2
+SELECT id, v1, n1, d, v2
   FROM LLREG004_MIXED
   WHERE id = 2;
 
 -- VARCHAR UNIQUE get-row with DECIMAL, TIMESTAMP, and nullable VARCHAR output.
-SELECT id, v3, dec1, CAST(ts AS CHAR(26)) AS ts_text
+SELECT id, v3, dec1, ts
   FROM LLREG004_MIXED
   WHERE uq = 'unique-one';
 
 -- Full scan over BigNum and TIME fields, including a row where both are NULL.
-SELECT id, big1, CAST(tm AS CHAR(8)) AS tm_text
+SELECT id, big1, tm
   FROM LLREG004_MIXED
   ORDER BY id;
 

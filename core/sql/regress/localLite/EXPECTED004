@@ -1,3 +1,10 @@
+>>VALUES
++>  (DATE '2026-07-03', TIME '12:34:56',
++>   TIMESTAMP '2026-07-03 12:34:56.123456');
+(EXPR)      (EXPR)    (EXPR)
+----------  --------  --------------------------
+2026-07-03  12:34:56  2026-07-03 12:34:56.123456
+--- 1 row(s) selected.
 >>CREATE TABLE LLREG004_MIXED
 +>  (id INT PRIMARY KEY,
 +>   v1 VARCHAR(12),
@@ -31,24 +38,24 @@ ID           V3        V2                    V1
           2  ?         ?                     front-two
           3  tail-3    middle-three
 --- 3 row(s) selected.
->>SELECT id, v1, n1, CAST(d AS CHAR(10)) AS d_text, v2
+>>SELECT id, v1, n1, d, v2
 +>  FROM LLREG004_MIXED
 +>  WHERE id = 2;
-ID           V1            N1            D_TEXT      V2
+ID           V1            N1            D           V2
 -----------  ------------  ------------  ----------  --------------------
           2  front-two             -.50  2026-07-12  ?
 --- 1 row(s) selected.
->>SELECT id, v3, dec1, CAST(ts AS CHAR(26)) AS ts_text
+>>SELECT id, v3, dec1, ts
 +>  FROM LLREG004_MIXED
 +>  WHERE uq = 'unique-one';
-ID           V3        DEC1       TS_TEXT
+ID           V3        DEC1       TS
 -----------  --------  ---------  --------------------------
           1  tail-1      -45.678  2026-07-11 01:02:03.000000
 --- 1 row(s) selected.
->>SELECT id, big1, CAST(tm AS CHAR(8)) AS tm_text
+>>SELECT id, big1, tm
 +>  FROM LLREG004_MIXED
 +>  ORDER BY id;
-ID           BIG1                              TM_TEXT
+ID           BIG1                              TM
 -----------  --------------------------------  --------
           1   1234567890123456789012345678.90  01:02:03
           2  -1234567890123456789012345678.90  12:34:56
