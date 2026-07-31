@@ -426,6 +426,9 @@ Current cases are:
 - `TEST021`: environment-independent `CURRENT_USER`/`SESSION_USER`/`USER`
   invariants, including nonempty identity values, `INSERT VALUES` and
   `INSERT ... SELECT` assignment, concatenation, and predicates.
+- `TEST022`: single-byte `SPACE` over constant and stored counts, including
+  positive/zero/NULL results, both INSERT assignment paths, padded comparison,
+  count-sensitive concatenation, oversized-result diagnostics, and recovery.
 
 Run all cases or a selected subset from the repository root:
 
@@ -450,7 +453,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST021`. The legacy files remain useful as SQL-shape input, but their
+`TEST022`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -470,11 +473,12 @@ unchanged in local-lite.
 | `CONVERTFROMHEX` over single-byte values | Covered by `TEST019`, including byte-boundary round trips, persisted empty/NULL values, assignment, predicates, invalid half-byte and runtime odd-length diagnostic `8428`, binder diagnostics `4043`/`4068`, and post-error recovery | The executor now validates both input half-bytes independently; UTF8/UCS2 conversion remains outside this portable increment. |
 | `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases | Covered by `TEST020`, including ISO88591 byte boundaries, persisted empty/NULL values, assignment, and predicates | Binary/VARBINARY and UTF8/UCS2 forms remain outside this portable increment. |
 | `CURRENT_USER`, `SESSION_USER`, and `USER` identity expressions | Covered by `TEST021`, including environment-independent equality/nonempty invariants, both INSERT assignment shapes, concatenation, and predicates | Existing parser/compiler/executor behavior was sufficient; configured identity text and definer-rights identity changes remain outside this portable increment. |
-| Single-byte `SPACE` expressions | Standalone positive-count length is covered by `TEST013`; stored assignment, comparison, and concatenation shapes are not yet claimed | This is the next portable gap from `charsets/TEST313`; keep explicit UTF8/UCS2 variants outside the increment. |
+| Single-byte `SPACE` expressions | Covered by `TEST022`, including constant and stored counts, positive/zero/NULL results, both INSERT assignment paths, padded comparison, exact-length and concatenation predicates, diagnostics `4129`/`4062`, and post-error recovery | Existing parser/compiler/executor behavior was sufficient; explicit UTF8/UCS2 variants remain outside this portable increment. |
+| Single-byte `CONCAT()` function | The equivalent `||` operator is exercised throughout the native lane, but the function form is not yet claimed | This is the next portable gap from `charsets/TEST313`; cover stored assignment, empty/NULL inputs, equivalence to `||`, and predicates without adding UTF8/UCS2 variants. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable single-byte `SPACE` assignment,
-comparison, and concatenation coverage over local tables.
+The next compatibility increment is portable single-byte `CONCAT()` function
+coverage over local tables.
 
 ## RocksDB Local Store Implementation
 
@@ -852,6 +856,12 @@ Completed:
   configured identity text, and covers both INSERT assignment paths plus
   predicates over persisted values. Existing parser/compiler/executor behavior
   required no implementation change.
+- Native `TEST022` expands portable single-byte `SPACE` coverage from the
+  standalone expression in `TEST013` to constant and stored counts,
+  positive/zero/NULL results, both INSERT assignment paths, SQL padded
+  comparison semantics, count-sensitive concatenation, diagnostics
+  `4129`/`4062`, and post-error recovery. Existing parser/compiler/executor
+  behavior required no implementation change.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -859,11 +869,12 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Expand portable single-byte `SPACE` coverage from its standalone expression
-   in `TEST013` to stored assignment, comparison, and concatenation shapes from
-   `charsets/TEST313`. Keep explicit UTF8/UCS2 variants out of this increment.
+1. Migrate portable single-byte `CONCAT()` assignment and comparison shapes
+   from `charsets/TEST313`, including stored empty/NULL inputs, equivalence to
+   `||`, and predicate use. Keep UTF8/UCS2 variants out of this increment.
 
-The next task to start is **Portable single-byte SPACE regress coverage**.
+The next task to start is **Portable single-byte CONCAT function regress
+coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

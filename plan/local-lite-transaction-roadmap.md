@@ -476,7 +476,11 @@ parser/compiler/executor change was needed. Environment-independent
 including nonempty/equality assertions, both INSERT assignment shapes,
 concatenation, and predicates without recording the configured identity in
 EXPECTED output. No parser/compiler/executor change was needed. Portable
-single-byte `SPACE` assignment, comparison, and concatenation are the next
-regress gap. The transaction-specific multi-table and catalog/table
+single-byte `SPACE` is now covered by `TEST022`, including constant and stored
+counts, positive/zero/NULL results, both INSERT assignment paths, padded
+comparison, count-sensitive concatenation, oversized-result diagnostics, and
+post-error recovery. No parser/compiler/executor change was needed. The
+single-byte `CONCAT()` function is the next portable regress gap. The
+transaction-specific multi-table and catalog/table
 crash-atomicity limits
 remain unchanged.
