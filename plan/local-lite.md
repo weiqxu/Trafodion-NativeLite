@@ -396,6 +396,9 @@ Current cases are:
 - `TEST011`: repeated prepared SELECT and INSERT execution, fresh snapshots and
   result reuse, SQLCI parameter rebinding, prepared-statement name replacement,
   and successful execution after a prepared INSERT duplicate-key error.
+- `TEST012`: base-table and derived-table `NATURAL JOIN`, single- and
+  multi-column `SELECT DISTINCT`, ordered `FIRST`, legacy `[ANY n]`-style
+  `LIMIT`, and correlated `FIRST` over local table scans.
 
 Run all cases or a selected subset from the repository root:
 
@@ -419,7 +422,7 @@ boundary to the existing `3022` diagnostic.
 
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002` with native
-`TEST001` through `TEST011`. The legacy files remain useful as SQL-shape input,
+`TEST001` through `TEST012`. The legacy files remain useful as SQL-shape input,
 but their environment setup, object inventory, and EXPECTED output cannot be
 run unchanged in local-lite.
 
@@ -429,12 +432,12 @@ run unchanged in local-lite.
 | Binder, executor-value, DDL, and unsupported-surface diagnostics | Covered by `TEST007`-`TEST009` | Add narrow cases only when they protect a local-lite invariant. |
 | `INSERT ... SELECT` | Covered by `TEST010` | Tuple-flow autocommit is now atomic within one target table; cross-table and catalog/table crash atomicity remain out of scope. |
 | SQLCI `PREPARE`/`EXECUTE` lifecycle | Covered by `TEST011`, including repeated SELECT/INSERT, new parameter values, name replacement, fresh SELECT results, and post-error recovery | Add cases only when they protect another prepared-execution invariant. |
-| `NATURAL JOIN`, general `SELECT DISTINCT`, `FIRST`/limit shapes, regex, and additional string functions | Compiler/executor candidates, not claimed by the native lane | This is the next portable coverage gap. |
+| `NATURAL JOIN`, general `SELECT DISTINCT`, and `FIRST`/limit shapes | Covered by `TEST012`, including correlated `FIRST` through ProbeCache | `LIMIT` intentionally retains Trafodion's legacy `[ANY n]` semantics rather than ordered `FIRST` semantics. |
+| Regex and additional string functions | Compiler/executor candidates, not claimed by the native lane | This is the next portable coverage gap. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable query-shape coverage: probe and
-migrate deterministic `NATURAL JOIN`, general `SELECT DISTINCT`, and
-`FIRST`/limit cases without expanding unsupported storage or service-stack
+The next compatibility increment is portable regex and additional string
+function coverage without expanding unsupported storage or service-stack
 behavior.
 
 ## RocksDB Local Store Implementation
@@ -753,6 +756,11 @@ Completed:
   executor/core tests. It covers repeated SELECT execution against fresh local
   snapshots, SQLCI parameter rebinding for SELECT and INSERT, prepared-statement
   name replacement, and deterministic recovery after a duplicate-key error.
+- Native `TEST012` migrates deterministic `NATURAL JOIN`, general
+  `SELECT DISTINCT`, and `FIRST`/limit shapes from legacy executor/core tests.
+  Its correlated `FIRST` case also guards scan code generation: columns supplied
+  as characteristic inputs must not be appended to the inner scan's physical
+  fetched-column list and remapped to the inner row ATP.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -760,11 +768,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe and migrate the next portable query-shape group (`NATURAL JOIN`,
-   general `SELECT DISTINCT`, and `FIRST`/limit) without expanding unsupported
-   storage or service-stack behavior.
+1. Probe and migrate portable regex and additional string-function cases
+   without expanding unsupported storage or service-stack behavior.
 
-The next task to start is **Portable query-shape regress coverage**.
+The next task to start is **Portable regex and string-function regress
+coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

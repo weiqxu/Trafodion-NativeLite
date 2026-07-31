@@ -439,7 +439,9 @@ with post-error base-table verification. Native `TEST010` now covers successful
 a late primary-key conflict follows earlier accepted source rows. Native
 `TEST011` adds repeated prepared SELECT/INSERT execution, parameter rebinding,
 fresh execution snapshots, statement-name replacement, and post-error recovery.
-The compatibility audit now identifies portable `NATURAL JOIN`, general
-`SELECT DISTINCT`, and `FIRST`/limit query shapes as the next regress gap. The
-transaction-specific multi-table and catalog/table crash-atomicity limits
-remain unchanged.
+`TEST012` adds base and derived `NATURAL JOIN`, general `SELECT DISTINCT`,
+ordered `FIRST`, legacy `[ANY n]`-style `LIMIT`, and correlated `FIRST` coverage.
+The correlated case also guards against remapping an outer characteristic input
+as an inner scan column. The compatibility audit now identifies portable regex
+and additional string functions as the next regress gap. The transaction-
+specific multi-table and catalog/table crash-atomicity limits remain unchanged.

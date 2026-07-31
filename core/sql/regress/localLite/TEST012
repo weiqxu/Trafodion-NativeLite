@@ -1,0 +1,89 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable query shapes adapted from executor/TEST001 and core/TEST002.
+CREATE TABLE LLREG012_LEFT_ROWS
+  (left_id INT PRIMARY KEY,
+   grp INT,
+   label VARCHAR(20));
+
+CREATE TABLE LLREG012_RIGHT_ROWS
+  (right_id INT PRIMARY KEY,
+   grp INT,
+   score INT);
+
+INSERT INTO LLREG012_LEFT_ROWS VALUES
+  (1, 10, 'shared'),
+  (2, 10, 'shared'),
+  (3, 20, 'three'),
+  (4, 30, 'four'),
+  (5, NULL, 'none'),
+  (6, 20, 'three');
+
+INSERT INTO LLREG012_RIGHT_ROWS VALUES
+  (101, 10, 7),
+  (102, 10, 8),
+  (103, 20, 9),
+  (104, 40, 10),
+  (105, NULL, 11);
+
+SELECT left_id, grp, right_id, score
+  FROM LLREG012_LEFT_ROWS NATURAL JOIN LLREG012_RIGHT_ROWS
+ ORDER BY left_id, right_id;
+
+SELECT grp, left_id, right_id
+  FROM (SELECT left_id, grp FROM LLREG012_LEFT_ROWS) AS l
+       NATURAL JOIN
+       (SELECT right_id, grp FROM LLREG012_RIGHT_ROWS) AS r
+ ORDER BY grp, left_id, right_id;
+
+SELECT DISTINCT grp
+  FROM LLREG012_LEFT_ROWS
+ ORDER BY grp;
+
+SELECT DISTINCT grp, label
+  FROM LLREG012_LEFT_ROWS
+ ORDER BY grp, label;
+
+-- FIRST is applied to the ordered subquery before the outer sort.
+SELECT item_id
+  FROM (SELECT [FIRST 3] left_id AS item_id
+          FROM LLREG012_LEFT_ROWS
+         ORDER BY left_id DESC) AS first_rows
+ ORDER BY item_id;
+
+-- Trafodion LIMIT retains its legacy [ANY n] semantics. The physical first
+-- three rows are limited before this outer result is ordered.
+SELECT item_id
+  FROM (SELECT left_id AS item_id
+          FROM LLREG012_LEFT_ROWS
+         ORDER BY left_id DESC
+         LIMIT 3) AS limited_rows
+ ORDER BY item_id;
+
+-- The inner scan must not remap l.grp as one of its own physical columns.
+SELECT l.left_id,
+       (SELECT [FIRST 1] r.score
+          FROM LLREG012_RIGHT_ROWS AS r
+         WHERE r.grp = l.grp
+         ORDER BY r.score DESC) AS top_score
+  FROM LLREG012_LEFT_ROWS AS l
+ ORDER BY l.left_id;
+
+DROP TABLE LLREG012_RIGHT_ROWS;
+DROP TABLE LLREG012_LEFT_ROWS;
+exit;

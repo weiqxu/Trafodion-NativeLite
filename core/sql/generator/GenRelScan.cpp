@@ -2658,7 +2658,10 @@ short HbaseAccess::codeGen(Generator * generator)
            predColumns.advance(predColValId))
         {
           OperatorTypeEnum op = predColValId.getItemExpr()->getOperatorType();
+          ValueId inputValId;
           if ((op == ITM_BASECOLUMN || op == ITM_INDEXCOLUMN) &&
+              !getGroupAttr()->getCharacteristicInputs().referencesTheGivenValue(
+                  predColValId, inputValId) &&
               !columnList.contains(predColValId))
             columnList.insert(predColValId);
         }
