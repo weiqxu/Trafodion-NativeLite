@@ -449,7 +449,10 @@ default/custom separators, an independent order key, grouped/scalar forms, and
 NULL/all-NULL/empty-input behavior, including empty-string separator placement.
 Its executor fix prevents a later NULL from erasing an accumulated result and
 tracks zero-length inputs as values, while its optimizer fix keeps an
-independent aggregate order key available below group-by. The compatibility
-audit now identifies portable `COALESCE`/`DECODE`/`ISNULL`/`NULLIF`/`NVL`
-ASCII and NULL semantics as the next regress gap. The transaction-specific
+independent aggregate order key available below group-by. `TEST015` now covers
+portable `COALESCE`/`DECODE`/`ISNULL`/`NULLIF`/`NVL` ASCII and NULL
+semantics over stored nullable values in projections and predicates, including
+empty strings, all-NULL inputs, NULL-to-NULL `DECODE` matching, and a missing
+default. No compiler/executor change was needed. Portable single-byte
+`ASCII`/`CHAR` behavior is the next regress gap; the transaction-specific
 multi-table and catalog/table crash-atomicity limits remain unchanged.

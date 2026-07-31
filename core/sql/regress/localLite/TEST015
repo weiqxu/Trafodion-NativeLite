@@ -1,0 +1,91 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable ASCII/NULL conditional-function coverage adapted from
+-- charsets/TEST313.
+CREATE TABLE LLREG015_NULL_ROWS
+  (id INT PRIMARY KEY,
+   a VARCHAR(12),
+   b VARCHAR(12),
+   c VARCHAR(12));
+
+INSERT INTO LLREG015_NULL_ROWS VALUES
+  (1, 'alpha', 'alpha', 'one'),
+  (2, 'alpha', 'beta', 'two'),
+  (3, NULL, 'beta', 'three'),
+  (4, NULL, NULL, 'four'),
+  (5, '', '', 'five'),
+  (6, 'beta', NULL, NULL),
+  (7, NULL, NULL, NULL);
+
+-- COALESCE returns the first non-NULL value, preserves an empty string, and
+-- remains NULL when every input is NULL.
+SELECT id,
+       COALESCE(a, b, c) AS nullable_choice,
+       COALESCE(a, b, c, 'literal') AS choice_with_literal
+  FROM LLREG015_NULL_ROWS
+ ORDER BY id;
+
+-- ISNULL and NVL share first-value/fallback behavior. NULLIF returns NULL for
+-- equal values and for a NULL first argument.
+SELECT id,
+       ISNULL(a, c) AS isnull_value,
+       NVL(a, c) AS nvl_value,
+       NULLIF(a, b) AS nullif_value
+  FROM LLREG015_NULL_ROWS
+ ORDER BY id;
+
+-- DECODE covers matched and default branches, NULL-to-NULL matching, and a
+-- missing default result.
+SELECT id,
+       DECODE(a,
+              'alpha', 'A',
+              'beta', 'B',
+              NULL, 'N',
+              'D') AS decoded,
+       DECODE(a, 'alpha', 'A') AS decoded_no_default
+  FROM LLREG015_NULL_ROWS
+ ORDER BY id;
+
+-- Exercise each expression in predicates over stored nullable values.
+SELECT id
+  FROM LLREG015_NULL_ROWS
+ WHERE COALESCE(a, b, 'missing') = 'alpha'
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG015_NULL_ROWS
+ WHERE DECODE(a, NULL, 'null-value', 'non-null-value') = 'null-value'
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG015_NULL_ROWS
+ WHERE ISNULL(a, 'fallback') = 'fallback'
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG015_NULL_ROWS
+ WHERE NULLIF(a, b) IS NULL
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG015_NULL_ROWS
+ WHERE NVL(a, c) = 'four'
+ ORDER BY id;
+
+DROP TABLE LLREG015_NULL_ROWS;
+exit;

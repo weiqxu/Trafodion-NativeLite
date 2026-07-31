@@ -405,6 +405,9 @@ Current cases are:
 - `TEST014`: grouped and scalar `GROUP_CONCAT`, ordered and `DISTINCT` values,
   default and custom separators, an independent order key, NULL elimination,
   empty-string preservation, and all-NULL/empty-input results.
+- `TEST015`: `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`, and `NVL` over
+  stored nullable ASCII values, including empty strings, NULL-to-NULL
+  `DECODE` matching, missing defaults, and predicate use.
 
 Run all cases or a selected subset from the repository root:
 
@@ -429,7 +432,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST014`. The legacy files remain useful as SQL-shape input, but their
+`TEST015`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -442,11 +445,12 @@ unchanged in local-lite.
 | `NATURAL JOIN`, general `SELECT DISTINCT`, and `FIRST`/limit shapes | Covered by `TEST012`, including correlated `FIRST` through ProbeCache | `LIMIT` intentionally retains Trafodion's legacy `[ANY n]` semantics rather than ordered `FIRST` semantics. |
 | POSIX `REGEXP` and additional ASCII string functions | Covered by `TEST013`, including NULL propagation, invalid-pattern `8452`, and post-error recovery | UCS2/UTF8 conversion, collation, and large-length character boundaries remain outside this portable increment. |
 | `GROUP_CONCAT` ordering, `DISTINCT`, separator, and NULL forms | Covered by `TEST014`, including an order key independent of the concatenated value and empty-string separator placement | `MAX LENGTH`, overflow warning `8402`, distributed staging, and multiple incompatible aggregate orderings remain outside this portable increment. |
-| `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`, and `NVL` | Compiler/executor candidates, not claimed by the native lane | This is the next portable ASCII/NULL-expression coverage gap from `charsets/TEST313`. |
+| `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`, and `NVL` | Covered by `TEST015`, including stored NULL/empty inputs, NULL-to-NULL `DECODE` matching, missing defaults, and predicates | Charset conversion and collation combinations remain outside this portable increment. |
+| `ASCII` and `CHAR` code conversion | Compiler/executor candidates, not claimed by the native lane | This is the next portable single-byte function gap from `charsets/TEST313`; explicit UTF8/UCS2 forms remain outside scope. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable NULL/conditional scalar-function
-coverage without expanding into UCS2/UTF8 conversion or collation behavior.
+The next compatibility increment is portable single-byte `ASCII`/`CHAR`
+function coverage without expanding into UTF8/UCS2 conversion behavior.
 
 ## RocksDB Local Store Implementation
 
@@ -783,6 +787,12 @@ Completed:
   NULL inputs without erasing an existing result, and tracks a zero-length
   input as an accumulated value for separator placement, while group-by keeps
   independent aggregate order keys available to its child plan.
+- Native `TEST015` migrates portable ASCII/NULL conditional expressions from
+  `charsets/TEST313`. It covers `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`,
+  and `NVL` over stored nullable values in projections and predicates,
+  including empty strings, all-NULL inputs, NULL-to-NULL `DECODE` matching,
+  and a missing `DECODE` default. Existing compiler/executor behavior required
+  no implementation change.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -790,11 +800,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe and migrate portable ASCII `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`,
-   and `NVL` cases from `charsets/TEST313`, including stored NULL inputs and
-   predicate use, without claiming charset-conversion or collation behavior.
+1. Probe and migrate portable single-byte `ASCII` and `CHAR` cases from
+   `charsets/TEST313`, including stored nullable values, round trips, scalar
+   subqueries, and predicate use, without claiming UTF8/UCS2 conversions.
 
-The next task to start is **Portable NULL/conditional scalar-function regress
+The next task to start is **Portable `ASCII`/`CHAR` function regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
