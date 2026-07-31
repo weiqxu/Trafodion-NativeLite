@@ -480,7 +480,11 @@ single-byte `SPACE` is now covered by `TEST022`, including constant and stored
 counts, positive/zero/NULL results, both INSERT assignment paths, padded
 comparison, count-sensitive concatenation, oversized-result diagnostics, and
 post-error recovery. No parser/compiler/executor change was needed. The
-single-byte `CONCAT()` function is the next portable regress gap. The
+single-byte `CONCAT()` function is now covered by `TEST023`, including literal
+and stored operands, exact equivalence to `||`, empty/NULL inputs,
+embedded-space byte preservation, both INSERT assignment paths, nested use,
+and predicates. No parser/compiler/executor change was needed. The single-byte
+`INSERT()` string function is the next portable regress gap. The
 transaction-specific multi-table and catalog/table
 crash-atomicity limits
 remain unchanged.
