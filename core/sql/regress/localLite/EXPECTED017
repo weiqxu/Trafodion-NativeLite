@@ -1,0 +1,84 @@
+>>CREATE TABLE LLREG017_DATES
++>  (id INT PRIMARY KEY,
++>   d DATE);
+--- SQL operation complete.
+>>INSERT INTO LLREG017_DATES VALUES
++>  (1, DATE '2009-04-15'),
++>  (2, DATE '2024-02-29'),
++>  (3, DATE '2026-01-01'),
++>  (4, NULL);
+--- 4 row(s) inserted.
+>>SELECT DATEFORMAT(DATE '2009-04-15', DEFAULT) AS default_fmt,
++>       DATEFORMAT(DATE '2009-04-15', USA) AS usa_fmt,
++>       DATEFORMAT(DATE '2009-04-15', EUROPEAN) AS european_fmt
++>  FROM (VALUES (1)) AS v(n);
+DEFAULT_FMT  USA_FMT     EUROPEAN_FMT
+-----------  ----------  ------------
+2009-04-15   04/15/2009  15.04.2009
+--- 1 row(s) selected.
+>>SELECT id,
++>       DATEFORMAT(d, USA) AS usa_fmt,
++>       DAYNAME(d) AS day_name,
++>       MONTHNAME(d) AS month_name
++>  FROM LLREG017_DATES
++> ORDER BY id;
+ID           USA_FMT     DAY_NAME   MONTH_NAME
+-----------  ----------  ---------  ----------
+          1  04/15/2009  Wednesday  April
+          2  02/29/2024  Thursday   February
+          3  01/01/2026  Thursday   January
+          4  ?           ?          ?
+--- 4 row(s) selected.
+>>CREATE TABLE LLREG017_DATE_TEXT
++>  (id INT PRIMARY KEY,
++>   formatted VARCHAR(20),
++>   day_name VARCHAR(12),
++>   month_name VARCHAR(12));
+--- SQL operation complete.
+>>INSERT INTO LLREG017_DATE_TEXT
++>SELECT id,
++>       DATEFORMAT(d, EUROPEAN),
++>       DAYNAME(d),
++>       MONTHNAME(d)
++>  FROM LLREG017_DATES;
+--- 4 row(s) inserted.
+>>SELECT id, formatted, day_name, month_name
++>  FROM LLREG017_DATE_TEXT
++> ORDER BY id;
+ID           FORMATTED             DAY_NAME      MONTH_NAME
+-----------  --------------------  ------------  ------------
+          1  15.04.2009            Wednesday     April
+          2  29.02.2024            Thursday      February
+          3  01.01.2026            Thursday      January
+          4  ?                     ?             ?
+--- 4 row(s) selected.
+>>SELECT id
++>  FROM LLREG017_DATES
++> WHERE DATEFORMAT(d, USA) = '04/15/2009'
++> ORDER BY id;
+ID
+-----------
+          1
+--- 1 row(s) selected.
+>>SELECT id
++>  FROM LLREG017_DATES
++> WHERE DAYNAME(d) = 'Thursday'
++> ORDER BY id;
+ID
+-----------
+          2
+          3
+--- 2 row(s) selected.
+>>SELECT id
++>  FROM LLREG017_DATES
++> WHERE MONTHNAME(d) = 'February'
++> ORDER BY id;
+ID
+-----------
+          2
+--- 1 row(s) selected.
+>>DROP TABLE LLREG017_DATE_TEXT;
+--- SQL operation complete.
+>>DROP TABLE LLREG017_DATES;
+--- SQL operation complete.
+>>exit;
