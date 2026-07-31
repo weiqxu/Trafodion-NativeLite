@@ -103,6 +103,8 @@ grep -q 'LocalLiteProjectBinaryRow' "$storage_stubs" ||
   fail "local-lite executor scan must project from binary persisted rows"
 grep -q 'LocalLiteNormalizeBinaryRow' "$storage_stubs" ||
   fail "local-lite executor insert must persist normalized executor binary aligned rows"
+grep -q 'ExpTupleDesc::getVarOffset' "$localstore_codec_source" ||
+  fail "local-lite insert normalization must resolve indirect aligned VARCHAR offsets through the VOA"
 grep -q 'uniqueKeyColumns' "$localstore_header" ||
   fail "local-lite table metadata must preserve UNIQUE key columns"
 grep -q 'LocalLiteBuildUniqueKey' "$localstore_source" ||
@@ -152,7 +154,7 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
   fail "missing executable local-lite regress runner: $local_regress"
 [[ -x "$local_regress_dir/FILTER" ]] ||
   fail "missing executable local-lite regress output filter"
-for test_number in 001 002 003; do
+for test_number in 001 002 003 004; do
   [[ -f "$local_regress_dir/TEST$test_number" &&
      -f "$local_regress_dir/EXPECTED$test_number" ]] ||
     fail "local-lite regress lane is missing TEST/EXPECTED$test_number"

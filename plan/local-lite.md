@@ -339,6 +339,10 @@ Unsupported behavior:
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
 - Distributed query execution.
 - Full transaction service behavior through TM/DTM/RMS.
+- Direct uncast `DATE`, `TIME`, and `TIMESTAMP` result rendering in the current
+  standalone SQLCI. Predicates and persisted values are supported; cast these
+  values to `CHAR` when returning them until the result-formatting path is
+  corrected.
 
 ## Local-Lite SQL Regress Lane
 
@@ -363,6 +367,9 @@ Current cases are:
 - `TEST002`: explicit COMMIT/ROLLBACK behavior and failed primary-key COMMIT
   atomicity.
 - `TEST003`: failed UNIQUE COMMIT atomicity and keyless row-id recovery.
+- `TEST004`: mixed aligned executor rows with nullable VARCHAR fields, primary
+  and VARCHAR UNIQUE get-row access, NUMERIC/DECIMAL/BigNum values, and
+  DATE/TIME/TIMESTAMP values validated through explicit character conversion.
 
 Run all cases or a selected subset from the repository root:
 
@@ -576,7 +583,8 @@ above.
 
 ### Current Task Status
 
-Last updated after adding the native local-lite SQL regress lane.
+Last updated after fixing mixed aligned executor rows with indirect VARCHAR
+fields.
 
 Completed:
 
@@ -642,14 +650,21 @@ Completed:
   directly through the built local-lite SQLCI. It produces RAW/LOG/DIFF
   artifacts, supports selecting individual case numbers, and requires no SQF,
   TMF, HBase, Hadoop, or ZooKeeper service startup.
+- Executor INSERT normalization resolves the actual length-indicator location
+  of every aligned VARCHAR through its VOA entry. This prevents the second and
+  later variable columns in a mixed wide row from being mistaken for a
+  truncated executor tuple. Native `TEST004` covers reverse-order variable
+  projection, NULL variable fields, primary/UNIQUE lookups, numeric families,
+  and datetime fields in one table.
 
 Remaining, in suggested implementation order:
 
-1. Fix mixed wide-row layouts that combine nullable variable columns with
-   primary/UNIQUE, numeric, and datetime fields, then port more compatible
-   `core` and `executor` SQL into the native regress lane.
+1. Fix direct `DATE`, `TIME`, and `TIMESTAMP` result materialization in the
+   standalone SQLCI path; this also affects direct datetime expressions over
+   `VALUES`, while explicit conversion to `CHAR` is correct.
+2. Port more compatible `core` and `executor` SQL into the native regress lane.
 
-The next task to start is **Mixed executor row-layout regression support**.
+The next task to start is **Direct datetime result materialization**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

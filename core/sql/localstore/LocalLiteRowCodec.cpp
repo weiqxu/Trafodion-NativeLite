@@ -754,9 +754,14 @@ bool LocalLiteWrapBinaryRow(const char *row,
   return true;
 }
 
+static bool hasRange(size_t rowLen, size_t offset, size_t length)
+{
+  return offset <= rowLen && length <= rowLen - offset;
+}
+
 static bool hasRange(const std::string &row, size_t offset, size_t length)
 {
-  return offset <= row.size() && length <= row.size() - offset;
+  return hasRange(row.size(), offset, length);
 }
 
 static bool initializeCanonicalRow(const std::vector<LocalLiteStoredColumn> &columns,
@@ -839,19 +844,34 @@ static bool copyAttrToCanonical(const char *srcRow,
   size_t srcLen = srcAttr->getLength();
   if (srcAttr->getVCIndicatorLength() > 0)
     {
-      if (!hasRange(std::string(srcRow, srcRowLen),
-                    srcAttr->getVCLenIndOffset(),
+      // In SQLMX_ALIGNED_FORMAT only the first VARCHAR has a direct data
+      // offset. Later VARCHAR attributes are indirect and keep their actual
+      // length-indicator offset in the row's VOA. Resolve both forms through
+      // the tuple helper instead of treating ExpOffsetMax as a data offset.
+      if (srcAttr->getOffset() == ExpOffsetMax &&
+          !hasRange(srcRowLen, srcAttr->getVoaOffset(),
+                    ExpVoaSize))
+        {
+          setError(error, "truncated local-lite executor row VOA");
+          return false;
+        }
+      srcOffset = ExpTupleDesc::getVarOffset(
+          const_cast<char *>(srcRow),
+          srcAttr->getOffset(),
+          srcAttr->getVoaOffset(),
+          srcAttr->getVCIndicatorLength(),
+          srcAttr->getNullIndicatorLength());
+      if (!hasRange(srcRowLen, srcOffset,
                     srcAttr->getVCIndicatorLength()))
         {
           setError(error, "truncated local-lite executor row");
           return false;
         }
-      srcLen = srcAttr->getLength(srcRow + srcAttr->getVCLenIndOffset());
+      srcLen = srcAttr->getLength(srcRow + srcOffset);
+      srcOffset += srcAttr->getVCIndicatorLength();
     }
-  if (srcAttr->getVCIndicatorLength() > 0)
-    srcOffset = srcAttr->getOffset();
 
-  if (!hasRange(std::string(srcRow, srcRowLen), srcOffset, srcLen))
+  if (!hasRange(srcRowLen, srcOffset, srcLen))
     {
       setError(error, "truncated local-lite executor row");
       return false;

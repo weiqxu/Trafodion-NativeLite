@@ -411,6 +411,10 @@ The local-lite-native SQL regress lane is now implemented under
 `core/sql/regress/localLite`. Its transaction cases cover COMMIT/ROLLBACK,
 primary-key preflight failure, UNIQUE preflight failure, absence of partial
 same-table publication, and keyless row-id recovery without starting the
-unsupported service stack. Broader local-lite work now moves to mixed executor
-row-layout coverage; the transaction-specific multi-table and catalog/table
-crash-atomicity limits remain unchanged.
+unsupported service stack. Mixed aligned executor rows now resolve indirect
+VARCHAR positions through the tuple VOA instead of treating `ExpOffsetMax` as
+a data offset. The native lane covers nullable variable fields together with
+primary/UNIQUE access, NUMERIC/DECIMAL/BigNum, and datetime fields in one wide
+row. Broader local-lite work next moves to direct datetime result
+materialization and additional portable regress SQL; the transaction-specific
+multi-table and catalog/table crash-atomicity limits remain unchanged.
