@@ -1,0 +1,71 @@
+>>CREATE TABLE LLREG018_HEX_SOURCE
++>  (id INT PRIMARY KEY,
++>   fixed_txt CHAR(4),
++>   varying_txt VARCHAR(8));
+--- SQL operation complete.
+>>INSERT INTO LLREG018_HEX_SOURCE VALUES
++>  (1, 'Ab0', 'abc'),
++>  (2, '', ''),
++>  (3, 'A ', 'A '),
++>  (4, NULL, NULL);
+--- 4 row(s) inserted.
+>>SELECT CONVERTTOHEX(_ISO88591'Ab0') AS literal_hex,
++>       CONVERTTOHEX(CHAR(0) || CHAR(127) || CHAR(128) || CHAR(255))
++>         AS boundary_hex
++>  FROM (VALUES (1)) AS v(n);
+LITERAL_HEX  BOUNDARY_HEX
+-----------  ------------
+416230       007F80FF
+--- 1 row(s) selected.
+>>SELECT id,
++>       CONVERTTOHEX(fixed_txt) AS fixed_hex,
++>       CONVERTTOHEX(varying_txt) AS varying_hex,
++>       CHAR_LENGTH(CONVERTTOHEX(varying_txt)) AS varying_hex_len
++>  FROM LLREG018_HEX_SOURCE
++> ORDER BY id;
+ID           FIXED_HEX  VARYING_HEX       VARYING_HEX_LEN
+-----------  ---------  ----------------  ---------------
+          1  41623020   616263                          6
+          2  20202020                                   0
+          3  41202020   4120                            4
+          4  ?          ?                               ?
+--- 4 row(s) selected.
+>>CREATE TABLE LLREG018_HEX_TEXT
++>  (id INT PRIMARY KEY,
++>   encoded VARCHAR(32));
+--- SQL operation complete.
+>>INSERT INTO LLREG018_HEX_TEXT
++>SELECT id, CONVERTTOHEX(varying_txt)
++>  FROM LLREG018_HEX_SOURCE;
+--- 4 row(s) inserted.
+>>SELECT id, encoded, CHAR_LENGTH(encoded) AS encoded_len
++>  FROM LLREG018_HEX_TEXT
++> ORDER BY id;
+ID           ENCODED                           ENCODED_LEN
+-----------  --------------------------------  -----------
+          1  616263                                      6
+          2                                              0
+          3  4120                                        4
+          4  ?                                           ?
+--- 4 row(s) selected.
+>>SELECT id
++>  FROM LLREG018_HEX_SOURCE
++> WHERE CONVERTTOHEX(varying_txt) = '616263'
++> ORDER BY id;
+ID
+-----------
+          1
+--- 1 row(s) selected.
+>>SELECT id
++>  FROM LLREG018_HEX_SOURCE
++> WHERE CONVERTTOHEX(varying_txt) = ''
++> ORDER BY id;
+ID
+-----------
+          2
+--- 1 row(s) selected.
+>>DROP TABLE LLREG018_HEX_TEXT;
+--- SQL operation complete.
+>>DROP TABLE LLREG018_HEX_SOURCE;
+--- SQL operation complete.
+>>exit;

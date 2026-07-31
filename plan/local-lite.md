@@ -414,6 +414,9 @@ Current cases are:
 - `TEST017`: `DATEFORMAT`, `DAYNAME`, and `MONTHNAME` over persisted DATE
   values, including all three format styles, leap-day and year-boundary
   values, NULL propagation, `INSERT ... SELECT` assignment, and predicates.
+- `TEST018`: single-byte `CONVERTTOHEX` over literals and stored CHAR/VARCHAR
+  values, including ISO88591 byte boundaries, fixed-width padding, empty
+  strings, NULL propagation, `INSERT ... SELECT` assignment, and predicates.
 
 Run all cases or a selected subset from the repository root:
 
@@ -438,7 +441,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST017`. The legacy files remain useful as SQL-shape input, but their
+`TEST018`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -454,11 +457,12 @@ unchanged in local-lite.
 | `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`, and `NVL` | Covered by `TEST015`, including stored NULL/empty inputs, NULL-to-NULL `DECODE` matching, missing defaults, and predicates | Charset conversion and collation combinations remain outside this portable increment. |
 | `ASCII` and `CHAR` code conversion | Covered by `TEST016`, including stored NULL/empty values, ISO88591 `0..255` round trips, scalar subqueries, predicates, and diagnostic `8428` | Explicit UTF8/UCS2 forms and charset translation remain outside this portable increment. |
 | `DATEFORMAT`, `DAYNAME`, and `MONTHNAME` | Covered by `TEST017`, including `DEFAULT`/`USA`/`EUROPEAN` formats, leap-day and year-boundary values, NULL propagation, assignment, and predicates | Existing compiler/executor behavior was sufficient; locale-dependent variants remain outside this portable increment. |
-| `CONVERTTOHEX` over single-byte values | Compiler/executor candidate, not claimed by the native lane | This is the next deterministic character-function gap from `charsets/TEST313`; UTF8/UCS2 conversion matrices remain outside the portable increment. |
+| `CONVERTTOHEX` over single-byte values | Covered by `TEST018`, including uppercase output, ISO88591 `00`/`7F`/`80`/`FF` boundaries, CHAR padding, VARCHAR length, empty/NULL inputs, assignment, and predicates | UTF8/UCS2 encoding and translation matrices remain outside this portable increment. |
+| `CONVERTFROMHEX` over single-byte values | Compiler/executor candidate, not claimed by the native lane | This is the next deterministic inverse-conversion gap; include round trips plus operand-type and odd-length diagnostics adapted from `compGeneral/TEST006`. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable single-byte `CONVERTTOHEX`
-coverage over deterministic ISO88591 values.
+The next compatibility increment is portable single-byte `CONVERTFROMHEX`
+round-trip and diagnostic coverage.
 
 ## RocksDB Local Store Implementation
 
@@ -812,6 +816,11 @@ Completed:
   DATEFORMAT styles, persisted DATE values at leap-day and year boundaries,
   NULL propagation, `INSERT ... SELECT` assignment, and predicate use.
   Existing compiler/executor behavior required no implementation change.
+- Native `TEST018` migrates portable single-byte `CONVERTTOHEX` expressions
+  from `charsets/TEST313`. It covers uppercase output, ISO88591 byte
+  boundaries, fixed CHAR padding versus VARCHAR length, empty and NULL inputs,
+  `INSERT ... SELECT` assignment, and predicate use. Existing
+  compiler/executor behavior required no implementation change.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -819,12 +828,12 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe and migrate portable single-byte `CONVERTTOHEX` cases from
-   `charsets/TEST313`, including literals, stored nullable values, expression
-   assignment, and predicates. Keep UTF8/UCS2 conversion and translation
-   matrices outside this increment.
+1. Probe portable single-byte `CONVERTFROMHEX` round trips and migrate its
+   operand-type and odd-length diagnostics from `compGeneral/TEST006`,
+   including stored nullable values, assignment, predicates, and post-error
+   recovery.
 
-The next task to start is **Portable single-byte `CONVERTTOHEX` regress
+The next task to start is **Portable single-byte `CONVERTFROMHEX` regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**

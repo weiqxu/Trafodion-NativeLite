@@ -461,5 +461,9 @@ needed. Portable `DATEFORMAT`/`DAYNAME`/`MONTHNAME` behavior is now covered by
 `TEST017`, including all three deterministic DATEFORMAT styles, leap-day and
 year-boundary values, NULL propagation, assignment, and predicates. No
 compiler/executor change was needed. Portable single-byte `CONVERTTOHEX`
-behavior is the next regress gap; the transaction-specific multi-table and
-catalog/table crash-atomicity limits remain unchanged.
+behavior is now covered by `TEST018`, including uppercase output, ISO88591 byte
+boundaries, CHAR padding versus VARCHAR length, empty/NULL inputs, assignment,
+and predicates. No compiler/executor change was needed. Portable single-byte
+`CONVERTFROMHEX` round-trip and diagnostic behavior is the next regress gap;
+the transaction-specific multi-table and catalog/table crash-atomicity limits
+remain unchanged.
