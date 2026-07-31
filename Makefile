@@ -21,17 +21,20 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all
+.PHONY: all local-lite local-lite-regress
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 
 all:
 	@echo "Building all Trafodion components"
 	cd core && $(MAKE) all 
 
-.PHONY: local-lite
 local-lite:
 	@echo "Building local-lite Trafodion native core"
 	cd core && $(MAKE) local-lite
+
+local-lite-regress:
+	@echo "Running local-lite SQL regressions"
+	core/sql/regress/localLite/runregr $(LOCAL_LITE_REGR_TESTS)
 
 package: 
 	@echo "Packaging Trafodion components"

@@ -407,6 +407,10 @@ earlier pending row from the table. Keyless row-id metadata is restored after
 an ordinary table write failure, while the catalog/table crash-atomicity and
 multi-table atomicity gaps remain explicit.
 
-The next implementation step is to add a local-lite-native SQL regress lane
-that can run selected `core/sql/regress` cases against the single-process SQLCI
-runtime without starting the unsupported service stack.
+The local-lite-native SQL regress lane is now implemented under
+`core/sql/regress/localLite`. Its transaction cases cover COMMIT/ROLLBACK,
+primary-key preflight failure, UNIQUE preflight failure, absence of partial
+same-table publication, and keyless row-id recovery without starting the
+unsupported service stack. Broader local-lite work now moves to mixed executor
+row-layout coverage; the transaction-specific multi-table and catalog/table
+crash-atomicity limits remain unchanged.

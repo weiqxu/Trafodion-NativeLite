@@ -17,6 +17,8 @@ local_store_concurrency="$repo_root/scripts/test-local-lite-store-concurrency.sh
 local_store_process_boundary="$repo_root/scripts/test-local-lite-store-process-boundary.sh"
 local_statement_snapshot="$repo_root/scripts/test-local-lite-statement-snapshot.sh"
 local_transaction_snapshot="$repo_root/scripts/test-local-lite-transaction-snapshot.sh"
+local_regress_dir="$repo_root/core/sql/regress/localLite"
+local_regress="$local_regress_dir/runregr"
 storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
 executor_root="$repo_root/core/sql/executor/ex_root.cpp"
 localstore_dir="$repo_root/core/sql/localstore"
@@ -146,6 +148,21 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
   fail "missing executable local-lite statement snapshot test: $local_statement_snapshot"
 [[ -x "$local_transaction_snapshot" ]] ||
   fail "missing executable local-lite transaction snapshot test: $local_transaction_snapshot"
+[[ -x "$local_regress" ]] ||
+  fail "missing executable local-lite regress runner: $local_regress"
+[[ -x "$local_regress_dir/FILTER" ]] ||
+  fail "missing executable local-lite regress output filter"
+for test_number in 001 002 003; do
+  [[ -f "$local_regress_dir/TEST$test_number" &&
+     -f "$local_regress_dir/EXPECTED$test_number" ]] ||
+    fail "local-lite regress lane is missing TEST/EXPECTED$test_number"
+done
+grep -q 'TRAF_LOCAL_STORE_DIR' "$local_regress" ||
+  fail "local-lite regress cases must use isolated RocksDB stores"
+grep -q 'MXID' "$local_regress_dir/FILTER" ||
+  fail "local-lite regress output must normalize dynamic diagnostic ids"
+grep -q 'local-lite-regress' "$repo_root/Makefile" ||
+  fail "top-level Makefile must expose the local-lite regress lane"
 [[ -f "$localstore_header" ]] || fail "missing local store header: $localstore_header"
 [[ -f "$localstore_source" ]] || fail "missing local store source: $localstore_source"
 grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_header" ||

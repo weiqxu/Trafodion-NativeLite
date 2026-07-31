@@ -1,0 +1,51 @@
+>>CREATE TABLE LLREG002_TX (id INT, value VARCHAR(24));
+--- SQL operation complete.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>INSERT INTO LLREG002_TX VALUES (1, 'rollback-row');
+--- 1 row(s) inserted.
+>>SELECT value FROM LLREG002_TX WHERE id = 1;
+VALUE
+------------------------
+rollback-row
+--- 1 row(s) selected.
+>>ROLLBACK WORK;
+--- SQL operation complete.
+>>SELECT value FROM LLREG002_TX WHERE id = 1;
+--- 0 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>INSERT INTO LLREG002_TX VALUES (2, 'commit-row'), (3, 'second-row');
+--- 2 row(s) inserted.
+>>COMMIT WORK;
+--- SQL operation complete.
+>>SELECT id, value FROM LLREG002_TX ORDER BY id;
+ID           VALUE
+-----------  ------------------------
+          2  commit-row
+          3  second-row
+--- 2 row(s) selected.
+>>CREATE TABLE LLREG002_PK (id INT PRIMARY KEY, value VARCHAR(24));
+--- SQL operation complete.
+>>INSERT INTO LLREG002_PK VALUES (2, 'committed-row');
+--- 1 row(s) inserted.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>INSERT INTO LLREG002_PK VALUES
++>  (1, 'must-not-commit'),
++>  (2, 'duplicate-row');
+--- 2 row(s) inserted.
+>>COMMIT WORK;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite primary key <MXID>
+--- SQL operation failed with errors.
+>>SELECT id, value FROM LLREG002_PK ORDER BY id;
+ID           VALUE
+-----------  ------------------------
+          2  committed-row
+--- 1 row(s) selected.
+>>DROP TABLE LLREG002_PK;
+--- SQL operation complete.
+>>DROP TABLE LLREG002_TX;
+--- SQL operation complete.
+>>exit;

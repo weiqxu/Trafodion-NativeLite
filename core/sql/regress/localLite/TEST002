@@ -1,0 +1,43 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Explicit transaction commit/rollback and per-table primary-key atomicity.
+CREATE TABLE LLREG002_TX (id INT, value VARCHAR(24));
+
+BEGIN WORK;
+INSERT INTO LLREG002_TX VALUES (1, 'rollback-row');
+SELECT value FROM LLREG002_TX WHERE id = 1;
+ROLLBACK WORK;
+SELECT value FROM LLREG002_TX WHERE id = 1;
+
+BEGIN WORK;
+INSERT INTO LLREG002_TX VALUES (2, 'commit-row'), (3, 'second-row');
+COMMIT WORK;
+SELECT id, value FROM LLREG002_TX ORDER BY id;
+
+CREATE TABLE LLREG002_PK (id INT PRIMARY KEY, value VARCHAR(24));
+INSERT INTO LLREG002_PK VALUES (2, 'committed-row');
+BEGIN WORK;
+INSERT INTO LLREG002_PK VALUES
+  (1, 'must-not-commit'),
+  (2, 'duplicate-row');
+COMMIT WORK;
+SELECT id, value FROM LLREG002_PK ORDER BY id;
+
+DROP TABLE LLREG002_PK;
+DROP TABLE LLREG002_TX;
+exit;

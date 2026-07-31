@@ -340,6 +340,43 @@ Unsupported behavior:
 - Distributed query execution.
 - Full transaction service behavior through TM/DTM/RMS.
 
+## Local-Lite SQL Regress Lane
+
+`core/sql/regress/localLite/runregr` provides a native-only regression driver
+for the current single-process SQLCI runtime. It deliberately does not source
+the legacy regress environment or invoke `regrinit.sql`, `runmxcmp.ksh`, TMF,
+the monitor, HBase, Hadoop, or ZooKeeper. Each TEST case gets an isolated
+temporary `TRAF_LOCAL_STORE_DIR`.
+
+The lane preserves the established `TESTnnn`/`EXPECTEDnnn` naming and produces
+`RAWnnn`, filtered `LOGnnn`, and unified `DIFFnnn` artifacts. Its common filter
+removes SQLCI session noise, normalizes trailing whitespace, and masks dynamic
+`MXID` diagnostic identifiers while retaining SQL results and errors. A
+`-diff`/`--diff-only` mode can recompare existing LOG files from a selected run
+directory without launching SQLCI again.
+
+Current cases are:
+
+- `TEST001`: supported scalar/table execution adapted from the datetime portion
+  of `core/TEST038` and nullable-row coverage in `executor/TEST063`, plus local
+  primary/UNIQUE keys, predicates, grouping, ordering, and a self-join.
+- `TEST002`: explicit COMMIT/ROLLBACK behavior and failed primary-key COMMIT
+  atomicity.
+- `TEST003`: failed UNIQUE COMMIT atomicity and keyless row-id recovery.
+
+Run all cases or a selected subset from the repository root:
+
+```bash
+make local-lite-regress
+make local-lite-regress LOCAL_LITE_REGR_TESTS="001 003"
+```
+
+The broad legacy `core`, `executor`, and `seabase` suites are not claimed as
+compatible. They still contain unsupported UPDATE/DELETE/index/service-stack
+operations and depend on generated regress tools that are absent from this
+checkout. Portable SQL should be moved into this lane incrementally as the
+corresponding compiler/executor/storage behavior becomes supported.
+
 ## RocksDB Local Store Implementation
 
 This section records the implementation state of the current local-lite
@@ -539,8 +576,7 @@ above.
 
 ### Current Task Status
 
-Last updated after making explicit transaction COMMIT atomic within each local
-RocksDB table.
+Last updated after adding the native local-lite SQL regress lane.
 
 Completed:
 
@@ -602,13 +638,18 @@ Completed:
   regressions verify that a later duplicate cannot partially publish an earlier
   row from the same table and that a failed keyless UNIQUE commit does not
   advance persisted row-id metadata.
+- A native `core/sql/regress/localLite` lane runs isolated TEST/EXPECTED cases
+  directly through the built local-lite SQLCI. It produces RAW/LOG/DIFF
+  artifacts, supports selecting individual case numbers, and requires no SQF,
+  TMF, HBase, Hadoop, or ZooKeeper service startup.
 
 Remaining, in suggested implementation order:
 
-1. Add a local-lite-native regress lane for selected `core/sql/regress` SQL and
-   expected-output cases without starting the unsupported service stack.
+1. Fix mixed wide-row layouts that combine nullable variable columns with
+   primary/UNIQUE, numeric, and datetime fields, then port more compatible
+   `core` and `executor` SQL into the native regress lane.
 
-The next task to start is **Local-lite SQL regress harness integration**.
+The next task to start is **Mixed executor row-layout regression support**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -895,6 +936,7 @@ Current local-lite static and RocksDB SQLCI smoke checks:
 ```bash
 bash scripts/test-local-lite-runtime.sh
 bash scripts/test-local-lite-rocksdb-sqlci.sh
+make local-lite-regress
 ```
 
 ## Design Rules

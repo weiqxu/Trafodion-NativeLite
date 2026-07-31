@@ -75,4 +75,23 @@ Minimal local table smoke example:
 >>exit;
 ```
 
+## Quick Regress Run
+
+After building the local-lite SQL binary, run the native TEST/EXPECTED lane
+without starting SQF, TMF, HBase, Hadoop, or ZooKeeper:
+
+```bash
+make local-lite-regress
+```
+
+Run selected cases with:
+
+```bash
+make local-lite-regress LOCAL_LITE_REGR_TESTS="001 003"
+```
+
+The runner prints the temporary artifact directory containing `RAWnnn`,
+`LOGnnn`, and `DIFFnnn` files. The cases and baselines live under
+`core/sql/regress/localLite`.
+
 Use `make all` for the normal full Trafodion build.

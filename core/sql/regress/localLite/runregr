@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# @@@ START COPYRIGHT @@@
+# Licensed to the Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with this work for
+# additional information regarding copyright ownership. The ASF licenses this
+# file to you under the Apache License, Version 2.0 (the "License"); you may not
+# use this file except in compliance with the License. You may obtain a copy of
+# the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations under
+# the License.
+# @@@ END COPYRIGHT @@@
+
+set -uo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: runregr [-diff|--diff-only] [--run-dir DIR] [TESTnnn|nnn ...]
+
+Run local-lite TEST/EXPECTED SQL regressions without starting the Trafodion
+service stack. With no test arguments, all TESTnnn files in this suite run.
+Diff-only mode compares existing LOGnnn files in an explicitly selected run
+directory without launching SQLCI again.
+
+Environment overrides:
+  LOCAL_LITE_SQLCI         path to the local-lite sqlci binary
+  LOCAL_LITE_SQL_LIB_DIR   directory containing local-lite SQL libraries
+  LOCAL_LITE_SQF_LIB_DIR   directory containing local-lite SQF libraries
+  LOCAL_LITE_REGR_RUN_DIR  directory for RAW/LOG/DIFF output
+USAGE
+}
+
+suite_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$suite_dir/../../../.." && pwd)
+sqlci=${LOCAL_LITE_SQLCI:-$repo_root/core/sql/lib/linux/64bit/debug/sqlci}
+sql_lib_dir=${LOCAL_LITE_SQL_LIB_DIR:-$repo_root/core/sql/lib/linux/64bit/debug}
+sqf_lib_dir=${LOCAL_LITE_SQF_LIB_DIR:-$repo_root/core/sqf/export/lib64d}
+traf_home=$repo_root/core/sqf
+run_dir=${LOCAL_LITE_REGR_RUN_DIR:-}
+diff_only=0
+declare -a requested_tests=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --run-dir)
+      [[ $# -ge 2 ]] || {
+        echo "runregr: --run-dir requires a directory" >&2
+        exit 2
+      }
+      run_dir=$2
+      shift 2
+      ;;
+    -diff|--diff-only)
+      diff_only=1
+      shift
+      ;;
+    --)
+      shift
+      requested_tests+=("$@")
+      break
+      ;;
+    -*)
+      echo "runregr: unsupported option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      requested_tests+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ $diff_only -eq 0 ]]; then
+  [[ -x "$sqlci" ]] || {
+    echo "runregr: missing local-lite sqlci: $sqlci" >&2
+    echo "build the SQL-only local-lite target before running regressions" >&2
+    exit 2
+  }
+fi
+[[ -x "$suite_dir/FILTER" ]] || {
+  echo "runregr: missing executable output filter: $suite_dir/FILTER" >&2
+  exit 2
+}
+
+if [[ $diff_only -eq 1 && -z "$run_dir" ]]; then
+  echo "runregr: diff-only mode requires --run-dir or LOCAL_LITE_REGR_RUN_DIR" >&2
+  exit 2
+elif [[ -z "$run_dir" ]]; then
+  run_dir=$(mktemp -d "${TMPDIR:-/tmp}/traf-local-lite-regress.XXXXXX") || exit 2
+else
+  mkdir -p "$run_dir" || exit 2
+  run_dir=$(cd "$run_dir" && pwd)
+fi
+
+if [[ ${#requested_tests[@]} -eq 0 ]]; then
+  while IFS= read -r test_path; do
+    requested_tests+=("$(basename "$test_path")")
+  done < <(find "$suite_dir" -maxdepth 1 -type f -name 'TEST[0-9][0-9][0-9]' | sort)
+fi
+
+[[ ${#requested_tests[@]} -gt 0 ]] || {
+  echo "runregr: no TESTnnn files found in $suite_dir" >&2
+  exit 2
+}
+
+normalize_test_name() {
+  local value
+  value=$(basename "$1" | tr '[:lower:]' '[:upper:]')
+  value=${value#TEST}
+  [[ "$value" =~ ^[0-9]{1,3}$ ]] || return 1
+  printf 'TEST%03d' "$((10#$value))"
+}
+
+passed=0
+failed=0
+echo "Local-lite SQL regressions"
+echo "  sqlci: $sqlci"
+echo "  output: $run_dir"
+
+for requested in "${requested_tests[@]}"; do
+  test_name=$(normalize_test_name "$requested") || {
+    echo "FAIL $requested (expected TESTnnn or nnn)"
+    failed=$((failed + 1))
+    continue
+  }
+  test_number=${test_name#TEST}
+  test_file=$suite_dir/$test_name
+  expected_file=$suite_dir/EXPECTED$test_number
+  raw_file=$run_dir/RAW$test_number
+  log_file=$run_dir/LOG$test_number
+  diff_file=$run_dir/DIFF$test_number
+
+  if [[ ! -f "$test_file" || ! -f "$expected_file" ]]; then
+    echo "FAIL $test_name (missing TEST or EXPECTED file)"
+    failed=$((failed + 1))
+    continue
+  fi
+
+  if [[ $diff_only -eq 0 ]]; then
+    store_dir=$(mktemp -d "$run_dir/store-$test_number.XXXXXX") || exit 2
+    env \
+      LC_ALL=C \
+      TRAF_HOME="$traf_home" \
+      TRAF_LOCAL_LITE=1 \
+      TRAF_LOCAL_STORE_DIR="$store_dir" \
+      LD_LIBRARY_PATH="$sql_lib_dir:$sqf_lib_dir:${LD_LIBRARY_PATH:-}" \
+      "$sqlci" <"$test_file" >"$raw_file" 2>&1
+    sqlci_status=$?
+    "$suite_dir/FILTER" "$raw_file" >"$log_file"
+    rm -rf -- "$store_dir"
+  elif [[ -f "$log_file" ]]; then
+    sqlci_status=0
+  else
+    echo "FAIL $test_name (missing diff-only log: $log_file)"
+    failed=$((failed + 1))
+    continue
+  fi
+
+  if diff -u "$expected_file" "$log_file" >"$diff_file" &&
+     [[ $sqlci_status -eq 0 ]]; then
+    echo "PASS $test_name"
+    passed=$((passed + 1))
+  else
+    echo "FAIL $test_name (sqlci=$sqlci_status, diff=$diff_file)"
+    failed=$((failed + 1))
+  fi
+done
+
+echo "Summary: $passed passed, $failed failed"
+echo "Artifacts: $run_dir"
+[[ $failed -eq 0 ]]
