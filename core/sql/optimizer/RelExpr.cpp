@@ -7792,6 +7792,11 @@ void GroupByAgg::getValuesRequiredForEvaluatingAggregate(ValueIdSet& relevantVal
 	  break;
 	}
     }
+
+  // Ordered GROUP_CONCAT may sort by an expression that is not its value
+  // argument. Keep those values available below the group-by so the physical
+  // sort requirement can be satisfied.
+  relevantValues.insertList(extraOrderExpr());
 }
 
 void GroupByAgg::addLocalExpr(LIST(ExprNode *) &xlist,

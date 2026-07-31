@@ -1,0 +1,86 @@
+>>CREATE TABLE LLREG014_GROUP_ROWS
++>  (id INT PRIMARY KEY,
++>   grp VARCHAR(8),
++>   score INT,
++>   label VARCHAR(16));
+--- SQL operation complete.
+>>INSERT INTO LLREG014_GROUP_ROWS VALUES
++>  (1, 'g1', 30, 'three'),
++>  (2, 'g1', 10, 'one'),
++>  (3, 'g1', 20, 'two'),
++>  (4, 'g1', 20, 'two-b'),
++>  (5, 'g1', NULL, 'missing'),
++>  (6, 'g2', 5, 'five'),
++>  (7, 'g2', 15, 'fifteen'),
++>  (8, 'g2', 5, 'five-b'),
++>  (9, 'g3', NULL, 'none-a'),
++>  (10, 'g3', NULL, 'none-b'),
++>  (11, 'g4', 1, ''),
++>  (12, 'g4', 2, 'tail');
+--- 12 row(s) inserted.
+>>SELECT grp,
++>       CAST(GROUP_CONCAT(score ORDER BY score SEPARATOR '-')
++>            AS VARCHAR(30)) AS scores
++>  FROM LLREG014_GROUP_ROWS
++> GROUP BY grp
++> ORDER BY grp;
+GRP       SCORES
+--------  ------------------------------
+g1        10-20-20-30
+g2        5-5-15
+g3        ?
+g4        1-2
+--- 4 row(s) selected.
+>>SELECT grp,
++>       CAST(GROUP_CONCAT(DISTINCT score
++>                         ORDER BY score DESC SEPARATOR ':')
++>            AS VARCHAR(30)) AS distinct_scores
++>  FROM LLREG014_GROUP_ROWS
++> GROUP BY grp
++> ORDER BY grp;
+GRP       DISTINCT_SCORES
+--------  ------------------------------
+g1        30:20:10
+g2        15:5
+g3        ?
+g4        2:1
+--- 4 row(s) selected.
+>>SELECT grp,
++>       CAST(GROUP_CONCAT(label ORDER BY id SEPARATOR '|')
++>            AS VARCHAR(80)) AS labels
++>  FROM LLREG014_GROUP_ROWS
++> GROUP BY grp
++> ORDER BY grp;
+GRP       LABELS
+--------  --------------------------------------------------------------------------------
+g1        three|one|two|two-b|missing
+g2        five|fifteen|five-b
+g3        none-a|none-b
+g4        |tail
+--- 4 row(s) selected.
+>>SELECT CAST(GROUP_CONCAT(label ORDER BY id)
++>            AS VARCHAR(120)) AS all_labels
++>  FROM LLREG014_GROUP_ROWS;
+ALL_LABELS
+------------------------------------------------------------------------------------------------------------------------
+three,one,two,two-b,missing,five,fifteen,five-b,none-a,none-b,,tail
+--- 1 row(s) selected.
+>>SELECT CASE WHEN GROUP_CONCAT(score ORDER BY id) IS NULL
++>            THEN 'NULL' ELSE 'VALUE' END AS all_null_state
++>  FROM LLREG014_GROUP_ROWS
++> WHERE grp = 'g3';
+ALL_NULL_STATE
+--------------
+NULL
+--- 1 row(s) selected.
+>>SELECT CASE WHEN GROUP_CONCAT(score ORDER BY id) IS NULL
++>            THEN 'NULL' ELSE 'VALUE' END AS empty_state
++>  FROM LLREG014_GROUP_ROWS
++> WHERE grp = 'missing';
+EMPTY_STATE
+-----------
+NULL
+--- 1 row(s) selected.
+>>DROP TABLE LLREG014_GROUP_ROWS;
+--- SQL operation complete.
+>>exit;

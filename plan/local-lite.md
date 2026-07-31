@@ -402,6 +402,9 @@ Current cases are:
 - `TEST013`: ASCII string functions over local `VARCHAR` rows, positive and
   negated POSIX `REGEXP` predicates with NULL input, invalid-pattern diagnostic
   `8452`, and successful table access after the executor error.
+- `TEST014`: grouped and scalar `GROUP_CONCAT`, ordered and `DISTINCT` values,
+  default and custom separators, an independent order key, NULL elimination,
+  empty-string preservation, and all-NULL/empty-input results.
 
 Run all cases or a selected subset from the repository root:
 
@@ -426,7 +429,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST013`. The legacy files remain useful as SQL-shape input, but their
+`TEST014`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -438,11 +441,12 @@ unchanged in local-lite.
 | SQLCI `PREPARE`/`EXECUTE` lifecycle | Covered by `TEST011`, including repeated SELECT/INSERT, new parameter values, name replacement, fresh SELECT results, and post-error recovery | Add cases only when they protect another prepared-execution invariant. |
 | `NATURAL JOIN`, general `SELECT DISTINCT`, and `FIRST`/limit shapes | Covered by `TEST012`, including correlated `FIRST` through ProbeCache | `LIMIT` intentionally retains Trafodion's legacy `[ANY n]` semantics rather than ordered `FIRST` semantics. |
 | POSIX `REGEXP` and additional ASCII string functions | Covered by `TEST013`, including NULL propagation, invalid-pattern `8452`, and post-error recovery | UCS2/UTF8 conversion, collation, and large-length character boundaries remain outside this portable increment. |
-| `GROUP_CONCAT` ordering, `DISTINCT`, and separator forms | Compiler/executor candidate, not claimed by the native lane | This is the next portable coverage gap. |
+| `GROUP_CONCAT` ordering, `DISTINCT`, separator, and NULL forms | Covered by `TEST014`, including an order key independent of the concatenated value and empty-string separator placement | `MAX LENGTH`, overflow warning `8402`, distributed staging, and multiple incompatible aggregate orderings remain outside this portable increment. |
+| `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`, and `NVL` | Compiler/executor candidates, not claimed by the native lane | This is the next portable ASCII/NULL-expression coverage gap from `charsets/TEST313`. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable `GROUP_CONCAT` aggregate coverage
-without expanding unsupported storage or service-stack behavior.
+The next compatibility increment is portable NULL/conditional scalar-function
+coverage without expanding into UCS2/UTF8 conversion or collation behavior.
 
 ## RocksDB Local Store Implementation
 
@@ -771,6 +775,14 @@ Completed:
   `UPPER`/`LOWER`, substring/position/replacement, left/right/padding, plus
   standalone repeat, length, insert, trim, and space expressions. An invalid
   pattern locks diagnostic `8452`, followed by a successful table read.
+- Native `TEST014` migrates portable `GROUP_CONCAT` shapes from legacy
+  `executor/TEST002`. It covers ascending and descending order, duplicate
+  preservation and `DISTINCT`, default and custom separators, grouped and
+  scalar aggregates, NULL elimination, empty-string preservation, and
+  all-NULL/empty inputs. The executor aggregate now initializes to NULL, skips
+  NULL inputs without erasing an existing result, and tracks a zero-length
+  input as an accumulated value for separator placement, while group-by keeps
+  independent aggregate order keys available to its child plan.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -778,11 +790,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe and migrate portable `GROUP_CONCAT` aggregate cases, including ordered,
-   `DISTINCT`, custom-separator, NULL, and grouped forms, without expanding
-   unsupported storage or service-stack behavior.
+1. Probe and migrate portable ASCII `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`,
+   and `NVL` cases from `charsets/TEST313`, including stored NULL inputs and
+   predicate use, without claiming charset-conversion or collation behavior.
 
-The next task to start is **Portable `GROUP_CONCAT` aggregate regress
+The next task to start is **Portable NULL/conditional scalar-function regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**

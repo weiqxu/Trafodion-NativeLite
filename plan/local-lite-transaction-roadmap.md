@@ -444,7 +444,12 @@ ordered `FIRST`, legacy `[ANY n]`-style `LIMIT`, and correlated `FIRST` coverage
 The correlated case also guards against remapping an outer characteristic input
 as an inner scan column. `TEST013` adds portable ASCII string functions, POSIX
 `REGEXP` predicates, NULL behavior, invalid-pattern diagnostic `8452`, and
-post-error recovery. The compatibility audit now identifies portable
-`GROUP_CONCAT` aggregate shapes as the next regress gap. The
-transaction-specific multi-table and catalog/table crash-atomicity limits
-remain unchanged.
+post-error recovery. `TEST014` adds ordered and `DISTINCT` `GROUP_CONCAT`,
+default/custom separators, an independent order key, grouped/scalar forms, and
+NULL/all-NULL/empty-input behavior, including empty-string separator placement.
+Its executor fix prevents a later NULL from erasing an accumulated result and
+tracks zero-length inputs as values, while its optimizer fix keeps an
+independent aggregate order key available below group-by. The compatibility
+audit now identifies portable `COALESCE`/`DECODE`/`ISNULL`/`NULLIF`/`NVL`
+ASCII and NULL semantics as the next regress gap. The transaction-specific
+multi-table and catalog/table crash-atomicity limits remain unchanged.

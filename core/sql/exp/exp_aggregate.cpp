@@ -319,8 +319,28 @@ ex_expr::exp_return_type ex_pivot_group_clause::init()
   currPos_ = 0;
   currTgtLen_ = 0;
   setOvflWarn(FALSE);
+  setHasValue(FALSE);
 
   return retcode;
+}
+
+ex_expr::exp_return_type ex_pivot_group_clause::processNulls(
+                                                     char * null_data[],
+                                                     CollHeap       * /*heap*/,
+                                                     ComDiagsArea  ** /*diagsArea*/)
+{
+  // GROUP_CONCAT ignores NULL inputs. In particular, a NULL encountered
+  // after one or more values must not turn the accumulated result into NULL.
+  for (short i = 1; i < getNumOperands(); i++)
+    if (getOperand(i)->getNullFlag() && !null_data[i])
+      return ex_expr::EXPR_NULL;
+
+  if (getOperand(0)->getNullFlag())
+    ExpTupleDesc::clearNullValue(null_data[0],
+                                 getOperand(0)->getNullBitIndex(),
+                                 getOperand(0)->getTupleFormat());
+
+  return ex_expr::EXPR_OK;
 }
 
 ex_expr::exp_return_type ex_pivot_group_clause::eval(char * op_data[],
@@ -338,7 +358,7 @@ ex_expr::exp_return_type ex_pivot_group_clause::eval(char * op_data[],
   Lng32 currSrcPos = currPos_;
 
   Lng32 delimSize = strlen(delim_);
-  Lng32 tgtBufNeeded = (currPos_ > 0 ? delimSize : 0)  + src_length;
+  Lng32 tgtBufNeeded = (hasValue() ? delimSize : 0) + src_length;
 
   if ((currTgtLen_ + tgtBufNeeded) > maxLen_)
     {
@@ -354,7 +374,7 @@ ex_expr::exp_return_type ex_pivot_group_clause::eval(char * op_data[],
       return ex_expr::EXPR_OK;
     }
 
-  if (currPos_ > 0)
+  if (hasValue())
     {
       str_cpy_all(&tgt[currPos_], delim_, strlen(delim_));
       currPos_ += strlen(delim_);
@@ -362,6 +382,7 @@ ex_expr::exp_return_type ex_pivot_group_clause::eval(char * op_data[],
 
   str_cpy_all(&tgt[currPos_], src, src_length);
   currPos_ += src_length;
+  setHasValue(TRUE);
 
   currTgtLen_ += (currPos_ - currSrcPos);
   

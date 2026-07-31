@@ -1492,8 +1492,10 @@ short ExpGenerator::generateAggrExpr(const ValueIdSet &val_id_set,
 	case ITM_PIVOT_GROUP:
 	  {
 	    generator->getMapInfo(val_id)->codeGenerated();
-            newExpr = new(wHeap())
-              Cast(new(wHeap()) ConstValue(""), &(val_id.getType()));
+            ConstValue * nullValue = generateNullConst(val_id.getType());
+            NAType * nullableType = val_id.getType().newCopy(wHeap());
+            nullableType->setSQLnullFlag();
+            newExpr = new(wHeap()) Cast(nullValue, nullableType);
 	  }
 	  break;
 
@@ -5652,5 +5654,4 @@ ConstValue * ExpGenerator::generateNullConst(const NAType &type)
   (nullConst->getValueId()).changeType(newType);
   return nullConst;
 }
-
 

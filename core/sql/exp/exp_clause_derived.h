@@ -335,6 +335,9 @@ public:
   // Execution
   //
   ex_expr::exp_return_type init();
+  ex_expr::exp_return_type processNulls(char *op_data[],
+                                        CollHeap * = 0,
+                                        ComDiagsArea ** = 0);
   ex_expr::exp_return_type eval(char *op_data[],
                                 CollHeap * = 0,
                                 ComDiagsArea ** = 0);
@@ -373,11 +376,17 @@ public:
   void setOvflWarn(NABoolean v)      
   { (v ? flags_ |= OVFL_WARN : flags_ &= ~OVFL_WARN); }
 
+  NABoolean hasValue()
+  { return (flags_ & VALUE_SEEN) != 0; }
+  void setHasValue(NABoolean v)
+  { (v ? flags_ |= VALUE_SEEN : flags_ &= ~VALUE_SEEN); }
+
 private:  
   enum
   {
     ORDER_BY   = 0x0001,
-    OVFL_WARN = 0x0002
+    OVFL_WARN  = 0x0002,
+    VALUE_SEEN = 0x0004
   };
 
   Lng32 currPos_;
@@ -2843,9 +2852,6 @@ private:
 
 
 #endif
-
-
-
 
 
 
