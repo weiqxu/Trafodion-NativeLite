@@ -432,6 +432,10 @@ Current cases are:
 - `TEST023`: single-byte `CONCAT()` equivalence to `||` over literals and
   stored VARCHAR values, including empty strings, NULL propagation, embedded
   spaces, both INSERT assignment paths, nested concatenation, and predicates.
+- `TEST024`: single-byte `INSERT()` string-function results over literals and
+  stored VARCHAR/numeric arguments, including the legacy position/length
+  matrix, append-at-end, empty/NULL values, both INSERT assignment paths,
+  concatenation, and predicates.
 
 Run all cases or a selected subset from the repository root:
 
@@ -456,7 +460,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST023`. The legacy files remain useful as SQL-shape input, but their
+`TEST024`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -478,10 +482,11 @@ unchanged in local-lite.
 | `CURRENT_USER`, `SESSION_USER`, and `USER` identity expressions | Covered by `TEST021`, including environment-independent equality/nonempty invariants, both INSERT assignment shapes, concatenation, and predicates | Existing parser/compiler/executor behavior was sufficient; configured identity text and definer-rights identity changes remain outside this portable increment. |
 | Single-byte `SPACE` expressions | Covered by `TEST022`, including constant and stored counts, positive/zero/NULL results, both INSERT assignment paths, padded comparison, exact-length and concatenation predicates, diagnostics `4129`/`4062`, and post-error recovery | Existing parser/compiler/executor behavior was sufficient; explicit UTF8/UCS2 variants remain outside this portable increment. |
 | Single-byte `CONCAT()` function | Covered by `TEST023`, including literal and stored VARCHAR operands, equivalence to `||`, empty/NULL inputs, embedded-space byte preservation, both INSERT assignment paths, nested use, and predicates | Existing parser/compiler/executor behavior was sufficient; UTF8/UCS2 variants remain outside this portable increment. |
-| Single-byte `INSERT()` string function | One standalone literal expression is covered by `TEST013`; stored assignment, comparison, concatenation, and boundary shapes are not yet claimed | This is the next portable gap from `charsets/TEST313`; cover stored VARCHAR inputs, empty/NULL values, position/length boundaries, assignment, and predicates without adding UTF8/UCS2 variants. |
+| Single-byte `INSERT()` string function | Covered by `TEST024`, including literals, stored VARCHAR and numeric arguments, the legacy position/length matrix, append-at-end, empty/NULL values, both INSERT assignment paths, concatenation, and predicates | Existing binder rewrite and executor behavior were sufficient; invalid-position/negative-length diagnostics and UTF8/UCS2 variants remain outside this portable increment. |
+| Single-byte `REPEAT()` function | One standalone literal expression is covered by `TEST013`; stored string/count arguments, assignment, predicates, and count boundaries are not yet claimed | This is the next portable gap from `core/TEST038`; cover zero/NULL counts, empty/NULL strings, both INSERT assignment paths, concatenation, predicates, and deterministic invalid/oversized-count diagnostics without adding UTF8/UCS2 variants. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable single-byte `INSERT()` string
+The next compatibility increment is portable single-byte `REPEAT()` string
 function coverage over local tables.
 
 ## RocksDB Local Store Implementation
@@ -872,6 +877,13 @@ Completed:
   strings, NULL propagation, embedded-space byte preservation, both INSERT
   assignment paths, and predicates. Existing parser/compiler/executor behavior
   required no implementation change.
+- Native `TEST024` expands portable single-byte `INSERT()` string-function
+  coverage from the standalone literal in `TEST013` using shapes from
+  `charsets/TEST312` and `charsets/TEST313`. It covers literal and stored
+  VARCHAR/numeric arguments, the legacy position/length matrix, append-at-end,
+  empty strings, NULL propagation across all four arguments, both INSERT
+  assignment paths, concatenation, and predicates. Existing binder rewrite and
+  executor behavior required no implementation change.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -879,12 +891,13 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Expand portable single-byte `INSERT()` coverage from its standalone literal
-   expression in `TEST013` to stored VARCHAR operands, empty/NULL values,
-   position/length boundaries, both INSERT assignment paths, concatenation,
-   and predicates. Keep UTF8/UCS2 variants out of this increment.
+1. Expand portable single-byte `REPEAT()` coverage from its standalone literal
+   expression in `TEST013` to stored VARCHAR/count operands, empty/NULL values,
+   zero and invalid/oversized count boundaries, both INSERT assignment paths,
+   concatenation, and predicates. Keep UTF8/UCS2 variants out of this
+   increment.
 
-The next task to start is **Portable single-byte INSERT function regress
+The next task to start is **Portable single-byte REPEAT function regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**

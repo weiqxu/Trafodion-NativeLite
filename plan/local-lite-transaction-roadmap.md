@@ -484,7 +484,11 @@ single-byte `CONCAT()` function is now covered by `TEST023`, including literal
 and stored operands, exact equivalence to `||`, empty/NULL inputs,
 embedded-space byte preservation, both INSERT assignment paths, nested use,
 and predicates. No parser/compiler/executor change was needed. The single-byte
-`INSERT()` string function is the next portable regress gap. The
+`INSERT()` string function is now covered by `TEST024`, including literal and
+stored VARCHAR/numeric arguments, the legacy position/length matrix,
+append-at-end, empty/NULL inputs, both INSERT assignment paths, concatenation,
+and predicates. No parser/compiler/executor change was needed. The single-byte
+`REPEAT()` function is the next portable regress gap. The
 transaction-specific multi-table and catalog/table
 crash-atomicity limits
 remain unchanged.

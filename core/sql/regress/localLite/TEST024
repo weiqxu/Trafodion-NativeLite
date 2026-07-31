@@ -1,0 +1,110 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable single-byte INSERT string-function coverage adapted from
+-- charsets/TEST312 and charsets/TEST313. Explicit UTF8/UCS2 variants remain
+-- outside this case.
+SELECT INSERT('abcghi', 4, 0, 'def') AS inserted_txt,
+       CASE WHEN INSERT('', 1, 0, '') = ''
+            THEN 'MATCH' ELSE 'DIFFERENT' END AS empty_state,
+       CASE WHEN INSERT(CAST(NULL AS VARCHAR(1)), 1, 0, 'x') IS NULL
+            THEN 'NULL' ELSE 'VALUE' END AS null_state,
+       INSERT('12345678', 7, 8, 'xyz') AS truncated_tail
+  FROM (VALUES (1)) AS v(n);
+
+CREATE TABLE LLREG024_INSERT_SOURCE
+  (id INT PRIMARY KEY,
+   source_txt VARCHAR(12),
+   start_pos INT,
+   remove_len INT,
+   replacement_txt VARCHAR(8),
+   expected_txt VARCHAR(24));
+
+-- The first four rows preserve the position/length matrix from TEST312.
+-- Additional rows cover append-at-end, empty results and dynamic NULL inputs.
+INSERT INTO LLREG024_INSERT_SOURCE VALUES
+  (2, '12345678', 1, 0, 'xyz', 'xyz12345678'),
+  (3, '12345678', 1, 2, 'xyz', 'xyz345678'),
+  (4, '12345678', 3, 4, 'xyz', '12xyz78'),
+  (5, '12345678', 7, 8, 'xyz', '123456xyz'),
+  (6, '12345678', 9, 0, 'xyz', '12345678xyz'),
+  (7, 'abc', 2, 1, '', 'ac'),
+  (8, 'abc', 1, 3, '', ''),
+  (9, '', 1, 0, 'xyz', 'xyz'),
+  (10, '', 1, 0, '', ''),
+  (11, NULL, 1, 0, 'xyz', NULL),
+  (12, 'abc', 1, 0, NULL, NULL),
+  (13, 'abc', NULL, 0, 'x', NULL),
+  (14, 'abc', 1, NULL, 'x', NULL);
+
+CREATE TABLE LLREG024_INSERT_RESULTS
+  (id INT PRIMARY KEY,
+   result_txt VARCHAR(24),
+   expected_txt VARCHAR(24),
+   wrapped_txt VARCHAR(26));
+
+-- Cover assignment through both INSERT VALUES and INSERT SELECT. The latter
+-- exercises stored strings and nonconstant position/length expressions.
+INSERT INTO LLREG024_INSERT_RESULTS VALUES
+  (1, INSERT('abcghi', 4, 0, 'def'), 'abcdefghi',
+   '[' || INSERT('abcghi', 4, 0, 'def') || ']');
+
+INSERT INTO LLREG024_INSERT_RESULTS
+SELECT id,
+       INSERT(source_txt, start_pos, remove_len, replacement_txt),
+       expected_txt,
+       '[' || INSERT(source_txt, start_pos, remove_len, replacement_txt) || ']'
+  FROM LLREG024_INSERT_SOURCE;
+
+-- Hex output makes empty results and byte-exact single-byte values explicit.
+SELECT id,
+       CASE
+         WHEN result_txt IS NULL AND expected_txt IS NULL THEN 'BOTH_NULL'
+         WHEN result_txt = expected_txt THEN 'MATCH'
+         ELSE 'DIFFERENT'
+       END AS result_state,
+       CHAR_LENGTH(result_txt) AS result_length,
+       CONVERTTOHEX(result_txt) AS result_hex,
+       CONVERTTOHEX(wrapped_txt) AS wrapped_hex
+  FROM LLREG024_INSERT_RESULTS
+ ORDER BY id;
+
+-- Exercise INSERT directly in predicates over stored VARCHAR and numeric
+-- arguments, including NULL propagation.
+SELECT id
+  FROM LLREG024_INSERT_SOURCE
+ WHERE INSERT(source_txt, start_pos, remove_len, replacement_txt) = expected_txt
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG024_INSERT_SOURCE
+ WHERE INSERT(source_txt, start_pos, remove_len, replacement_txt) IS NULL
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG024_INSERT_RESULTS
+ WHERE result_txt = '12xyz78'
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG024_INSERT_RESULTS
+ WHERE wrapped_txt = '[' || INSERT('12345678', 3, 4, 'xyz') || ']'
+ ORDER BY id;
+
+DROP TABLE LLREG024_INSERT_RESULTS;
+DROP TABLE LLREG024_INSERT_SOURCE;
+exit;
