@@ -382,6 +382,9 @@ Current cases are:
 - `TEST008`: aggregate/subquery binder diagnostics and executor value-evaluation
   diagnostics for invalid character conversion, numeric narrowing overflow, and
   division by zero, including successful post-error table access.
+- `TEST009`: compiler-routed local DDL diagnostics and SQLCI pre-prepare
+  diagnostics for unsupported DML, object DDL, native external-table DDL, table
+  alteration, and truncation, including post-error base-table verification.
 
 Run all cases or a selected subset from the repository root:
 
@@ -600,8 +603,8 @@ above.
 
 ### Current Task Status
 
-Last updated after extending deterministic binder/runtime diagnostics to
-aggregate/subquery and executor value-evaluation boundaries.
+Last updated after moving compiler DDL and unsupported-statement diagnostics
+from the SQLCI smoke path into the native regress lane.
 
 Completed:
 
@@ -700,14 +703,18 @@ Completed:
   overflow (`8411`), and division by zero (`8419`). A final ordered table scan
   confirms that the executor errors leave both the session and stored rows
   usable.
+- Native `TEST009` validates compiler-routed duplicate CREATE, unsupported
+  CHECK/DEFAULT/BLOB definitions, DROP CASCADE, and missing-table DROP through
+  the original `3242` diagnostics. It also locks the SQLCI pre-prepare messages
+  for unsupported UPDATE/DELETE/MERGE, UPSERT, object DDL, external-table DDL,
+  ALTER, and TRUNCATE, then confirms that the base table remains unchanged.
 
 Remaining, in suggested implementation order:
 
-1. Move deterministic compiler DDL and local-lite unsupported-statement
-   diagnostics from the SQLCI smoke path into native TEST/EXPECTED coverage.
+1. Audit the remaining portable `core` and `executor` cases against the native
+   lane and record the next supported SQL gap before expanding the v1 surface.
 
-The next task to start is **Compiler DDL and unsupported SQL diagnostic regress
-coverage**.
+The next task to start is **Native regress compatibility gap audit**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

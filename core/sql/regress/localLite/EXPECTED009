@@ -1,0 +1,66 @@
+>>CREATE TABLE LLREG009_BASE
++>  (id INT PRIMARY KEY,
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LLREG009_BASE VALUES (1, 'still-here');
+--- 1 row(s) inserted.
+>>CREATE TABLE LLREG009_BASE (id INT);
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. local-lite table already exists: TRAFODION.SEABASE.LLREG009_BASE <MXID>
+--- SQL operation failed with errors.
+>>CREATE TABLE LLREG009_CHECK (id INT CHECK (id > 0));
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported <MXID>
+--- SQL operation failed with errors.
+>>CREATE TABLE LLREG009_DEFAULT (id INT DEFAULT 1);
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported <MXID>
+--- SQL operation failed with errors.
+>>CREATE TABLE LLREG009_LOB (payload BLOB(100));
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. unsupported local-lite column type: BLOB <MXID>
+--- SQL operation failed with errors.
+>>DROP TABLE LLREG009_BASE CASCADE;
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. DROP TABLE CASCADE is not supported in local-lite <MXID>
+--- SQL operation failed with errors.
+>>DROP TABLE LLREG009_MISSING;
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. local-lite table does not exist: TRAFODION.SEABASE.LLREG009_MISSING <MXID>
+--- SQL operation failed with errors.
+>>UPDATE LLREG009_BASE SET label = 'changed' WHERE id = 1;
+*** ERROR[local-lite] UPDATE, DELETE, and MERGE are not supported in local-lite
+>>DELETE FROM LLREG009_BASE WHERE id = 1;
+*** ERROR[local-lite] UPDATE, DELETE, and MERGE are not supported in local-lite
+>>MERGE INTO LLREG009_BASE USING LLREG009_BASE AS source_rows
++>  ON LLREG009_BASE.id = source_rows.id
++>  WHEN MATCHED THEN UPDATE SET label = 'changed';
+*** ERROR[local-lite] UPDATE, DELETE, and MERGE are not supported in local-lite
+>>UPSERT INTO LLREG009_BASE VALUES (2, 'upserted');
+*** ERROR[local-lite] UPSERT is not supported in local-lite v1; use INSERT
+>>CREATE INDEX LLREG009_IX ON LLREG009_BASE(id);
+*** ERROR[local-lite] CREATE INDEX is not supported in local-lite
+>>CREATE VIEW LLREG009_VIEW AS SELECT * FROM LLREG009_BASE;
+*** ERROR[local-lite] CREATE VIEW is not supported in local-lite
+>>CREATE SEQUENCE LLREG009_SEQ;
+*** ERROR[local-lite] CREATE SEQUENCE is not supported in local-lite
+>>CREATE SCHEMA LLREG009_SCHEMA;
+*** ERROR[local-lite] CREATE SCHEMA is not supported in local-lite
+>>CREATE SYNONYM LLREG009_SYN FOR LLREG009_BASE;
+*** ERROR[local-lite] CREATE SYNONYM is not supported in local-lite
+>>CREATE EXTERNAL TABLE LLREG009_EXT (id INT);
+*** ERROR[local-lite] native HBase/Hive/volatile table DDL is not supported in local-lite
+>>ALTER TABLE LLREG009_BASE ADD COLUMN extra_col INT;
+*** ERROR[local-lite] ALTER TABLE is not supported in local-lite
+>>TRUNCATE TABLE LLREG009_BASE;
+*** ERROR[local-lite] TRUNCATE TABLE is not supported in local-lite
+>>SELECT id, label
++>  FROM LLREG009_BASE
++>  ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          1  still-here
+--- 1 row(s) selected.
+>>DROP TABLE LLREG009_BASE;
+--- SQL operation complete.
+>>exit;

@@ -1,0 +1,56 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Compiler DDL and local-lite unsupported-statement diagnostics migrated from
+-- scripts/test-local-lite-rocksdb-sqlci.sh.
+CREATE TABLE LLREG009_BASE
+  (id INT PRIMARY KEY,
+   label VARCHAR(20));
+
+INSERT INTO LLREG009_BASE VALUES (1, 'still-here');
+
+-- Compiler-routed DDL must preserve the original local-lite diagnostics.
+CREATE TABLE LLREG009_BASE (id INT);
+CREATE TABLE LLREG009_CHECK (id INT CHECK (id > 0));
+CREATE TABLE LLREG009_DEFAULT (id INT DEFAULT 1);
+CREATE TABLE LLREG009_LOB (payload BLOB(100));
+DROP TABLE LLREG009_BASE CASCADE;
+DROP TABLE LLREG009_MISSING;
+
+-- SQLCI rejects unsupported statements before they reach service-stack paths.
+UPDATE LLREG009_BASE SET label = 'changed' WHERE id = 1;
+DELETE FROM LLREG009_BASE WHERE id = 1;
+MERGE INTO LLREG009_BASE USING LLREG009_BASE AS source_rows
+  ON LLREG009_BASE.id = source_rows.id
+  WHEN MATCHED THEN UPDATE SET label = 'changed';
+UPSERT INTO LLREG009_BASE VALUES (2, 'upserted');
+CREATE INDEX LLREG009_IX ON LLREG009_BASE(id);
+CREATE VIEW LLREG009_VIEW AS SELECT * FROM LLREG009_BASE;
+CREATE SEQUENCE LLREG009_SEQ;
+CREATE SCHEMA LLREG009_SCHEMA;
+CREATE SYNONYM LLREG009_SYN FOR LLREG009_BASE;
+CREATE EXTERNAL TABLE LLREG009_EXT (id INT);
+ALTER TABLE LLREG009_BASE ADD COLUMN extra_col INT;
+TRUNCATE TABLE LLREG009_BASE;
+
+-- All failed statements must leave the base table and session usable.
+SELECT id, label
+  FROM LLREG009_BASE
+  ORDER BY id;
+
+DROP TABLE LLREG009_BASE;
+exit;

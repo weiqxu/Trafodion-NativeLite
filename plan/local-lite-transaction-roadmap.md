@@ -426,7 +426,8 @@ aggregation and joins over derived tables, and correlated
 deterministic set-operation, INSERT-shape/NOT-NULL, and scalar-subquery
 cardinality diagnostics together with post-error recovery checks. Native
 `TEST008` adds aggregate/subquery binder diagnostics and executor invalid-value,
-overflow, and division-by-zero recovery coverage. Broader work next moves
-compiler DDL and local-lite unsupported-statement diagnostics into the native
-lane. The transaction-specific multi-table and catalog/table crash-atomicity
-limits remain unchanged.
+overflow, and division-by-zero recovery coverage. Native `TEST009` now locks
+compiler DDL and SQLCI pre-prepare unsupported-statement diagnostics together
+with post-error base-table verification. Broader work next audits the remaining
+portable legacy cases for the next supported SQL gap. The transaction-specific
+multi-table and catalog/table crash-atomicity limits remain unchanged.
