@@ -454,5 +454,9 @@ portable `COALESCE`/`DECODE`/`ISNULL`/`NULLIF`/`NVL` ASCII and NULL
 semantics over stored nullable values in projections and predicates, including
 empty strings, all-NULL inputs, NULL-to-NULL `DECODE` matching, and a missing
 default. No compiler/executor change was needed. Portable single-byte
-`ASCII`/`CHAR` behavior is the next regress gap; the transaction-specific
-multi-table and catalog/table crash-atomicity limits remain unchanged.
+`ASCII`/`CHAR` behavior is now covered by `TEST016`, including stored
+NULL/empty values, ISO88591 boundary round trips, scalar subqueries, predicates,
+diagnostic `8428`, and post-error recovery. No compiler/executor change was
+needed. Portable `DATEFORMAT`/`DAYNAME`/`MONTHNAME` behavior is the next
+regress gap; the transaction-specific multi-table and catalog/table
+crash-atomicity limits remain unchanged.

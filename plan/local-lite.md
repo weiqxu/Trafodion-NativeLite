@@ -408,6 +408,9 @@ Current cases are:
 - `TEST015`: `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`, and `NVL` over
   stored nullable ASCII values, including empty strings, NULL-to-NULL
   `DECODE` matching, missing defaults, and predicate use.
+- `TEST016`: single-byte `ASCII` and `CHAR` over stored values, empty
+  strings and NULL, ISO88591 boundary round trips, scalar subqueries,
+  predicates, out-of-range diagnostic `8428`, and post-error recovery.
 
 Run all cases or a selected subset from the repository root:
 
@@ -432,7 +435,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST015`. The legacy files remain useful as SQL-shape input, but their
+`TEST016`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -446,11 +449,12 @@ unchanged in local-lite.
 | POSIX `REGEXP` and additional ASCII string functions | Covered by `TEST013`, including NULL propagation, invalid-pattern `8452`, and post-error recovery | UCS2/UTF8 conversion, collation, and large-length character boundaries remain outside this portable increment. |
 | `GROUP_CONCAT` ordering, `DISTINCT`, separator, and NULL forms | Covered by `TEST014`, including an order key independent of the concatenated value and empty-string separator placement | `MAX LENGTH`, overflow warning `8402`, distributed staging, and multiple incompatible aggregate orderings remain outside this portable increment. |
 | `COALESCE`, `DECODE`, `ISNULL`, `NULLIF`, and `NVL` | Covered by `TEST015`, including stored NULL/empty inputs, NULL-to-NULL `DECODE` matching, missing defaults, and predicates | Charset conversion and collation combinations remain outside this portable increment. |
-| `ASCII` and `CHAR` code conversion | Compiler/executor candidates, not claimed by the native lane | This is the next portable single-byte function gap from `charsets/TEST313`; explicit UTF8/UCS2 forms remain outside scope. |
+| `ASCII` and `CHAR` code conversion | Covered by `TEST016`, including stored NULL/empty values, ISO88591 `0..255` round trips, scalar subqueries, predicates, and diagnostic `8428` | Explicit UTF8/UCS2 forms and charset translation remain outside this portable increment. |
+| `DATEFORMAT`, `DAYNAME`, and `MONTHNAME` | Compiler/executor candidates, not claimed by the native lane | This is the next deterministic datetime-to-string gap from `charsets/TEST313`. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable single-byte `ASCII`/`CHAR`
-function coverage without expanding into UTF8/UCS2 conversion behavior.
+The next compatibility increment is portable `DATEFORMAT`/`DAYNAME`/
+`MONTHNAME` coverage over deterministic DATE values.
 
 ## RocksDB Local Store Implementation
 
@@ -793,6 +797,12 @@ Completed:
   including empty strings, all-NULL inputs, NULL-to-NULL `DECODE` matching,
   and a missing `DECODE` default. Existing compiler/executor behavior required
   no implementation change.
+- Native `TEST016` migrates portable single-byte `ASCII`/`CHAR` expressions
+  from `charsets/TEST313`. It covers stored nullable values, the empty-string
+  code `0`, ISO88591 `0..255` round trips, an explicit ISO88591 result,
+  scalar subqueries, predicates, out-of-range diagnostic `8428`, and
+  post-error recovery. Existing compiler/executor behavior required no
+  implementation change.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -800,11 +810,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe and migrate portable single-byte `ASCII` and `CHAR` cases from
-   `charsets/TEST313`, including stored nullable values, round trips, scalar
-   subqueries, and predicate use, without claiming UTF8/UCS2 conversions.
+1. Probe and migrate portable `DATEFORMAT`, `DAYNAME`, and `MONTHNAME`
+   cases from `charsets/TEST313`, including standalone values, persisted
+   dates, expression assignment, and predicates.
 
-The next task to start is **Portable `ASCII`/`CHAR` function regress
+The next task to start is **Portable datetime-to-string function regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
