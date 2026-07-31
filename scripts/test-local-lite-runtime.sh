@@ -74,6 +74,14 @@ grep -q 'beginStatement(this, transactionId)' "$localstore_source" ||
   fail "explicit local transactions must own a persistent read context"
 grep -q 'readOwner = this' "$localstore_source" ||
   fail "transaction scans must resolve through the transaction snapshot"
+grep -q 'commitPendingRows' "$localstore_source" ||
+  fail "transaction commit must publish each table through one storage batch"
+grep -q 'rocksdb_write(db, writeOptions, batch' "$localstore_source" ||
+  fail "local-lite table publication must use a RocksDB write batch"
+grep -q 'failed primary-key commit partially published' "$local_sqlci_smoke" ||
+  fail "SQLCI smoke must cover atomic primary-key commit failure"
+grep -q 'failed UNIQUE commit partially published' "$local_sqlci_smoke" ||
+  fail "SQLCI smoke must cover atomic UNIQUE commit failure"
 grep -q 'LocalLiteTxn txn' "$storage_stubs" ||
   fail "local-lite executor scan/insert TCBs must use the transaction facade"
 grep -q 'getExecutionCount' "$storage_stubs" ||

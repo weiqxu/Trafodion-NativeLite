@@ -207,16 +207,27 @@ first access to each table lazily acquires its RocksDB snapshot, and later
 statements in the transaction reuse that snapshot for both full scans and
 get-row reads. Pending INSERT rows are overlaid on that stable base view, so the
 transaction continues to read its own writes. `ROLLBACK WORK` discards pending
-rows and releases the read context; `COMMIT WORK` publishes through the existing
-local insert path and releases it.
+rows and releases the read context. `COMMIT WORK` now computes and preflights
+all pending primary and UNIQUE keys against committed storage before publishing
+any row from that table, then writes its base rows and secondary uniqueness
+records with one RocksDB `WriteBatch`.
+
+For keyless tables, COMMIT verifies that provisional row ids still begin at the
+current catalog `nextRowId`, updates the metadata while holding the storage
+manager mutex, and rolls that update back if the table batch reports an error.
+Catalog metadata and table rows remain separate RocksDB databases, so this
+provides process-consistent failure handling but not crash-atomic publication
+across those two databases.
 
 Local-lite also disables the HBase coprocessor `COUNT(*)` binder rewrite.
 Transaction aggregates therefore remain normal executor aggregates over the
 same local scan and transaction snapshot path.
 
-This phase does not yet provide RocksDB TransactionDB semantics, atomic
-multi-table commit, or one cross-table snapshot instant because each table uses
-a separate RocksDB database.
+This phase does not provide RocksDB TransactionDB semantics, atomic multi-table
+commit, crash-atomic keyless catalog/table publication, or one cross-table
+snapshot instant because the catalog and each table use separate RocksDB
+databases. If a later table fails after an earlier table was published, COMMIT
+returns an explicit diagnostic that the earlier table may already be committed.
 
 Add local transaction behavior for `BEGIN`, `COMMIT`, and `ROLLBACK` without
 starting TMF/DTM/RMS.
@@ -228,7 +239,7 @@ Tasks:
 - Route local table writes into the current local transaction context when one
   exists.
 - Buffer writes in a local write set or use RocksDB TransactionDB.
-- Make `COMMIT` atomically publish the transaction write set.
+- Make `COMMIT` atomically publish each table's transaction write set.
 - Make `ROLLBACK` discard uncommitted writes.
 - Make scans read from the transaction snapshot plus own writes.
 
@@ -241,6 +252,9 @@ Validation:
   snapshot and do not observe a committed row added after the first read.
 - Full scan and get-row access use the same transaction snapshot.
 - Autocommit behavior remains unchanged outside explicit transactions.
+- A committed primary or UNIQUE duplicate detected during COMMIT does not
+  partially publish an earlier pending row from the same table.
+- A failed keyless UNIQUE commit does not advance persisted `nextRowId`.
 
 ### Phase 5: Deterministic Row Keys And Conflict Detection
 
@@ -383,16 +397,16 @@ the aggregate. Local-lite
 uses hidden `SYSKEY` NATable/NAFileSet metadata for keyless RocksDB row identity,
 so normal groupby elimination and implementation rules no longer require
 local-lite guards. SQLCI EXPLAIN smoke verifies the SYSKEY metadata and retained
-groupby operator. Statement read consistency is now implemented for repeated
-access to each local table, and explicit local transactions now retain that
-read view across statements. The next implementation step should make pending
-transaction publication atomic within each table:
+groupby operator. Statement read consistency is implemented for repeated access
+to each local table, and explicit local transactions retain that read view
+across statements. Pending transaction publication is now atomic within one
+table: COMMIT preflights every pending primary and UNIQUE key and publishes all
+base and secondary records through one RocksDB write batch. Standalone and
+SQLCI regressions verify that a later duplicate cannot partially publish an
+earlier pending row from the table. Keyless row-id metadata is restored after
+an ordinary table write failure, while the catalog/table crash-atomicity and
+multi-table atomicity gaps remain explicit.
 
-1. Preflight all pending primary and UNIQUE keys against current committed
-   storage before writing any row.
-2. Publish each table's pending rows and secondary uniqueness records with one
-   RocksDB write batch.
-3. Update keyless row-id metadata consistently with the table batch and retain
-   an explicit diagnostic for the remaining catalog/table multi-DB gap.
-4. Add commit-failure coverage proving that one duplicate does not partially
-   publish earlier rows from the same table.
+The next implementation step is to add a local-lite-native SQL regress lane
+that can run selected `core/sql/regress` cases against the single-process SQLCI
+runtime without starting the unsupported service stack.

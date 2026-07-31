@@ -287,6 +287,42 @@ grep -q 'LOCAL_LITE_SNAPSHOT_REUSE' <<<"$transaction_output" ||
 grep -q 'LOCAL_LITE_SNAPSHOT_RELEASE' <<<"$transaction_output" ||
   fail "transaction snapshot was not released by COMMIT/ROLLBACK"
 
+atomic_primary_commit_output=$(
+  printf "CREATE TABLE tx_atomic_pk(a INT PRIMARY KEY, b VARCHAR(32));\nINSERT INTO tx_atomic_pk VALUES (2, 'committed');\nBEGIN WORK;\nINSERT INTO tx_atomic_pk VALUES (1, 'must-not-commit'), (2, 'duplicate');\nCOMMIT WORK;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'duplicate local-lite primary key' <<<"$atomic_primary_commit_output" ||
+  fail "transaction commit did not report the committed primary-key duplicate"
+
+atomic_primary_verify_output=$(
+  printf "SELECT b FROM tx_atomic_pk WHERE a = 1;\nSELECT b FROM tx_atomic_pk WHERE a = 2;\nDROP TABLE tx_atomic_pk;\nexit;\n" |
+    run_sqlci
+)
+grep -q -- '--- 0 row(s) selected.' <<<"$atomic_primary_verify_output" ||
+  fail "failed primary-key commit partially published an earlier row"
+grep -q 'committed' <<<"$atomic_primary_verify_output" ||
+  fail "failed primary-key commit damaged the existing committed row"
+
+atomic_unique_commit_output=$(
+  printf "CREATE TABLE tx_atomic_uq(a INT, b VARCHAR(32), UNIQUE(a));\nINSERT INTO tx_atomic_uq VALUES (2, 'committed');\nBEGIN WORK;\nINSERT INTO tx_atomic_uq VALUES (1, 'must-not-commit'), (2, 'duplicate');\nCOMMIT WORK;\nexit;\n" |
+    run_sqlci
+)
+grep -q 'duplicate local-lite unique key' <<<"$atomic_unique_commit_output" ||
+  fail "transaction commit did not report the committed UNIQUE duplicate"
+
+atomic_unique_verify_output=$(
+  printf "SELECT b FROM tx_atomic_uq WHERE a = 1;\nSELECT b FROM tx_atomic_uq WHERE a = 2;\nINSERT INTO tx_atomic_uq VALUES (3, 'after-failure');\nSELECT b FROM tx_atomic_uq WHERE a = 3;\nSELECT COUNT(*) FROM tx_atomic_uq;\nDROP TABLE tx_atomic_uq;\nexit;\n" |
+    run_sqlci
+)
+grep -q -- '--- 0 row(s) selected.' <<<"$atomic_unique_verify_output" ||
+  fail "failed UNIQUE commit partially published an earlier row"
+grep -q 'committed' <<<"$atomic_unique_verify_output" ||
+  fail "failed UNIQUE commit damaged the existing committed row"
+grep -q 'after-failure' <<<"$atomic_unique_verify_output" ||
+  fail "failed UNIQUE commit left keyless row-id metadata unusable"
+grep -Eq '^ *2 *$' <<<"$atomic_unique_verify_output" ||
+  fail "failed UNIQUE commit advanced keyless metadata or leaked a row"
+
 primary_key_output=$(
   printf "CREATE TABLE pk_t(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_t VALUES (1, 'one');\nSELECT b FROM pk_t WHERE a = 1;\nINSERT INTO pk_t VALUES (1, 'dup');\nBEGIN WORK;\nINSERT INTO pk_t VALUES (2, 'two');\nSELECT b FROM pk_t WHERE a = 2;\nINSERT INTO pk_t VALUES (2, 'dup-pending');\nROLLBACK WORK;\nSELECT b FROM pk_t WHERE a = 2;\nDROP TABLE pk_t;\nexit;\n" |
     run_sqlci

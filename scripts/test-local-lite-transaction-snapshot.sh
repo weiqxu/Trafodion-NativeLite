@@ -25,26 +25,39 @@ cat >"$src" <<'CPP'
 #include <string>
 #include <vector>
 
-bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &,
-                              const std::string &,
-                              std::string *,
+bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
+                              const std::string &encodedRow,
+                              std::string *key,
                               std::string *error)
 {
+  if (table.primaryKeyColumns.empty())
+    {
+      if (error)
+        *error = "primary-key codec called for keyless table";
+      return false;
+    }
+  *key = "P" + encodedRow;
   if (error)
-    *error = "primary-key codec should not be used by this probe";
-  return false;
+    error->clear();
+  return true;
 }
 
 bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &,
-                             const std::string &,
-                             const std::vector<size_t> &,
-                             size_t,
-                             std::string *,
+                             const std::string &encodedRow,
+                             const std::vector<size_t> &keyColumns,
+                             size_t keyIndex,
+                             std::string *key,
                              bool *hasKey,
                              std::string *error)
 {
+  if (!keyColumns.empty())
+    {
+      *key = "U";
+      *key += static_cast<char>(keyIndex);
+      *key += encodedRow;
+    }
   if (hasKey)
-    *hasKey = false;
+    *hasKey = !keyColumns.empty();
   if (error)
     error->clear();
   return true;
@@ -95,6 +108,39 @@ static bool scanCount(LocalLiteTxn *txn,
     {
       fprintf(stderr, "expected %zu rows, found %zu\n",
               expected, rows.size());
+      return false;
+    }
+  return true;
+}
+
+static bool scanValues(LocalLiteTxn *txn,
+                       const LocalLiteTableDef &table,
+                       size_t expectedCount,
+                       const char *required,
+                       const char *forbidden)
+{
+  std::vector<LocalLiteRow> rows;
+  std::string error;
+  if (!txn->scanRows(table, &rows, &error))
+    {
+      fprintf(stderr, "scan failed: %s\n", error.c_str());
+      return false;
+    }
+
+  bool foundRequired = false;
+  bool foundForbidden = false;
+  for (size_t i = 0; i < rows.size(); i++)
+    {
+      foundRequired = foundRequired || rows[i].value == required;
+      foundForbidden = foundForbidden || rows[i].value == forbidden;
+    }
+  if (rows.size() != expectedCount || !foundRequired || foundForbidden)
+    {
+      fprintf(stderr,
+              "unexpected scan: count=%zu required=%s found=%d "
+              "forbidden=%s found=%d\n",
+              rows.size(), required, foundRequired ? 1 : 0,
+              forbidden, foundForbidden ? 1 : 0);
       return false;
     }
   return true;
@@ -256,6 +302,91 @@ int main()
   LocalLiteTxn afterCommit(&afterCommitStore);
   if (!scanCount(&afterCommit, table, 3) ||
       !getFound(&afterCommit, table, 3, true))
+    return 1;
+
+  LocalLiteTableDef primaryTable = table;
+  primaryTable.name = "TX_ATOMIC_PK_T";
+  primaryTable.objectUid = 3002;
+  primaryTable.primaryKeyColumns.push_back(0);
+  if (!afterCommitStore.createTable(primaryTable, &error) ||
+      !directInsert(&afterCommitStore, primaryTable, "duplicate", 1))
+    return 1;
+
+  if (!LocalLiteTxnManager::begin(&error))
+    {
+      fprintf(stderr, "primary atomic begin failed: %s\n", error.c_str());
+      return 1;
+    }
+  LocalLiteRocksDBStore primaryPendingStore;
+  LocalLiteTxn primaryPending(&primaryPendingStore);
+  uint64_t ignoredRowId = 0;
+  if (!primaryPending.insertRow(primaryTable, "first",
+                                &ignoredRowId, &error) ||
+      !primaryPending.insertRow(primaryTable, "duplicate",
+                                &ignoredRowId, &error))
+    {
+      fprintf(stderr, "primary atomic pending insert failed: %s\n",
+              error.c_str());
+      return 1;
+    }
+  primaryPendingStore.close();
+
+  error.clear();
+  if (LocalLiteTxnManager::commit(&error) ||
+      error.find("duplicate local-lite primary key") == std::string::npos)
+    {
+      fprintf(stderr, "primary atomic commit unexpectedly succeeded: %s\n",
+              error.c_str());
+      return 1;
+    }
+  LocalLiteRocksDBStore primaryVerifyStore;
+  LocalLiteTxn primaryVerify(&primaryVerifyStore);
+  if (!scanValues(&primaryVerify, primaryTable, 1,
+                  "duplicate", "first"))
+    return 1;
+  primaryVerifyStore.close();
+
+  LocalLiteTableDef uniqueTable = table;
+  uniqueTable.name = "TX_ATOMIC_UNIQUE_T";
+  uniqueTable.objectUid = 3003;
+  std::vector<size_t> uniqueColumns;
+  uniqueColumns.push_back(0);
+  uniqueTable.uniqueKeyColumns.push_back(uniqueColumns);
+  if (!afterCommitStore.createTable(uniqueTable, &error) ||
+      !directInsert(&afterCommitStore, uniqueTable, "duplicate", 1))
+    return 1;
+
+  if (!LocalLiteTxnManager::begin(&error))
+    {
+      fprintf(stderr, "unique atomic begin failed: %s\n", error.c_str());
+      return 1;
+    }
+  LocalLiteRocksDBStore uniquePendingStore;
+  LocalLiteTxn uniquePending(&uniquePendingStore);
+  if (!uniquePending.insertRow(uniqueTable, "first",
+                               &ignoredRowId, &error) ||
+      !uniquePending.insertRow(uniqueTable, "duplicate",
+                               &ignoredRowId, &error))
+    {
+      fprintf(stderr, "unique atomic pending insert failed: %s\n",
+              error.c_str());
+      return 1;
+    }
+  uniquePendingStore.close();
+
+  error.clear();
+  if (LocalLiteTxnManager::commit(&error) ||
+      error.find("duplicate local-lite unique key") == std::string::npos)
+    {
+      fprintf(stderr, "unique atomic commit unexpectedly succeeded: %s\n",
+              error.c_str());
+      return 1;
+    }
+  LocalLiteRocksDBStore uniqueVerifyStore;
+  LocalLiteTxn uniqueVerify(&uniqueVerifyStore);
+  if (!scanValues(&uniqueVerify, uniqueTable, 1,
+                  "duplicate", "first") ||
+      !directInsert(&uniqueVerifyStore, uniqueTable, "after-failure", 2))
     return 1;
 
   printf("local-lite transaction snapshot probe passed\n");

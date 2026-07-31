@@ -20,6 +20,7 @@
 #include <functional>
 #include <map>
 #include <pthread.h>
+#include <set>
 
 #include <rocksdb/c.h>
 
@@ -768,6 +769,177 @@ public:
     return true;
   }
 
+  bool commitPendingRows(const LocalLiteTableDef &table,
+                         const std::vector<LocalLiteRow> &rows,
+                         std::string *error)
+  {
+    if (rows.empty())
+      return true;
+
+    LocalLiteMutexGuard guard(&mutex_);
+
+    LocalLiteTableDef loaded;
+    if (!loadTableLocked(table.catalog, table.schema, table.name,
+                         &loaded, error))
+      return false;
+    if (loaded.objectUid != table.objectUid)
+      {
+        setError(error,
+                 "local-lite table changed while transaction was active");
+        return false;
+      }
+
+    rocksdb_t *db = openTableLocked(LocalLiteRocksDBStore::tablePath(loaded),
+                                    false, error);
+    if (!db)
+      return false;
+
+    const bool keyless = loaded.primaryKeyColumns.empty();
+    std::vector<std::string> rowKeys;
+    std::vector< std::vector<std::string> > uniqueKeys;
+    std::set<std::string> pendingRowKeys;
+    std::set<std::string> pendingUniqueKeys;
+    rowKeys.reserve(rows.size());
+    uniqueKeys.resize(rows.size());
+
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        std::string rowKey;
+        if (keyless)
+          {
+            const uint64_t expectedRowId = loaded.nextRowId + i;
+            if (rows[i].rowId != expectedRowId)
+              {
+                setError(
+                    error,
+                    "local-lite keyless row-id allocation changed while "
+                    "transaction was active; restart and retry the "
+                    "transaction");
+                return false;
+              }
+            appendUint64(rowKey, rows[i].rowId);
+          }
+        else if (!LocalLiteBuildPrimaryKey(loaded, rows[i].value,
+                                           &rowKey, error))
+          {
+            return false;
+          }
+
+        if (!pendingRowKeys.insert(rowKey).second)
+          {
+            setError(error, keyless ? "duplicate local-lite row key"
+                                    : "duplicate local-lite primary key");
+            return false;
+          }
+        rowKeys.push_back(rowKey);
+
+        for (size_t keyIndex = 0;
+             keyIndex < loaded.uniqueKeyColumns.size(); keyIndex++)
+          {
+            std::string uniqueKey;
+            bool hasUniqueKey = false;
+            if (!LocalLiteBuildUniqueKey(
+                    loaded, rows[i].value,
+                    loaded.uniqueKeyColumns[keyIndex], keyIndex,
+                    &uniqueKey, &hasUniqueKey, error))
+              return false;
+            if (!hasUniqueKey)
+              continue;
+            if (!pendingUniqueKeys.insert(uniqueKey).second)
+              {
+                setError(error, "duplicate local-lite unique key");
+                return false;
+              }
+            uniqueKeys[i].push_back(uniqueKey);
+          }
+      }
+
+    for (size_t i = 0; i < rowKeys.size(); i++)
+      {
+        bool exists = false;
+        if (!keyExistsLocked(db, rowKeys[i], "read local-lite row",
+                             &exists, error))
+          return false;
+        if (exists)
+          {
+            setError(error, keyless ? "duplicate local-lite row key"
+                                    : "duplicate local-lite primary key");
+            return false;
+          }
+
+        for (size_t keyIndex = 0;
+             keyIndex < uniqueKeys[i].size(); keyIndex++)
+          {
+            if (!keyExistsLocked(db, uniqueKeys[i][keyIndex],
+                                 "read local-lite unique key",
+                                 &exists, error))
+              return false;
+            if (exists)
+              {
+                setError(error, "duplicate local-lite unique key");
+                return false;
+              }
+          }
+      }
+
+    std::string tableMetadataKey;
+    std::string oldMetadata;
+    if (keyless)
+      {
+        // Catalog metadata and table rows use separate RocksDB databases.
+        // The manager mutex and rollback keep ordinary process execution
+        // consistent, but a process crash between the two writes is not
+        // atomic.
+        LocalLiteTableDef updated = loaded;
+        updated.nextRowId += rows.size();
+        tableMetadataKey = tableKey(loaded.catalog, loaded.schema, loaded.name);
+        oldMetadata = encodeTable(loaded);
+        if (!putCatalogLocked(tableMetadataKey, encodeTable(updated),
+                              "update local-lite row id metadata", error))
+          return false;
+      }
+
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        std::string value = encodeRowValue(rows[i].value);
+        rocksdb_writebatch_put(batch,
+                               rowKeys[i].data(), rowKeys[i].size(),
+                               value.data(), value.size());
+        for (size_t keyIndex = 0;
+             keyIndex < uniqueKeys[i].size(); keyIndex++)
+          rocksdb_writebatch_put(batch,
+                                 uniqueKeys[i][keyIndex].data(),
+                                 uniqueKeys[i][keyIndex].size(),
+                                 rowKeys[i].data(), rowKeys[i].size());
+      }
+
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    char *err = NULL;
+    rocksdb_write(db, writeOptions, batch, &err);
+    rocksdb_writeoptions_destroy(writeOptions);
+    rocksdb_writebatch_destroy(batch);
+    if (!checkRocksError(err, "commit local-lite table rows", error))
+      {
+        if (keyless)
+          {
+            std::string rollbackError;
+            if (!putCatalogLocked(tableMetadataKey, oldMetadata,
+                                  "rollback local-lite row id metadata",
+                                  &rollbackError) &&
+                error)
+              *error += "; " + rollbackError;
+            if (error)
+              *error +=
+                  "; keyless metadata and table rows use separate RocksDB "
+                  "databases and are not crash-atomic";
+          }
+        return false;
+      }
+
+    return true;
+  }
+
   void closeTable(const std::string &path)
   {
     LocalLiteMutexGuard guard(&mutex_);
@@ -889,6 +1061,26 @@ private:
     return checkRocksError(err, errorPrefix, error);
   }
 
+  bool keyExistsLocked(rocksdb_t *db,
+                       const std::string &key,
+                       const std::string &errorPrefix,
+                       bool *exists,
+                       std::string *error)
+  {
+    rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+    char *err = NULL;
+    size_t valueLen = 0;
+    char *value = rocksdb_get(db, readOptions,
+                              key.data(), key.size(), &valueLen, &err);
+    rocksdb_readoptions_destroy(readOptions);
+    if (!checkRocksError(err, errorPrefix, error))
+      return false;
+    *exists = value != NULL;
+    if (value)
+      rocksdb_free(value);
+    return true;
+  }
+
   void releaseStatementSnapshotsLocked(const StatementKey &key,
                                        SnapshotMap &snapshots)
   {
@@ -1002,19 +1194,23 @@ public:
     }
 
     LocalLiteStorageManager::instance().endStatement(this, transactionId);
-    transactionStore_.close();
-
-    LocalLiteRocksDBStore store;
+    size_t committedTables = 0;
     for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
       {
-        for (size_t i = 0; i < t->second.rows.size(); i++)
+        if (!LocalLiteStorageManager::instance().commitPendingRows(
+                t->second.table, t->second.rows, error))
           {
-            uint64_t rowId = 0;
-            if (!store.insertRow(t->second.table, t->second.rows[i].value,
-                                 &rowId, error))
-              return false;
+            if (committedTables > 0 && error)
+              *error +=
+                  "; local-lite atomic commit is limited to one table; "
+                  "earlier tables in this transaction may already be "
+                  "committed";
+            transactionStore_.close();
+            return false;
           }
+        committedTables++;
       }
+    transactionStore_.close();
     return true;
   }
 

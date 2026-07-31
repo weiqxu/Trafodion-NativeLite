@@ -539,8 +539,8 @@ above.
 
 ### Current Task Status
 
-Last updated after representing keyless RocksDB row identity as hidden optimizer
-`SYSKEY` metadata and removing the local-lite groupby rule guards.
+Last updated after making explicit transaction COMMIT atomic within each local
+RocksDB table.
 
 Completed:
 
@@ -596,14 +596,19 @@ Completed:
   from `LocalLiteRow::rowId`, executor inserts ignore the generated SYSKEY
   placeholder when building `LLBR1`, and normal groupby elimination rules can
   rely on optimizer key metadata without local-lite rule guards.
+- Explicit transaction COMMIT preflights all pending primary and UNIQUE keys
+  against committed storage, then publishes each table's base rows and
+  secondary uniqueness records with one RocksDB write batch. Commit-failure
+  regressions verify that a later duplicate cannot partially publish an earlier
+  row from the same table and that a failed keyless UNIQUE commit does not
+  advance persisted row-id metadata.
 
 Remaining, in suggested implementation order:
 
-1. Preflight pending transaction keys and publish each table's pending rows
-   with one RocksDB write batch, so a duplicate cannot partially commit earlier
-   rows from that table.
+1. Add a local-lite-native regress lane for selected `core/sql/regress` SQL and
+   expected-output cases without starting the unsupported service stack.
 
-The next task to start is **Per-table atomic transaction commit batches**.
+The next task to start is **Local-lite SQL regress harness integration**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
