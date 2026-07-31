@@ -420,6 +420,9 @@ Current cases are:
 - `TEST019`: single-byte `CONVERTFROMHEX` round trips, persisted VARCHAR
   inputs, assignment and predicates, invalid half-byte and runtime odd-length
   diagnostics, legacy binder diagnostics `4043`/`4068`, and error recovery.
+- `TEST020`: single-byte `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases over
+  literals and stored VARCHAR values, including byte boundaries, empty/NULL
+  propagation, `INSERT ... SELECT` assignment, and predicates.
 
 Run all cases or a selected subset from the repository root:
 
@@ -444,7 +447,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST019`. The legacy files remain useful as SQL-shape input, but their
+`TEST020`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -462,11 +465,12 @@ unchanged in local-lite.
 | `DATEFORMAT`, `DAYNAME`, and `MONTHNAME` | Covered by `TEST017`, including `DEFAULT`/`USA`/`EUROPEAN` formats, leap-day and year-boundary values, NULL propagation, assignment, and predicates | Existing compiler/executor behavior was sufficient; locale-dependent variants remain outside this portable increment. |
 | `CONVERTTOHEX` over single-byte values | Covered by `TEST018`, including uppercase output, ISO88591 `00`/`7F`/`80`/`FF` boundaries, CHAR padding, VARCHAR length, empty/NULL inputs, assignment, and predicates | UTF8/UCS2 encoding and translation matrices remain outside this portable increment. |
 | `CONVERTFROMHEX` over single-byte values | Covered by `TEST019`, including byte-boundary round trips, persisted empty/NULL values, assignment, predicates, invalid half-byte and runtime odd-length diagnostic `8428`, binder diagnostics `4043`/`4068`, and post-error recovery | The executor now validates both input half-bytes independently; UTF8/UCS2 conversion remains outside this portable increment. |
-| `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases | Parser/executor candidates, not claimed by the native lane | This is the next deterministic single-byte compatibility gap; adapt portable `TO_HEX` shapes from `seabase/TEST004` and pair them with the inverse aliases. |
+| `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases | Covered by `TEST020`, including ISO88591 byte boundaries, persisted empty/NULL values, assignment, and predicates | Binary/VARBINARY and UTF8/UCS2 forms remain outside this portable increment. |
+| `CURRENT_USER`, `SESSION_USER`, and `USER` identity expressions | Compiler/executor candidates, not claimed by the native lane | This is the next portable gap from `charsets/TEST313`; assert equality/nonempty invariants rather than environment-specific identity text. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable single-byte hex-function alias
-coverage for `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX`.
+The next compatibility increment is environment-independent session identity
+coverage for `CURRENT_USER`, `SESSION_USER`, and `USER`.
 
 ## RocksDB Local Store Implementation
 
@@ -832,6 +836,12 @@ Completed:
   `4043`/`4068`, and post-error recovery. The executor now groups each
   half-byte validity test independently so an invalid second character cannot
   pass merely because the first character is numeric.
+- Native `TEST020` migrates portable single-byte `TO_HEX` expressions from
+  `seabase/TEST004` and pairs them with the `HEX`, `UNHEX`, and `FROM_HEX`
+  aliases. It covers ISO88591 byte boundaries, persisted text, trailing space,
+  empty and NULL values, `INSERT ... SELECT` assignment, and predicate use.
+  Existing parser/compiler/executor behavior required no implementation
+  change.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -839,11 +849,11 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Probe and migrate portable single-byte `TO_HEX` forms from
-   `seabase/TEST004`, then cover equivalent `HEX`, `UNHEX`, and `FROM_HEX`
-   aliases over literals, stored nullable values, assignment, and predicates.
+1. Migrate portable `CURRENT_USER`, `SESSION_USER`, and `USER` assignment and
+   comparison shapes from `charsets/TEST313`. Keep EXPECTED output independent
+   of the configured identity by asserting equality and nonempty invariants.
 
-The next task to start is **Portable single-byte hex-function alias regress
+The next task to start is **Environment-independent session identity regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**

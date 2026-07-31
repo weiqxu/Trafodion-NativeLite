@@ -1,0 +1,93 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable single-byte hex-function alias coverage adapted from
+-- seabase/TEST004 and the native CONVERTTOHEX/CONVERTFROMHEX cases.
+CREATE TABLE LLREG020_HEX_ALIAS_SOURCE
+  (id INT PRIMARY KEY,
+   txt VARCHAR(8),
+   hex_txt VARCHAR(16));
+
+INSERT INTO LLREG020_HEX_ALIAS_SOURCE VALUES
+  (1, 'Ab0', '416230'),
+  (2, '', ''),
+  (3, 'A ', '4120'),
+  (4, NULL, NULL);
+
+-- All four aliases preserve the complete ISO88591 byte boundaries.
+SELECT TO_HEX(CHAR(0) || CHAR(127) || CHAR(128) || CHAR(255) || CHAR(160))
+         AS to_hex_boundary,
+       HEX(CHAR(0) || CHAR(127) || CHAR(128) || CHAR(255) || CHAR(160))
+         AS hex_boundary,
+       CONVERTTOHEX(UNHEX('007F80FFA0')) AS unhex_boundary,
+       CONVERTTOHEX(FROM_HEX('007F80FFA0')) AS from_hex_boundary
+  FROM (VALUES (1)) AS v(n);
+
+-- Stored VARCHAR inputs retain ordinary text, trailing space, empty, and NULL
+-- semantics through each alias.
+SELECT id,
+       TO_HEX(txt) AS to_hex_value,
+       HEX(txt) AS hex_value,
+       CONVERTTOHEX(UNHEX(hex_txt)) AS unhex_value,
+       CONVERTTOHEX(FROM_HEX(hex_txt)) AS from_hex_value
+  FROM LLREG020_HEX_ALIAS_SOURCE
+ ORDER BY id;
+
+-- Assignment preserves alias results and their NULL/zero-length state.
+CREATE TABLE LLREG020_HEX_ALIAS_TARGET
+  (id INT PRIMARY KEY,
+   to_hex_value VARCHAR(16),
+   hex_value VARCHAR(16),
+   unhex_value VARCHAR(8),
+   from_hex_value VARCHAR(8));
+
+INSERT INTO LLREG020_HEX_ALIAS_TARGET
+SELECT id, TO_HEX(txt), HEX(txt), UNHEX(hex_txt), FROM_HEX(hex_txt)
+  FROM LLREG020_HEX_ALIAS_SOURCE;
+
+SELECT id,
+       to_hex_value,
+       hex_value,
+       CONVERTTOHEX(unhex_value) AS unhex_value,
+       CONVERTTOHEX(from_hex_value) AS from_hex_value
+  FROM LLREG020_HEX_ALIAS_TARGET
+ ORDER BY id;
+
+-- Each alias remains usable in a local-table predicate.
+SELECT id
+  FROM LLREG020_HEX_ALIAS_SOURCE
+ WHERE TO_HEX(txt) = hex_txt
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG020_HEX_ALIAS_SOURCE
+ WHERE HEX(txt) = hex_txt
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG020_HEX_ALIAS_SOURCE
+ WHERE UNHEX(hex_txt) = txt
+ ORDER BY id;
+
+SELECT id
+  FROM LLREG020_HEX_ALIAS_SOURCE
+ WHERE FROM_HEX(hex_txt) = txt
+ ORDER BY id;
+
+DROP TABLE LLREG020_HEX_ALIAS_TARGET;
+DROP TABLE LLREG020_HEX_ALIAS_SOURCE;
+exit;

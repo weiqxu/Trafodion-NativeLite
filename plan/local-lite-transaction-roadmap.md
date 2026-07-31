@@ -468,6 +468,10 @@ and predicates. No compiler/executor change was needed. Portable single-byte
 round trips, empty/NULL inputs, assignment, predicates, invalid half-byte and
 odd-length diagnostics, legacy binder diagnostics `4043`/`4068`, and error
 recovery. Its executor fix validates both input half-bytes independently.
-Portable single-byte `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases are the next
-regress gap; the transaction-specific multi-table and catalog/table
-crash-atomicity limits remain unchanged.
+Portable single-byte `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases are now
+covered by `TEST020`, including ISO88591 byte
+boundaries, empty/NULL inputs, assignment, and predicates. No
+parser/compiler/executor change was needed. Environment-independent
+`CURRENT_USER`/`SESSION_USER`/`USER` invariants are the next regress gap; the
+transaction-specific multi-table and catalog/table crash-atomicity limits
+remain unchanged.
