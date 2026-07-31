@@ -420,6 +420,8 @@ SQLCI prologue enables internal datetime IO before the first user statement,
 and the native lane validates direct DATE/TIME/TIMESTAMP results from standalone
 expressions and persisted rows. Portable CASE/string/NULL expressions, outer
 join null instantiation, HAVING, and scalar aggregate subqueries are now also
-covered by native `TEST005`. Broader work next moves to set operations and
-derived/correlated subqueries. The transaction-specific multi-table and
-catalog/table crash-atomicity limits remain unchanged.
+covered by native `TEST005`. Native `TEST006` adds `UNION ALL`/`UNION`,
+aggregation and joins over derived tables, and correlated
+`EXISTS`/`NOT EXISTS`/scalar aggregate subqueries. Broader work next moves to
+deterministic binder/runtime diagnostic coverage. The transaction-specific
+multi-table and catalog/table crash-atomicity limits remain unchanged.

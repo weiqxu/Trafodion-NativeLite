@@ -373,6 +373,9 @@ Current cases are:
   core/executor regressions, including CASE, TRIM/concatenation, LIKE/OR,
   typed and untyped NULL behavior, left-join null instantiation, HAVING, and a
   scalar aggregate subquery.
+- `TEST006`: portable `UNION ALL`/`UNION DISTINCT`, aggregate and joined
+  derived tables, and correlated `EXISTS`/`NOT EXISTS`/scalar aggregate
+  subqueries adapted from legacy core/executor regressions.
 
 Run all cases or a selected subset from the repository root:
 
@@ -386,6 +389,10 @@ compatible. They still contain unsupported UPDATE/DELETE/index/service-stack
 operations and depend on generated regress tools that are absent from this
 checkout. Portable SQL should be moved into this lane incrementally as the
 corresponding compiler/executor/storage behavior becomes supported.
+
+The current successful set-operation surface is `UNION ALL` and `UNION`
+distinct. `INTERSECT` and `EXCEPT` remain disabled by the existing binder
+default and are not claimed by the local-lite lane.
 
 ## RocksDB Local Store Implementation
 
@@ -586,8 +593,8 @@ above.
 
 ### Current Task Status
 
-Last updated after adding portable expression and query-shape SQL to the native
-local-lite regress lane.
+Last updated after adding portable set-operation, derived-table, and correlated
+subquery SQL to the native local-lite regress lane.
 
 Completed:
 
@@ -669,15 +676,19 @@ Completed:
   expressions, LIKE/OR predicates, legacy untyped-NULL diagnostics, typed NULL
   propagation, left-join null instantiation, grouped HAVING, and a scalar
   aggregate subquery through normal executor plans.
+- Native `TEST006` moves compatible `UNION ALL`/`UNION`, derived-table, and
+  correlated-subquery coverage from `executor/TEST002` and `core/TEST002` into
+  the isolated lane. It validates duplicate preservation and elimination,
+  aggregation over a union-derived table, joins between aggregate derived
+  tables, correlated `EXISTS`/`NOT EXISTS`, and correlated scalar `MAX`/`AVG`
+  subqueries through normal executor plans.
 
 Remaining, in suggested implementation order:
 
-1. Port compatible set-operation and derived-table/correlated-subquery SQL from
-   `core` and `executor` into the native regress lane.
-2. Continue moving compatible binder/runtime diagnostic cases into deterministic
+1. Continue moving compatible binder/runtime diagnostic cases into deterministic
    TEST/EXPECTED coverage.
 
-The next task to start is **Set-operation and derived-table regress coverage**.
+The next task to start is **Binder/runtime diagnostic regress coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
