@@ -1,0 +1,73 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable aggregate/subquery diagnostics adapted from core/TEST002 and
+-- executor/TEST002, plus value-evaluation boundaries adapted from core/TEST038.
+CREATE TABLE LLREG008_DIAG
+  (id INT PRIMARY KEY,
+   grp INT,
+   text_val VARCHAR(20),
+   divisor INT);
+
+INSERT INTO LLREG008_DIAG VALUES
+  (1, 10, '12', 2),
+  (2, 20, 'bad-number', 0),
+  (3, 30, '40000', 5);
+
+-- A multi-column subquery cannot be renamed to one output column.
+SELECT (SELECT id, grp FROM LLREG008_DIAG WHERE id = 1) AS pair
+  FROM (VALUES(1)) AS one_row(x);
+
+-- Nongrouping columns and incorrectly placed aggregates are rejected.
+SELECT id, MAX(grp)
+  FROM LLREG008_DIAG;
+
+SELECT id
+  FROM LLREG008_DIAG
+  WHERE MAX(grp) > 1;
+
+-- An aggregate cannot mix local and outer-scope column references.
+SELECT (SELECT i.id
+          FROM LLREG008_DIAG AS i
+         WHERE MAX(o.grp + i.grp) > 1)
+  FROM LLREG008_DIAG AS o;
+
+-- Exercise one successful conversion before the runtime failures.
+SELECT CAST(text_val AS INT) AS converted
+  FROM LLREG008_DIAG
+  WHERE id = 1;
+
+-- Runtime conversion, narrowing, and arithmetic diagnostics.
+SELECT CAST(text_val AS INT) AS converted
+  FROM LLREG008_DIAG
+  WHERE id = 2;
+
+SELECT CAST(text_val AS SMALLINT) AS narrow_val
+  FROM LLREG008_DIAG
+  WHERE id = 3;
+
+SELECT grp / divisor AS quotient
+  FROM LLREG008_DIAG
+  WHERE id = 2;
+
+-- All failures must leave the SQLCI session and stored rows usable.
+SELECT id, grp, text_val, divisor
+  FROM LLREG008_DIAG
+  ORDER BY id;
+
+DROP TABLE LLREG008_DIAG;
+exit;

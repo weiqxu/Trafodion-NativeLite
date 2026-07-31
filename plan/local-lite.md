@@ -379,6 +379,9 @@ Current cases are:
 - `TEST007`: deterministic binder/runtime diagnostics for disabled set
   operations, incompatible `UNION` operands, INSERT degree and NOT NULL
   violations, scalar-subquery cardinality, and post-error session/data recovery.
+- `TEST008`: aggregate/subquery binder diagnostics and executor value-evaluation
+  diagnostics for invalid character conversion, numeric narrowing overflow, and
+  division by zero, including successful post-error table access.
 
 Run all cases or a selected subset from the repository root:
 
@@ -597,8 +600,8 @@ above.
 
 ### Current Task Status
 
-Last updated after adding deterministic binder/runtime diagnostic coverage to
-the native local-lite regress lane.
+Last updated after extending deterministic binder/runtime diagnostics to
+aggregate/subquery and executor value-evaluation boundaries.
 
 Completed:
 
@@ -691,15 +694,19 @@ Completed:
   incomparable `UNION` operands (`4066`/`4055`), INSERT degree and NOT NULL
   violations (`4023`/`4122`), scalar-subquery cardinality (`8401`), and confirms
   that failures neither poison the SQLCI session nor partially insert rows.
+- Native `TEST008` validates multi-column subquery renaming (`4477`),
+  nongrouping columns (`4021`), misplaced aggregates (`4015`), mixed aggregate
+  scopes (`4006`), invalid character conversion (`8413`), numeric narrowing
+  overflow (`8411`), and division by zero (`8419`). A final ordered table scan
+  confirms that the executor errors leave both the session and stored rows
+  usable.
 
 Remaining, in suggested implementation order:
 
-1. Continue auditing compatible binder/runtime diagnostics from legacy `core`
-   and `executor` cases, prioritizing additional aggregate/subquery and value
-   conversion boundaries that do not require unsupported DML or service-stack
-   features.
+1. Move deterministic compiler DDL and local-lite unsupported-statement
+   diagnostics from the SQLCI smoke path into native TEST/EXPECTED coverage.
 
-The next task to start is **Additional binder/runtime diagnostic regress
+The next task to start is **Compiler DDL and unsupported SQL diagnostic regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
