@@ -472,6 +472,11 @@ Portable single-byte `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases are now
 covered by `TEST020`, including ISO88591 byte
 boundaries, empty/NULL inputs, assignment, and predicates. No
 parser/compiler/executor change was needed. Environment-independent
-`CURRENT_USER`/`SESSION_USER`/`USER` invariants are the next regress gap; the
-transaction-specific multi-table and catalog/table crash-atomicity limits
+`CURRENT_USER`/`SESSION_USER`/`USER` invariants are now covered by `TEST021`,
+including nonempty/equality assertions, both INSERT assignment shapes,
+concatenation, and predicates without recording the configured identity in
+EXPECTED output. No parser/compiler/executor change was needed. Portable
+single-byte `SPACE` assignment, comparison, and concatenation are the next
+regress gap. The transaction-specific multi-table and catalog/table
+crash-atomicity limits
 remain unchanged.
