@@ -1,0 +1,71 @@
+>>CREATE TABLE LLREG007_DIAG
++>  (id INT PRIMARY KEY,
++>   required_val INT NOT NULL,
++>   label VARCHAR(16));
+--- SQL operation complete.
+>>INSERT INTO LLREG007_DIAG VALUES
++>  (1, 10, 'alpha'),
++>  (2, 20, 'beta');
+--- 2 row(s) inserted.
+>>SELECT id
++>  FROM LLREG007_DIAG
++>INTERSECT
++>SELECT id
++>  FROM LLREG007_DIAG;
+*** ERROR[3022]
+*** ERROR[16001] No message found for SQLCODE -3022. INTERSECT <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT id
++>  FROM LLREG007_DIAG
++>EXCEPT
++>SELECT id
++>  FROM LLREG007_DIAG;
+*** ERROR[3022]
+*** ERROR[16001] No message found for SQLCODE -3022. EXCEPT <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT id
++>  FROM LLREG007_DIAG
++>UNION ALL
++>SELECT id, required_val
++>  FROM LLREG007_DIAG;
+*** ERROR[4066]
+*** ERROR[16001] No message found for SQLCODE -4066. <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT id
++>  FROM LLREG007_DIAG
++>UNION ALL
++>SELECT DATE '2026-07-31'
++>  FROM LLREG007_DIAG;
+*** ERROR[4055]
+*** ERROR[16001] No message found for SQLCODE -4055. INTEGER DATE <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>INSERT INTO LLREG007_DIAG VALUES (3, 30);
+*** ERROR[4023]
+*** ERROR[16001] No message found for SQLCODE -4023.      2 3 <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>INSERT INTO LLREG007_DIAG VALUES (3, NULL, 'bad-null');
+*** ERROR[4122]
+*** ERROR[16001] No message found for SQLCODE -4122.      TRAFODION.SEABASE.LLREG007_DIAG.REQUIRED_VAL <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT (SELECT id FROM LLREG007_DIAG) AS scalar_id
++>  FROM (VALUES(1)) AS one_row(x);
+*** ERROR[8401]
+*** ERROR[16001] No message found for SQLCODE -8401. <MXID>
+--- 0 row(s) selected.
+>>SELECT id, required_val, label
++>  FROM LLREG007_DIAG
++>  ORDER BY id;
+ID           REQUIRED_VAL  LABEL
+-----------  ------------  ----------------
+          1            10  alpha
+          2            20  beta
+--- 2 row(s) selected.
+>>DROP TABLE LLREG007_DIAG;
+--- SQL operation complete.
+>>exit;

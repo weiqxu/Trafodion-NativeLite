@@ -376,6 +376,9 @@ Current cases are:
 - `TEST006`: portable `UNION ALL`/`UNION DISTINCT`, aggregate and joined
   derived tables, and correlated `EXISTS`/`NOT EXISTS`/scalar aggregate
   subqueries adapted from legacy core/executor regressions.
+- `TEST007`: deterministic binder/runtime diagnostics for disabled set
+  operations, incompatible `UNION` operands, INSERT degree and NOT NULL
+  violations, scalar-subquery cardinality, and post-error session/data recovery.
 
 Run all cases or a selected subset from the repository root:
 
@@ -392,7 +395,8 @@ corresponding compiler/executor/storage behavior becomes supported.
 
 The current successful set-operation surface is `UNION ALL` and `UNION`
 distinct. `INTERSECT` and `EXCEPT` remain disabled by the existing binder
-default and are not claimed by the local-lite lane.
+default and are not claimed by the local-lite lane. `TEST007` locks this
+boundary to the existing `3022` diagnostic.
 
 ## RocksDB Local Store Implementation
 
@@ -593,8 +597,8 @@ above.
 
 ### Current Task Status
 
-Last updated after adding portable set-operation, derived-table, and correlated
-subquery SQL to the native local-lite regress lane.
+Last updated after adding deterministic binder/runtime diagnostic coverage to
+the native local-lite regress lane.
 
 Completed:
 
@@ -682,13 +686,21 @@ Completed:
   aggregation over a union-derived table, joins between aggregate derived
   tables, correlated `EXISTS`/`NOT EXISTS`, and correlated scalar `MAX`/`AVG`
   subqueries through normal executor plans.
+- Native `TEST007` moves a first deterministic diagnostic set into the isolated
+  lane. It validates disabled `INTERSECT`/`EXCEPT` (`3022`), unequal and
+  incomparable `UNION` operands (`4066`/`4055`), INSERT degree and NOT NULL
+  violations (`4023`/`4122`), scalar-subquery cardinality (`8401`), and confirms
+  that failures neither poison the SQLCI session nor partially insert rows.
 
 Remaining, in suggested implementation order:
 
-1. Continue moving compatible binder/runtime diagnostic cases into deterministic
-   TEST/EXPECTED coverage.
+1. Continue auditing compatible binder/runtime diagnostics from legacy `core`
+   and `executor` cases, prioritizing additional aggregate/subquery and value
+   conversion boundaries that do not require unsupported DML or service-stack
+   features.
 
-The next task to start is **Binder/runtime diagnostic regress coverage**.
+The next task to start is **Additional binder/runtime diagnostic regress
+coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.

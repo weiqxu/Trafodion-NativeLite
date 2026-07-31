@@ -1,0 +1,69 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable binder and scalar-subquery diagnostics adapted from core/TEST002
+-- and the set-operation shapes in executor/TEST002.
+CREATE TABLE LLREG007_DIAG
+  (id INT PRIMARY KEY,
+   required_val INT NOT NULL,
+   label VARCHAR(16));
+
+INSERT INTO LLREG007_DIAG VALUES
+  (1, 10, 'alpha'),
+  (2, 20, 'beta');
+
+-- INTERSECT and EXCEPT remain disabled by the existing binder default.
+SELECT id
+  FROM LLREG007_DIAG
+INTERSECT
+SELECT id
+  FROM LLREG007_DIAG;
+
+SELECT id
+  FROM LLREG007_DIAG
+EXCEPT
+SELECT id
+  FROM LLREG007_DIAG;
+
+-- UNION operands must have the same degree and compatible data types.
+SELECT id
+  FROM LLREG007_DIAG
+UNION ALL
+SELECT id, required_val
+  FROM LLREG007_DIAG;
+
+SELECT id
+  FROM LLREG007_DIAG
+UNION ALL
+SELECT DATE '2026-07-31'
+  FROM LLREG007_DIAG;
+
+-- INSERT values must match the target degree and NOT NULL contract.
+INSERT INTO LLREG007_DIAG VALUES (3, 30);
+INSERT INTO LLREG007_DIAG VALUES (3, NULL, 'bad-null');
+
+-- A scalar subquery cannot return more than one row at runtime.
+SELECT (SELECT id FROM LLREG007_DIAG) AS scalar_id
+  FROM (VALUES(1)) AS one_row(x);
+
+-- Binder/runtime failures must not poison the session or partially insert rows.
+SELECT id, required_val, label
+  FROM LLREG007_DIAG
+  ORDER BY id;
+
+DROP TABLE LLREG007_DIAG;
+exit;

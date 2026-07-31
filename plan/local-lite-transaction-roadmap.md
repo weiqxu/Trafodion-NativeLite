@@ -422,6 +422,9 @@ expressions and persisted rows. Portable CASE/string/NULL expressions, outer
 join null instantiation, HAVING, and scalar aggregate subqueries are now also
 covered by native `TEST005`. Native `TEST006` adds `UNION ALL`/`UNION`,
 aggregation and joins over derived tables, and correlated
-`EXISTS`/`NOT EXISTS`/scalar aggregate subqueries. Broader work next moves to
-deterministic binder/runtime diagnostic coverage. The transaction-specific
-multi-table and catalog/table crash-atomicity limits remain unchanged.
+`EXISTS`/`NOT EXISTS`/scalar aggregate subqueries. Native `TEST007` adds
+deterministic set-operation, INSERT-shape/NOT-NULL, and scalar-subquery
+cardinality diagnostics together with post-error recovery checks. Broader work
+continues with additional portable binder/runtime diagnostic coverage. The
+transaction-specific multi-table and catalog/table crash-atomicity limits
+remain unchanged.
