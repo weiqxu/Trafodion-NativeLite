@@ -436,6 +436,10 @@ Current cases are:
   stored VARCHAR/numeric arguments, including the legacy position/length
   matrix, append-at-end, empty/NULL values, both INSERT assignment paths,
   concatenation, and predicates.
+- `TEST025`: single-byte `REPEAT()` over literal and stored VARCHAR/count
+  arguments, including zero counts, empty/NULL values, trailing spaces, both
+  INSERT assignment paths, concatenation, predicates, count diagnostics, and
+  post-error recovery.
 
 Run all cases or a selected subset from the repository root:
 
@@ -460,7 +464,7 @@ boundary to the existing `3022` diagnostic.
 The audit compared the portable portions of legacy `core/TEST001`,
 `core/TEST002`, `executor/TEST001`, and `executor/TEST002`, plus the ASCII
 string-function subset of `charsets/TEST313`, with native `TEST001` through
-`TEST024`. The legacy files remain useful as SQL-shape input, but their
+`TEST025`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
 unchanged in local-lite.
 
@@ -483,11 +487,12 @@ unchanged in local-lite.
 | Single-byte `SPACE` expressions | Covered by `TEST022`, including constant and stored counts, positive/zero/NULL results, both INSERT assignment paths, padded comparison, exact-length and concatenation predicates, diagnostics `4129`/`4062`, and post-error recovery | Existing parser/compiler/executor behavior was sufficient; explicit UTF8/UCS2 variants remain outside this portable increment. |
 | Single-byte `CONCAT()` function | Covered by `TEST023`, including literal and stored VARCHAR operands, equivalence to `||`, empty/NULL inputs, embedded-space byte preservation, both INSERT assignment paths, nested use, and predicates | Existing parser/compiler/executor behavior was sufficient; UTF8/UCS2 variants remain outside this portable increment. |
 | Single-byte `INSERT()` string function | Covered by `TEST024`, including literals, stored VARCHAR and numeric arguments, the legacy position/length matrix, append-at-end, empty/NULL values, both INSERT assignment paths, concatenation, and predicates | Existing binder rewrite and executor behavior were sufficient; invalid-position/negative-length diagnostics and UTF8/UCS2 variants remain outside this portable increment. |
-| Single-byte `REPEAT()` function | One standalone literal expression is covered by `TEST013`; stored string/count arguments, assignment, predicates, and count boundaries are not yet claimed | This is the next portable gap from `core/TEST038`; cover zero/NULL counts, empty/NULL strings, both INSERT assignment paths, concatenation, predicates, and deterministic invalid/oversized-count diagnostics without adding UTF8/UCS2 variants. |
+| Single-byte `REPEAT()` function | Covered by `TEST025`, including literal and stored VARCHAR/count arguments, zero counts, empty/NULL values, trailing-space byte preservation, both INSERT assignment paths, concatenation, predicates, diagnostics `8432`/`4129`/`4116`, and post-error recovery | Existing binder/executor behavior was sufficient; unconstrained dynamic counts retain a maximum-width result type, and UTF8/UCS2 variants remain outside this portable increment. |
+| Single-byte `TRIM`/`LTRIM`/`RTRIM` family | Stored `TRIM` projections are exercised by `TEST005`/`TEST013`, while `LTRIM`/`RTRIM` remain literal-only in `TEST013`; family-wide assignment and predicate coverage is not yet claimed | This is the next portable gap from `core/TEST038` and `charsets/TEST313`; cover leading/trailing/both and explicit trim-character forms, CHAR versus VARCHAR results, empty/NULL values, both INSERT assignment paths, concatenation, and predicates without adding UTF8/UCS2 variants. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
 
-The next compatibility increment is portable single-byte `REPEAT()` string
-function coverage over local tables.
+The next compatibility increment is portable single-byte
+`TRIM`/`LTRIM`/`RTRIM` family coverage over local tables.
 
 ## RocksDB Local Store Implementation
 
@@ -884,6 +889,13 @@ Completed:
   empty strings, NULL propagation across all four arguments, both INSERT
   assignment paths, concatenation, and predicates. Existing binder rewrite and
   executor behavior required no implementation change.
+- Native `TEST025` expands portable single-byte `REPEAT()` coverage from the
+  standalone literal in `TEST013` using stored-operand and diagnostic shapes
+  from `core/TEST038`. It covers literal and stored VARCHAR/count arguments,
+  zero counts, empty strings, NULL propagation, trailing-space byte
+  preservation, both INSERT assignment paths, concatenation, predicates,
+  diagnostics `8432`/`4129`/`4116`, and post-error recovery. Existing
+  binder/executor behavior required no implementation change.
 - Autocommit tuple-flow inserts now use `LocalLiteTxnManager` as an implicit
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
@@ -891,13 +903,14 @@ Completed:
 
 Remaining, in suggested implementation order:
 
-1. Expand portable single-byte `REPEAT()` coverage from its standalone literal
-   expression in `TEST013` to stored VARCHAR/count operands, empty/NULL values,
-   zero and invalid/oversized count boundaries, both INSERT assignment paths,
+1. Expand portable single-byte `TRIM`/`LTRIM`/`RTRIM` coverage from the stored
+   `TRIM` projections and literal `LTRIM`/`RTRIM` expressions in
+   `TEST005`/`TEST013` to leading/trailing/both and explicit trim-character
+   forms, CHAR/VARCHAR inputs, empty/NULL values, both INSERT assignment paths,
    concatenation, and predicates. Keep UTF8/UCS2 variants out of this
    increment.
 
-The next task to start is **Portable single-byte REPEAT function regress
+The next task to start is **Portable single-byte TRIM family regress
 coverage**.
 
 - [x] **Build RocksDB dependency detection and link flags.**

@@ -488,7 +488,12 @@ and predicates. No parser/compiler/executor change was needed. The single-byte
 stored VARCHAR/numeric arguments, the legacy position/length matrix,
 append-at-end, empty/NULL inputs, both INSERT assignment paths, concatenation,
 and predicates. No parser/compiler/executor change was needed. The single-byte
-`REPEAT()` function is the next portable regress gap. The
+`REPEAT()` function is now covered by `TEST025`, including literal and stored
+VARCHAR/count arguments, zero counts, empty/NULL values, trailing-space byte
+preservation, both INSERT assignment paths, concatenation, predicates,
+diagnostics `8432`/`4129`/`4116`, and post-error recovery. No
+parser/compiler/executor change was needed. The single-byte
+`TRIM`/`LTRIM`/`RTRIM` family is the next portable regress gap. The
 transaction-specific multi-table and catalog/table
 crash-atomicity limits
 remain unchanged.
