@@ -212,7 +212,8 @@ short ExTupleFlowTcb::work()
 #ifdef TRAF_LOCAL_LITE
             // The target receives one request per source row. Keep those rows
             // pending until the complete source/target flow reaches EOD.
-            if (tcbTgt_->isLocalLiteInsert() &&
+            if ((tcbTgt_->isLocalLiteInsert() ||
+                 tcbTgt_->isLocalLiteUpdate()) &&
                 !LocalLiteTxnManager::active())
               {
                 std::string error;
@@ -927,7 +928,6 @@ ex_tcb_private_state * ExTupleFlowPrivateState::allocate_new(const ex_tcb *tcb)
 {
   return new(((ex_tcb *)tcb)->getSpace()) ExTupleFlowPrivateState((ExTupleFlowTcb *) tcb);
 }
-
 
 
 

@@ -33,6 +33,16 @@ bool LocalLiteNormalizeBinaryRow(const LocalLiteTableDef &table,
                                  std::string *encoded,
                                  std::string *error);
 
+bool LocalLiteApplyBinaryUpdate(
+    const LocalLiteTableDef &table,
+    const std::string &original,
+    ExpTupleDesc *srcTd,
+    const char *srcRow,
+    size_t srcRowLen,
+    const std::vector<size_t> &updatedColumnIndexes,
+    std::string *encoded,
+    std::string *error);
+
 bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
                                const std::string &encoded,
                                uint64_t syntheticRowId,

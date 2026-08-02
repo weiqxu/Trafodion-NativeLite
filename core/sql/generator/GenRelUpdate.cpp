@@ -423,6 +423,12 @@ static short genHbaseUpdOrInsertExpr(
   if (updRecExprArray.entries() > 0)
     listOfUpdatedColNames = new(space) Queue(space);
 
+#ifdef TRAF_LOCAL_LITE
+  const NABoolean retainUpdatedColumnNames = TRUE;
+#else
+  const NABoolean retainUpdatedColumnNames = FALSE;
+#endif
+
   NAColumnArray colArray;
   NAColumn *col;
 
@@ -464,7 +470,7 @@ static short genHbaseUpdOrInsertExpr(
       ie->bindNode(generator->getBindWA());
       updRowVidList.insert(ie->getValueId());
 
-      if (NOT isAligned)
+      if ((NOT isAligned) || retainUpdatedColumnNames)
         {
           NAString cnInList;
           HbaseAccess::createHbaseColId(nac, cnInList);
@@ -476,7 +482,8 @@ static short genHbaseUpdOrInsertExpr(
         }
     }
 
-  if ((isAligned) && (listOfUpdatedColNames) &&
+  if ((isAligned) && (NOT retainUpdatedColumnNames) &&
+      (listOfUpdatedColNames) &&
       (updRecExprArray.entries() > 0))
     {
       NAString cnInList(SEABASE_DEFAULT_COL_FAMILY);
@@ -941,7 +948,7 @@ short HbaseDelete::codeGen(Generator * generator)
 				     FALSE,
 				     NULL,
 				     FALSE /* doBulkMove */);
-  
+
   if ((asciiRowFormat == ExpTupleDesc::SQLMX_ALIGNED_FORMAT) &&
       (hasAddedColumns))
     {
@@ -1083,6 +1090,14 @@ short HbaseDelete::codeGen(Generator * generator)
   Queue * listOfFetchedColNames = NULL;
   if (isAlignedFormat)
     {
+#ifdef TRAF_LOCAL_LITE
+      // RocksDB stores a canonical full row. Preserve the base-column mapping
+      // when the executor requests only a predicate/projection subset.
+      HbaseAccess::genListOfColNames(generator,
+                                     getIndexDesc(),
+                                     columnList,
+                                     listOfFetchedColNames);
+#else
       listOfFetchedColNames = new(space) Queue(space);
       
       NAString cnInList(SEABASE_DEFAULT_COL_FAMILY);
@@ -1096,6 +1111,7 @@ short HbaseDelete::codeGen(Generator * generator)
         space->AllocateAndCopyToAlignedSpace(cnInList, 0);
       
       listOfFetchedColNames->insert(colNameInList);
+#endif
     }
   else
     {
@@ -1605,6 +1621,13 @@ short HbaseUpdate::codeGen(Generator * generator)
 				     FALSE,
 				     NULL,
 				     FALSE /* doBulkMove */);
+
+#ifdef TRAF_LOCAL_LITE
+  // The native HBase executor consumes the generated conversion expression
+  // directly. The local-lite UPDATE executor also needs the descriptor to
+  // project persisted rows into the expression's input tuple.
+  work_cri_desc->setTupleDescriptor(convertTuppIndex, tuple_desc);
+#endif
   
   if ((asciiRowFormat == ExpTupleDesc::SQLMX_ALIGNED_FORMAT) &&
       (hasAddedColumns))
@@ -1629,6 +1652,58 @@ short HbaseUpdate::codeGen(Generator * generator)
 	{
 	  ValueId scanIndexDescVID = getScanIndexDesc()->getIndexColumns()[i];
 	  const ValueId indexDescVID = getIndexDesc()->getIndexColumns()[i];
+
+#ifdef TRAF_LOCAL_LITE
+          ValueId scanDefinitionVID = scanIndexDescVID;
+          if (scanIndexDescVID.getItemExpr()->getOperatorType() ==
+              ITM_INDEXCOLUMN)
+            scanDefinitionVID =
+              ((IndexColumn *)scanIndexDescVID.getItemExpr())->getDefinition();
+          const NAColumn *scanBaseColumn = NULL;
+          if (scanDefinitionVID.getItemExpr()->getOperatorType() ==
+              ITM_BASECOLUMN)
+            scanBaseColumn =
+              ((BaseColumn *)scanDefinitionVID.getItemExpr())->getNAColumn();
+
+          if (getTableDesc()->hasUniqueIndexes() && scanBaseColumn)
+            {
+              CollIndex matchingPos = NULL_COLL_INDEX;
+              for (CollIndex j = 0; j < columnList.entries(); j++)
+                {
+                  ValueId columnDefinitionVID = columnList[j];
+                  if (columnList[j].getItemExpr()->getOperatorType() ==
+                      ITM_INDEXCOLUMN)
+                    columnDefinitionVID =
+                      ((IndexColumn *)columnList[j].getItemExpr())->
+                        getDefinition();
+                  const NAColumn *columnBaseColumn = NULL;
+                  if (columnDefinitionVID.getItemExpr()->getOperatorType() ==
+                      ITM_BASECOLUMN)
+                    columnBaseColumn =
+                      ((BaseColumn *)columnDefinitionVID.getItemExpr())->
+                        getNAColumn();
+                  if (columnDefinitionVID == scanDefinitionVID ||
+                      (columnBaseColumn &&
+                       scanBaseColumn->getPosition() ==
+                         columnBaseColumn->getPosition()))
+                    {
+                      matchingPos = j;
+                      break;
+                    }
+                }
+
+              if (matchingPos != NULL_COLL_INDEX)
+                {
+                  Attributes *colAttr =
+                    (generator->addMapInfo(scanIndexDescVID, 0))->getAttr();
+                  ValueId castValId = convertExprCastVids[matchingPos];
+                  Attributes *castAttr =
+                    (generator->getMapInfo(castValId))->getAttr();
+                  colAttr->copyLocationAttrs(castAttr);
+                  continue;
+                }
+            }
+#endif
 	  
 	  CollIndex pos = 0;
 
@@ -1775,6 +1850,15 @@ short HbaseUpdate::codeGen(Generator * generator)
 
   if (isAlignedFormat)
     {
+#ifdef TRAF_LOCAL_LITE
+      // The local-lite UPDATE executor projects persisted canonical rows into
+      // this statement-specific tuple, so it needs one source column ID per
+      // generated attribute rather than the native HBase family marker.
+      HbaseAccess::genListOfColNames(generator,
+                                     getIndexDesc(),
+                                     columnList,
+                                     listOfFetchedColNames);
+#else
       listOfFetchedColNames = new(space) Queue(space);
       
       NAString cnInList(SEABASE_DEFAULT_COL_FAMILY);
@@ -1788,6 +1872,7 @@ short HbaseUpdate::codeGen(Generator * generator)
         space->AllocateAndCopyToAlignedSpace(cnInList, 0);
       
       listOfFetchedColNames->insert(colNameInList);
+#endif
     }
   else
     {

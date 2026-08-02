@@ -26,7 +26,7 @@ core/sql/regress/localLiteLegacy/runregr --probe --suite executor \
 | TEST014 | blocked | M4 | CTAS enters an unsupported catalog/storage path and SHOWDDL metadata is absent |
 | TEST025 | blocked | M4 | NO DEFAULT table definitions fail before MDAM, statistics, and DELETE coverage |
 | TEST050 | blocked | M4 | DEFAULT columns fail; diagnostic message catalog and UPDATE are later dependencies |
-| TEST101 | blocked | M1 | ROUND coverage mostly executes, but UPDATE is required for NULL-scale result cases |
+| TEST101 | blocked | M10 | The six-row NULL-scale UPDATE now succeeds; remaining diffs are diagnostic message text and conditional/CQD suite-convergence behavior |
 | TEST107 | unsafe | M7 | Large sort setup is incomplete and SQLCI terminates with status 139 after the session |
 | TEST140 | excluded | - | Its DDL section inseparably combines HBase physical options and a Hive load |
 

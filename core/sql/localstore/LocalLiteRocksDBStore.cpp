@@ -769,6 +769,211 @@ public:
     return true;
   }
 
+  bool updateRows(const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRowMutation> &mutations,
+                  std::string *error)
+  {
+    if (mutations.empty())
+      return true;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    LocalLiteTableDef loaded;
+    if (!loadTableLocked(table.catalog, table.schema, table.name,
+                         &loaded, error))
+      return false;
+    if (loaded.objectUid != table.objectUid)
+      {
+        setError(error, "local-lite table changed during update");
+        return false;
+      }
+
+    rocksdb_t *db = openTableLocked(LocalLiteRocksDBStore::tablePath(loaded),
+                                    false, error);
+    if (!db)
+      return false;
+
+    std::vector<std::string> oldRowKeys(mutations.size());
+    std::vector<std::string> newRowKeys(mutations.size());
+    std::vector< std::vector<std::string> > oldUniqueKeys(mutations.size());
+    std::vector< std::vector<std::string> > newUniqueKeys(mutations.size());
+    std::set<std::string> oldRowKeySet;
+    std::set<std::string> newRowKeySet;
+    std::set<std::string> newUniqueKeySet;
+
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        if (loaded.primaryKeyColumns.empty())
+          {
+            appendUint64(oldRowKeys[i], mutations[i].before.rowId);
+            newRowKeys[i] = oldRowKeys[i];
+          }
+        else
+          {
+            if (!LocalLiteBuildPrimaryKey(loaded, mutations[i].before.value,
+                                          &oldRowKeys[i], error) ||
+                !LocalLiteBuildPrimaryKey(loaded, mutations[i].after,
+                                          &newRowKeys[i], error))
+              return false;
+          }
+        if (!oldRowKeySet.insert(oldRowKeys[i]).second)
+          {
+            setError(error, "local-lite update selected a row more than once");
+            return false;
+          }
+        if (!newRowKeySet.insert(newRowKeys[i]).second)
+          {
+            setError(error, "duplicate local-lite primary key");
+            return false;
+          }
+
+        for (size_t keyIndex = 0;
+             keyIndex < loaded.uniqueKeyColumns.size(); keyIndex++)
+          {
+            std::string oldKey;
+            std::string newKey;
+            bool hasOldKey = false;
+            bool hasNewKey = false;
+            if (!LocalLiteBuildUniqueKey(
+                    loaded, mutations[i].before.value,
+                    loaded.uniqueKeyColumns[keyIndex], keyIndex,
+                    &oldKey, &hasOldKey, error) ||
+                !LocalLiteBuildUniqueKey(
+                    loaded, mutations[i].after,
+                    loaded.uniqueKeyColumns[keyIndex], keyIndex,
+                    &newKey, &hasNewKey, error))
+              return false;
+            if (hasOldKey)
+              oldUniqueKeys[i].push_back(oldKey);
+            if (hasNewKey)
+              {
+                if (!newUniqueKeySet.insert(newKey).second)
+                  {
+                    setError(error, "duplicate local-lite unique key");
+                    return false;
+                  }
+                newUniqueKeys[i].push_back(newKey);
+              }
+          }
+      }
+
+    rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        char *err = NULL;
+        size_t valueLen = 0;
+        char *value = rocksdb_get(db, readOptions,
+                                  oldRowKeys[i].data(), oldRowKeys[i].size(),
+                                  &valueLen, &err);
+        if (!checkRocksError(err, "read local-lite row for update", error))
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            return false;
+          }
+        if (!value)
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            setError(error, "local-lite update row no longer exists");
+            return false;
+          }
+        std::string currentValue(value, valueLen);
+        rocksdb_free(value);
+        std::string currentRow;
+        if (!decodeRowValue(currentValue, &currentRow, error))
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            return false;
+          }
+        if (currentRow != mutations[i].before.value)
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            setError(error,
+                     "local-lite update row changed; restart statement");
+            return false;
+          }
+
+        if (newRowKeys[i] != oldRowKeys[i] &&
+            oldRowKeySet.find(newRowKeys[i]) == oldRowKeySet.end())
+          {
+            err = NULL;
+            valueLen = 0;
+            value = rocksdb_get(db, readOptions,
+                                newRowKeys[i].data(), newRowKeys[i].size(),
+                                &valueLen, &err);
+            if (!checkRocksError(err, "read updated local-lite row key", error))
+              {
+                rocksdb_readoptions_destroy(readOptions);
+                return false;
+              }
+            if (value)
+              {
+                rocksdb_free(value);
+                rocksdb_readoptions_destroy(readOptions);
+                setError(error, "duplicate local-lite primary key");
+                return false;
+              }
+          }
+
+        for (size_t keyIndex = 0;
+             keyIndex < newUniqueKeys[i].size(); keyIndex++)
+          {
+            err = NULL;
+            valueLen = 0;
+            value = rocksdb_get(db, readOptions,
+                                newUniqueKeys[i][keyIndex].data(),
+                                newUniqueKeys[i][keyIndex].size(),
+                                &valueLen, &err);
+            if (!checkRocksError(err, "read updated local-lite unique key",
+                                 error))
+              {
+                rocksdb_readoptions_destroy(readOptions);
+                return false;
+              }
+            if (!value)
+              continue;
+            std::string referencedRowKey(value, valueLen);
+            rocksdb_free(value);
+            if (oldRowKeySet.find(referencedRowKey) == oldRowKeySet.end())
+              {
+                rocksdb_readoptions_destroy(readOptions);
+                setError(error, "duplicate local-lite unique key");
+                return false;
+              }
+          }
+      }
+    rocksdb_readoptions_destroy(readOptions);
+
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        rocksdb_writebatch_delete(batch, oldRowKeys[i].data(),
+                                  oldRowKeys[i].size());
+        for (size_t keyIndex = 0;
+             keyIndex < oldUniqueKeys[i].size(); keyIndex++)
+          rocksdb_writebatch_delete(batch, oldUniqueKeys[i][keyIndex].data(),
+                                    oldUniqueKeys[i][keyIndex].size());
+      }
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        std::string value = encodeRowValue(mutations[i].after);
+        rocksdb_writebatch_put(batch, newRowKeys[i].data(),
+                               newRowKeys[i].size(),
+                               value.data(), value.size());
+        for (size_t keyIndex = 0;
+             keyIndex < newUniqueKeys[i].size(); keyIndex++)
+          rocksdb_writebatch_put(batch,
+                                 newUniqueKeys[i][keyIndex].data(),
+                                 newUniqueKeys[i][keyIndex].size(),
+                                 newRowKeys[i].data(), newRowKeys[i].size());
+      }
+
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    char *err = NULL;
+    rocksdb_write(db, writeOptions, batch, &err);
+    rocksdb_writeoptions_destroy(writeOptions);
+    rocksdb_writebatch_destroy(batch);
+    return checkRocksError(err, "update local-lite rows", error);
+  }
+
   bool commitPendingRows(const LocalLiteTableDef &table,
                          const std::vector<LocalLiteRow> &rows,
                          std::string *error)
@@ -1197,7 +1402,9 @@ public:
     size_t committedTables = 0;
     for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
       {
-        if (!LocalLiteStorageManager::instance().commitPendingRows(
+        if (!LocalLiteStorageManager::instance().updateRows(
+                t->second.table, t->second.updates, error) ||
+            !LocalLiteStorageManager::instance().commitPendingRows(
                 t->second.table, t->second.rows, error))
           {
             if (committedTables > 0 && error)
@@ -1273,7 +1480,7 @@ public:
 
     const std::string key = tableKey(table);
     PendingTable &pending = pendingTables_[key];
-    if (pending.rows.empty())
+    if (!pending.initialized)
       {
         LocalLiteTableDef loaded;
         if (!store->loadTable(table.catalog, table.schema, table.name,
@@ -1281,6 +1488,7 @@ public:
           return false;
         pending.table = loaded;
         pending.nextRowId = loaded.nextRowId;
+        pending.initialized = true;
       }
 
     if (!pending.table.primaryKeyColumns.empty())
@@ -1338,6 +1546,57 @@ public:
     return true;
   }
 
+  bool updateRows(LocalLiteRocksDBStore *store,
+                  const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRowMutation> &mutations,
+                  std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_)
+      return store->updateRows(table, mutations, error);
+
+    PendingTable &pending = pendingTables_[tableKey(table)];
+    if (!pending.initialized)
+      {
+        LocalLiteTableDef loaded;
+        if (!store->loadTable(table.catalog, table.schema, table.name,
+                              &loaded, error))
+          return false;
+        pending.table = loaded;
+        pending.nextRowId = loaded.nextRowId;
+        pending.initialized = true;
+      }
+
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        bool merged = false;
+        for (size_t rowIndex = 0; rowIndex < pending.rows.size(); rowIndex++)
+          if (pending.rows[rowIndex].rowId == mutations[i].before.rowId &&
+              pending.rows[rowIndex].value == mutations[i].before.value)
+            {
+              pending.rows[rowIndex].value = mutations[i].after;
+              merged = true;
+              break;
+            }
+        if (merged)
+          continue;
+
+        for (size_t updateIndex = 0;
+             updateIndex < pending.updates.size(); updateIndex++)
+          if (pending.updates[updateIndex].before.rowId ==
+                mutations[i].before.rowId &&
+              pending.updates[updateIndex].after == mutations[i].before.value)
+            {
+              pending.updates[updateIndex].after = mutations[i].after;
+              merged = true;
+              break;
+            }
+        if (!merged)
+          pending.updates.push_back(mutations[i]);
+      }
+    return true;
+  }
+
   bool scanRows(LocalLiteRocksDBStore *store,
                 const LocalLiteTableDef &table,
                 const void *statementOwner,
@@ -1368,6 +1627,18 @@ public:
     if (it == pendingTables_.end())
       return true;
 
+    for (size_t updateIndex = 0;
+         updateIndex < it->second.updates.size(); updateIndex++)
+      {
+        const LocalLiteRowMutation &mutation = it->second.updates[updateIndex];
+        for (size_t rowIndex = 0; rowIndex < rows->size(); rowIndex++)
+          if ((*rows)[rowIndex].rowId == mutation.before.rowId &&
+              (*rows)[rowIndex].value == mutation.before.value)
+            {
+              (*rows)[rowIndex].value = mutation.after;
+              break;
+            }
+      }
     for (size_t i = 0; i < it->second.rows.size(); i++)
       rows->push_back(it->second.rows[i]);
     return true;
@@ -1401,6 +1672,38 @@ public:
           PendingMap::iterator it = pendingTables_.find(tableKey(table));
           if (it != pendingTables_.end())
             {
+              for (size_t i = it->second.updates.size(); i > 0; i--)
+                {
+                  const LocalLiteRowMutation &mutation =
+                    it->second.updates[i - 1];
+                  LocalLiteRow updatedRow;
+                  updatedRow.rowId = mutation.before.rowId;
+                  updatedRow.value = mutation.after;
+                  bool matchesAfter = false;
+                  if (!pendingRowMatchesKey(it->second.table,
+                                            updatedRow,
+                                            storageKey,
+                                            &matchesAfter,
+                                            error))
+                    return false;
+                  if (matchesAfter)
+                    {
+                      row->rowId = mutation.before.rowId;
+                      row->value = mutation.after;
+                      *found = true;
+                      return true;
+                    }
+
+                  bool matchesBefore = false;
+                  if (!pendingRowMatchesKey(it->second.table,
+                                            mutation.before,
+                                            storageKey,
+                                            &matchesBefore,
+                                            error))
+                    return false;
+                  if (matchesBefore)
+                    return true;
+                }
               for (size_t i = 0; i < it->second.rows.size(); i++)
                 {
                   if (!pendingRowMatchesKey(it->second.table,
@@ -1432,9 +1735,13 @@ public:
 private:
   struct PendingTable
   {
+    PendingTable() : initialized(false), nextRowId(0) {}
+
+    bool initialized;
     LocalLiteTableDef table;
     uint64_t nextRowId;
     std::vector<LocalLiteRow> rows;
+    std::vector<LocalLiteRowMutation> updates;
   };
   typedef std::map<std::string, PendingTable> PendingMap;
 
@@ -1719,6 +2026,17 @@ bool LocalLiteRocksDBStore::insertRow(const LocalLiteTableDef &table,
                                                        rowId, error);
 }
 
+bool LocalLiteRocksDBStore::updateRows(
+    const LocalLiteTableDef &table,
+    const std::vector<LocalLiteRowMutation> &mutations,
+    std::string *error)
+{
+  if (!open(error))
+    return false;
+  return LocalLiteStorageManager::instance().updateRows(table, mutations,
+                                                        error);
+}
+
 bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,
                                         const std::string &storageKey,
                                         LocalLiteRow *row,
@@ -1913,6 +2231,20 @@ bool LocalLiteTxn::insertRow(const LocalLiteTableDef &table,
 
   return LocalLiteTxnState::instance().insertRow(store_, table, encodedRow,
                                                 rowId, error);
+}
+
+bool LocalLiteTxn::updateRows(
+    const LocalLiteTableDef &table,
+    const std::vector<LocalLiteRowMutation> &mutations,
+    std::string *error)
+{
+  if (!store_)
+    {
+      setError(error, "local-lite transaction missing store");
+      return false;
+    }
+  return LocalLiteTxnState::instance().updateRows(store_, table, mutations,
+                                                  error);
 }
 
 bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,

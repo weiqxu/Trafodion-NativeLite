@@ -29,13 +29,13 @@
 *** ERROR[16001] No message found for SQLCODE -3242. local-lite table does not exist: TRAFODION.SEABASE.LLREG009_MISSING <MXID>
 --- SQL operation failed with errors.
 >>UPDATE LLREG009_BASE SET label = 'changed' WHERE id = 1;
-*** ERROR[local-lite] UPDATE, DELETE, and MERGE are not supported in local-lite
+--- 1 row(s) updated.
 >>DELETE FROM LLREG009_BASE WHERE id = 1;
-*** ERROR[local-lite] UPDATE, DELETE, and MERGE are not supported in local-lite
+*** ERROR[local-lite] DELETE and MERGE are not supported in local-lite
 >>MERGE INTO LLREG009_BASE USING LLREG009_BASE AS source_rows
 +>  ON LLREG009_BASE.id = source_rows.id
 +>  WHEN MATCHED THEN UPDATE SET label = 'changed';
-*** ERROR[local-lite] UPDATE, DELETE, and MERGE are not supported in local-lite
+*** ERROR[local-lite] DELETE and MERGE are not supported in local-lite
 >>UPSERT INTO LLREG009_BASE VALUES (2, 'upserted');
 *** ERROR[local-lite] UPSERT is not supported in local-lite v1; use INSERT
 >>CREATE INDEX LLREG009_IX ON LLREG009_BASE(id);
@@ -59,7 +59,7 @@
 +>  ORDER BY id;
 ID           LABEL
 -----------  --------------------
-          1  still-here
+          1  changed
 --- 1 row(s) selected.
 >>DROP TABLE LLREG009_BASE;
 --- SQL operation complete.

@@ -30,7 +30,7 @@ sections with a longer timeout or a section-aware expected baseline.
 | --- | --- | --- | --- |
 | TEST001 | blocked | M4 | ALTER TABLE CHECK is unsupported; UCS2 hexadecimal assignments also diverge in M6 |
 | TEST002 | blocked | M4 | DEFAULT, CHECK, RI, VIEW, and INDEX DDL are unsupported |
-| TEST003 | blocked | M1 | UPDATE is unsupported; DELETE and catalog metadata follow |
+| TEST003 | blocked | M2 | UPDATE now succeeds; DELETE is the next unsupported DML operation, with catalog metadata and character-set differences later |
 | TEST004 | blocked | M6 | UCS2 `CHAR` assignment reports error 8690 |
 | TEST010 | blocked | M2 | DELETE is unsupported and UCS2 parameter results diverge |
 | TEST014 | blocked | M4 | DEFAULT and VIEW/schema DDL fail before INTERVAL/UCS2 convergence |

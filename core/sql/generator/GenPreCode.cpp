@@ -5211,6 +5211,7 @@ RelExpr * UpdateCursor::preCodeGen(Generator * generator,
   if (! Update::preCodeGen(generator,externalInputs,pulledNewInputs))
     return NULL;
 
+#ifndef TRAF_LOCAL_LITE
   // primary key columns cannot be updated, yet. After RI support
   // is in, they could be updated.
    const NAColumnArray & key_column_array =
@@ -5240,6 +5241,7 @@ RelExpr * UpdateCursor::preCodeGen(Generator * generator,
 	    }
 	}
     }
+#endif
   generator->oltOptInfo()->mayDisableOperStats(&oltOptInfo());
   markAsPreCodeGenned();
 
@@ -5808,7 +5810,31 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
              BaseColumn * bc = (BaseColumn*)getTableDesc()->getColumnList()[i].getItemExpr();
              CMPASSERT(bc->getOperatorType() == ITM_BASECOLUMN);
 
+#ifdef TRAF_LOCAL_LITE
+             // Alternate indexes are not necessarily ordered like the base
+             // table. On a table with unique indexes, locate the selected
+             // index column whose definition is this exact BaseColumn instead
+             // of assuming the base-table ordinal is also the index ordinal.
              ValueId srcId = getIndexDesc()->getIndexColumns()[i];
+             if (getTableDesc()->hasUniqueIndexes())
+               for (CollIndex sourceIndex = 0;
+                    sourceIndex < getIndexDesc()->getIndexColumns().entries();
+                    sourceIndex++)
+                 {
+                   ValueId candidate =
+                     getIndexDesc()->getIndexColumns()[sourceIndex];
+                   ItemExpr *candidateExpr = candidate.getItemExpr();
+                   if (candidateExpr->getOperatorType() == ITM_INDEXCOLUMN &&
+                       ((IndexColumn *)candidateExpr)->getDefinition() ==
+                         bc->getValueId())
+                     {
+                       srcId = candidate;
+                       break;
+                     }
+                 }
+#else
+             ValueId srcId = getIndexDesc()->getIndexColumns()[i];
+#endif
              
              ItemExpr * an = 
                new(generator->wHeap()) Assign(bc, srcId.getItemExpr(), FALSE);

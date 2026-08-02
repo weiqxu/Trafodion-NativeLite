@@ -146,6 +146,36 @@ static bool scanValues(LocalLiteTxn *txn,
   return true;
 }
 
+static bool updateValue(LocalLiteTxn *txn,
+                        const LocalLiteTableDef &table,
+                        const char *before,
+                        const char *after)
+{
+  std::vector<LocalLiteRow> rows;
+  std::string error;
+  if (!txn->scanRows(table, &rows, &error))
+    {
+      fprintf(stderr, "update source scan failed: %s\n", error.c_str());
+      return false;
+    }
+  for (size_t i = 0; i < rows.size(); i++)
+    if (rows[i].value == before)
+      {
+        LocalLiteRowMutation mutation;
+        mutation.before = rows[i];
+        mutation.after = after;
+        std::vector<LocalLiteRowMutation> mutations(1, mutation);
+        if (!txn->updateRows(table, mutations, &error))
+          {
+            fprintf(stderr, "pending update failed: %s\n", error.c_str());
+            return false;
+          }
+        return true;
+      }
+  fprintf(stderr, "update source value not found: %s\n", before);
+  return false;
+}
+
 static bool getFound(LocalLiteTxn *txn,
                      const LocalLiteTableDef &table,
                      uint64_t rowId,
@@ -303,6 +333,43 @@ int main()
   if (!scanCount(&afterCommit, table, 3) ||
       !getFound(&afterCommit, table, 3, true))
     return 1;
+
+  if (!LocalLiteTxnManager::begin(&error))
+    {
+      fprintf(stderr, "update rollback begin failed: %s\n", error.c_str());
+      return 1;
+    }
+  if (!updateValue(&afterCommit, table,
+                   "before-transaction", "rollback-update") ||
+      !scanValues(&afterCommit, table, 3,
+                  "rollback-update", "before-transaction"))
+    return 1;
+  if (!LocalLiteTxnManager::rollback(&error) ||
+      !scanValues(&afterCommit, table, 3,
+                  "before-transaction", "rollback-update"))
+    {
+      fprintf(stderr, "update rollback failed: %s\n", error.c_str());
+      return 1;
+    }
+
+  if (!LocalLiteTxnManager::begin(&error))
+    {
+      fprintf(stderr, "update commit begin failed: %s\n", error.c_str());
+      return 1;
+    }
+  if (!updateValue(&afterCommit, table,
+                   "before-transaction", "pending-update") ||
+      !updateValue(&afterCommit, table,
+                   "pending-update", "committed-update") ||
+      !scanValues(&afterCommit, table, 3,
+                  "committed-update", "before-transaction") ||
+      !LocalLiteTxnManager::commit(&error) ||
+      !scanValues(&afterCommit, table, 3,
+                  "committed-update", "before-transaction"))
+    {
+      fprintf(stderr, "update commit failed: %s\n", error.c_str());
+      return 1;
+    }
 
   LocalLiteTableDef primaryTable = table;
   primaryTable.name = "TX_ATOMIC_PK_T";

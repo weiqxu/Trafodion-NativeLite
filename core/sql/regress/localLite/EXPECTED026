@@ -1,0 +1,247 @@
+>>CREATE TABLE LLREG026_UPDATE
++>  (id INT PRIMARY KEY,
++>   label VARCHAR(20),
++>   score INT);
+--- SQL operation complete.
+>>INSERT INTO LLREG026_UPDATE VALUES
++>  (1, 'one', 10),
++>  (2, 'two', 20),
++>  (3, NULL, 30),
++>  (4, 'four', NULL);
+--- 4 row(s) inserted.
+>>UPDATE LLREG026_UPDATE
++>   SET label = 'changed'
++> WHERE id = 1;
+--- 1 row(s) updated.
+>>UPDATE LLREG026_UPDATE
++>   SET score = score + 5,
++>       label = UPPER(label)
++> WHERE id >= 2;
+--- 3 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> ORDER BY id;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          1  changed                        10
+          2  TWO                            25
+          3  ?                              35
+          4  FOUR                            ?
+--- 4 row(s) selected.
+>>UPDATE LLREG026_UPDATE
++>   SET score = 0
++> WHERE id = 999;
+--- 0 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> ORDER BY id;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          1  changed                        10
+          2  TWO                            25
+          3  ?                              35
+          4  FOUR                            ?
+--- 4 row(s) selected.
+>>UPDATE LLREG026_UPDATE
++>   SET id = 11
++> WHERE id = 1;
+--- 1 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> ORDER BY id;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          2  TWO                            25
+          3  ?                              35
+          4  FOUR                            ?
+         11  changed                        10
+--- 4 row(s) selected.
+>>UPDATE LLREG026_UPDATE
++>   SET id = 11,
++>       label = 'must-not-change'
++> WHERE id = 2;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite primary key <MXID>
+--- 0 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> ORDER BY id;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          2  TWO                            25
+          3  ?                              35
+          4  FOUR                            ?
+         11  changed                        10
+--- 4 row(s) selected.
+>>UPDATE LLREG026_UPDATE
++>   SET id = 99,
++>       label = 'batch-unchanged'
++> WHERE id IN (2, 3);
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite primary key <MXID>
+--- 0 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> ORDER BY id;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          2  TWO                            25
+          3  ?                              35
+          4  FOUR                            ?
+         11  changed                        10
+--- 4 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>UPDATE LLREG026_UPDATE
++>   SET label = 'pending'
++> WHERE id = 2;
+--- 1 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> WHERE id = 2;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          2  pending                        25
+--- 1 row(s) selected.
+>>ROLLBACK WORK;
+--- SQL operation complete.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> WHERE id = 2;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          2  TWO                            25
+--- 1 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>UPDATE LLREG026_UPDATE
++>   SET score = score + 10
++> WHERE id = 2;
+--- 1 row(s) updated.
+>>UPDATE LLREG026_UPDATE
++>   SET label = LOWER(label)
++> WHERE id = 2;
+--- 1 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> WHERE id = 2;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          2  two                            35
+--- 1 row(s) selected.
+>>COMMIT WORK;
+--- SQL operation complete.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> WHERE id = 2;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          2  two                            35
+--- 1 row(s) selected.
+>>UPDATE LLREG026_UPDATE
++>   SET label = NULL,
++>       score = 40
++> WHERE id = 4;
+--- 1 row(s) updated.
+>>SELECT id, label, score
++>  FROM LLREG026_UPDATE
++> WHERE id = 4;
+ID           LABEL                 SCORE
+-----------  --------------------  -----------
+          4  ?                              40
+--- 1 row(s) selected.
+>>DROP TABLE LLREG026_UPDATE;
+--- SQL operation complete.
+>>CREATE TABLE LLREG026_UNIQUE_UPDATE
++>  (id INT PRIMARY KEY,
++>   code VARCHAR(8),
++>   label VARCHAR(20),
++>   UNIQUE(code));
+--- SQL operation complete.
+>>INSERT INTO LLREG026_UNIQUE_UPDATE VALUES
++>  (1, 'A', 'one'),
++>  (2, 'B', 'two');
+--- 2 row(s) inserted.
+>>UPDATE LLREG026_UNIQUE_UPDATE
++>   SET code = 'AA'
++> WHERE id = 1;
+--- 1 row(s) updated.
+>>UPDATE LLREG026_UNIQUE_UPDATE
++>   SET label = code
++> WHERE id = 2;
+--- 1 row(s) updated.
+>>SELECT id, code, label
++>  FROM LLREG026_UNIQUE_UPDATE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  AA        one
+          2  B         B
+--- 2 row(s) selected.
+>>UPDATE LLREG026_UNIQUE_UPDATE
++>   SET code = 'AA',
++>       label = 'must-not-change'
++> WHERE id = 2;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite unique key <MXID>
+--- 0 row(s) updated.
+>>SELECT id, code, label
++>  FROM LLREG026_UNIQUE_UPDATE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  AA        one
+          2  B         B
+--- 2 row(s) selected.
+>>UPDATE LLREG026_UNIQUE_UPDATE
++>   SET label = UPPER(label)
++> WHERE id IN (1, 2);
+--- 2 row(s) updated.
+>>SELECT id, code, label
++>  FROM LLREG026_UNIQUE_UPDATE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  AA        ONE
+          2  B         B
+--- 2 row(s) selected.
+>>UPDATE LLREG026_UNIQUE_UPDATE
++>   SET code = 'ZZ',
++>       label = 'batch-unchanged'
++> WHERE id IN (1, 2);
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite unique key <MXID>
+--- 0 row(s) updated.
+>>SELECT id, code, label
++>  FROM LLREG026_UNIQUE_UPDATE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  AA        ONE
+          2  B         B
+--- 2 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>UPDATE LLREG026_UNIQUE_UPDATE
++>   SET code = 'C'
++> WHERE id = 1;
+--- 1 row(s) updated.
+>>UPDATE LLREG026_UNIQUE_UPDATE
++>   SET code = 'C'
++> WHERE id = 2;
+--- 1 row(s) updated.
+>>COMMIT WORK;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite unique key <MXID>
+--- SQL operation failed with errors.
+>>SELECT id, code, label
++>  FROM LLREG026_UNIQUE_UPDATE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  AA        ONE
+          2  B         B
+--- 2 row(s) selected.
+>>DROP TABLE LLREG026_UNIQUE_UPDATE;
+--- SQL operation complete.
+>>exit;

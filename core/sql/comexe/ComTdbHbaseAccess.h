@@ -110,6 +110,7 @@ class ComTdbHbaseAccess : public ComTdb
 #ifdef TRAF_LOCAL_LITE
   friend class LocalLiteHbaseScanTcb;
   friend class LocalLiteHbaseInsertTcb;
+  friend class LocalLiteHbaseUpdateTcb;
 #endif
 
 public:

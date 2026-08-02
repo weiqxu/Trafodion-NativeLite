@@ -965,6 +965,71 @@ bool LocalLiteNormalizeBinaryRow(const LocalLiteTableDef &table,
   return true;
 }
 
+bool LocalLiteApplyBinaryUpdate(
+    const LocalLiteTableDef &table,
+    const std::string &original,
+    ExpTupleDesc *srcTd,
+    const char *srcRow,
+    size_t srcRowLen,
+    const std::vector<size_t> &updatedColumnIndexes,
+    std::string *encoded,
+    std::string *error)
+{
+  if (!srcTd || !srcRow || !encoded)
+    {
+      setError(error, "local-lite update missing executor row");
+      return false;
+    }
+  if (srcTd->numAttrs() != updatedColumnIndexes.size())
+    {
+      setError(error,
+               "local-lite update row does not match updated column count");
+      return false;
+    }
+  if (original.size() < sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1 ||
+      memcmp(original.data(), LOCAL_LITE_BINARY_ROW_MAGIC,
+             sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1) != 0)
+    {
+      setError(error, "invalid local-lite binary row payload");
+      return false;
+    }
+
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t fullRowLen = 0;
+  if (!computeLayout(table, &columns, &fullRowLen, error))
+    return false;
+
+  std::string row =
+    original.substr(sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1);
+  if (row.size() < fullRowLen)
+    {
+      setError(error, "truncated local-lite binary row payload");
+      return false;
+    }
+
+  for (UInt32 i = 0; i < srcTd->numAttrs(); i++)
+    {
+      size_t columnIndex = updatedColumnIndexes[i];
+      if (columnIndex >= columns.size())
+        {
+          setError(error, "local-lite updated column index out of range");
+          return false;
+        }
+      if (!copyAttrToCanonical(srcRow, srcRowLen, srcTd->getAttr(i), srcTd,
+                               &row[0], columns[columnIndex], error))
+        return false;
+    }
+
+  UInt32 adjustedLen = ExpAlignedFormat::adjustDataLength(
+      &row[0], static_cast<UInt32>(row.size()),
+      ExpAlignedFormat::ALIGNMENT, TRUE);
+  row.resize(adjustedLen);
+  encoded->assign(LOCAL_LITE_BINARY_ROW_MAGIC,
+                  sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1);
+  encoded->append(row);
+  return true;
+}
+
 static bool storedColumnIsNull(const std::string &row,
                                const LocalLiteStoredColumn &col)
 {

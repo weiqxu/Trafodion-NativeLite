@@ -38,6 +38,12 @@ struct LocalLiteRow
   std::string value;
 };
 
+struct LocalLiteRowMutation
+{
+  LocalLiteRow before;
+  std::string after;
+};
+
 class LocalLiteTxnState;
 
 class LocalLiteRocksDBStore
@@ -74,6 +80,9 @@ public:
                  const std::string &encodedRow,
                  uint64_t *rowId,
                  std::string *error);
+  bool updateRows(const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRowMutation> &mutations,
+                  std::string *error);
   bool getRowByKey(const LocalLiteTableDef &table,
                    const std::string &storageKey,
                    LocalLiteRow *row,
@@ -116,6 +125,9 @@ public:
                  const std::string &encodedRow,
                  uint64_t *rowId,
                  std::string *error);
+  bool updateRows(const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRowMutation> &mutations,
+                  std::string *error);
   bool scanRows(const LocalLiteTableDef &table,
                 std::vector<LocalLiteRow> *rows,
                 std::string *error);

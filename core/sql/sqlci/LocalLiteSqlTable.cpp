@@ -107,11 +107,10 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       *retcode = reportError(sqlciEnv, "TRUNCATE TABLE is not supported in local-lite");
       return true;
     }
-  if (startsWithWord(sql, "UPDATE") ||
-      startsWithWord(sql, "DELETE") ||
+  if (startsWithWord(sql, "DELETE") ||
       startsWithWord(sql, "MERGE"))
     {
-      *retcode = reportError(sqlciEnv, "UPDATE, DELETE, and MERGE are not supported in local-lite");
+      *retcode = reportError(sqlciEnv, "DELETE and MERGE are not supported in local-lite");
       return true;
     }
   if (startsWithWord(sql, "UPSERT"))

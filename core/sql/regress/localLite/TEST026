@@ -1,0 +1,188 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+CREATE TABLE LLREG026_UPDATE
+  (id INT PRIMARY KEY,
+   label VARCHAR(20),
+   score INT);
+
+INSERT INTO LLREG026_UPDATE VALUES
+  (1, 'one', 10),
+  (2, 'two', 20),
+  (3, NULL, 30),
+  (4, 'four', NULL);
+
+UPDATE LLREG026_UPDATE
+   SET label = 'changed'
+ WHERE id = 1;
+
+UPDATE LLREG026_UPDATE
+   SET score = score + 5,
+       label = UPPER(label)
+ WHERE id >= 2;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ ORDER BY id;
+
+UPDATE LLREG026_UPDATE
+   SET score = 0
+ WHERE id = 999;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ ORDER BY id;
+
+UPDATE LLREG026_UPDATE
+   SET id = 11
+ WHERE id = 1;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ ORDER BY id;
+
+UPDATE LLREG026_UPDATE
+   SET id = 11,
+       label = 'must-not-change'
+ WHERE id = 2;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ ORDER BY id;
+
+UPDATE LLREG026_UPDATE
+   SET id = 99,
+       label = 'batch-unchanged'
+ WHERE id IN (2, 3);
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ ORDER BY id;
+
+BEGIN WORK;
+
+UPDATE LLREG026_UPDATE
+   SET label = 'pending'
+ WHERE id = 2;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ WHERE id = 2;
+
+ROLLBACK WORK;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ WHERE id = 2;
+
+BEGIN WORK;
+
+UPDATE LLREG026_UPDATE
+   SET score = score + 10
+ WHERE id = 2;
+
+UPDATE LLREG026_UPDATE
+   SET label = LOWER(label)
+ WHERE id = 2;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ WHERE id = 2;
+
+COMMIT WORK;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ WHERE id = 2;
+
+UPDATE LLREG026_UPDATE
+   SET label = NULL,
+       score = 40
+ WHERE id = 4;
+
+SELECT id, label, score
+  FROM LLREG026_UPDATE
+ WHERE id = 4;
+
+DROP TABLE LLREG026_UPDATE;
+
+CREATE TABLE LLREG026_UNIQUE_UPDATE
+  (id INT PRIMARY KEY,
+   code VARCHAR(8),
+   label VARCHAR(20),
+   UNIQUE(code));
+
+INSERT INTO LLREG026_UNIQUE_UPDATE VALUES
+  (1, 'A', 'one'),
+  (2, 'B', 'two');
+
+UPDATE LLREG026_UNIQUE_UPDATE
+   SET code = 'AA'
+ WHERE id = 1;
+
+UPDATE LLREG026_UNIQUE_UPDATE
+   SET label = code
+ WHERE id = 2;
+
+SELECT id, code, label
+  FROM LLREG026_UNIQUE_UPDATE
+ ORDER BY id;
+
+UPDATE LLREG026_UNIQUE_UPDATE
+   SET code = 'AA',
+       label = 'must-not-change'
+ WHERE id = 2;
+
+SELECT id, code, label
+  FROM LLREG026_UNIQUE_UPDATE
+ ORDER BY id;
+
+UPDATE LLREG026_UNIQUE_UPDATE
+   SET label = UPPER(label)
+ WHERE id IN (1, 2);
+
+SELECT id, code, label
+  FROM LLREG026_UNIQUE_UPDATE
+ ORDER BY id;
+
+UPDATE LLREG026_UNIQUE_UPDATE
+   SET code = 'ZZ',
+       label = 'batch-unchanged'
+ WHERE id IN (1, 2);
+
+SELECT id, code, label
+  FROM LLREG026_UNIQUE_UPDATE
+ ORDER BY id;
+
+BEGIN WORK;
+
+UPDATE LLREG026_UNIQUE_UPDATE
+   SET code = 'C'
+ WHERE id = 1;
+
+UPDATE LLREG026_UNIQUE_UPDATE
+   SET code = 'C'
+ WHERE id = 2;
+
+COMMIT WORK;
+
+SELECT id, code, label
+  FROM LLREG026_UNIQUE_UPDATE
+ ORDER BY id;
+
+DROP TABLE LLREG026_UNIQUE_UPDATE;
+exit;

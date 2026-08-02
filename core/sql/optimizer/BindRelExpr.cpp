@@ -11846,7 +11846,14 @@ RelExpr *Update::bindNode(BindWA *bindWA)
 
   if ((transformUpdateKey) && (NOT isMerge()))
     {
+#ifdef TRAF_LOCAL_LITE
+      // RocksDB updates replace the old row, primary-key entry, and UNIQUE
+      // entries in one WriteBatch. Keep the normal UPDATE operator so the
+      // local-lite executor can submit a before/after mutation directly.
+      boundExpr = handleInlining(bindWA, boundExpr);
+#else
       boundExpr = transformUpdatePrimaryKey(bindWA);
+#endif
     }
   else
     boundExpr = handleInlining(bindWA, boundExpr);

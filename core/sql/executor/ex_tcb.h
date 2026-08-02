@@ -180,6 +180,7 @@ public:
   // Used by tuple flow to give compiler-generated local INSERT plans one
   // statement-atomic transaction boundary.
   virtual NABoolean isLocalLiteInsert() const { return FALSE; }
+  virtual NABoolean isLocalLiteUpdate() const { return FALSE; }
 #endif
 
   // QSTUFF

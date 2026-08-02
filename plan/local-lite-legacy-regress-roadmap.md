@@ -122,6 +122,12 @@ Completion criteria:
 
 ## Milestone 1: UPDATE
 
+Status: completed in the working tree. Native regression coverage is in
+`localLite/TEST026`; the full local-lite suite passes 26/26. Re-probing the two
+legacy tests previously blocked first by UPDATE confirms that
+`charsets/TEST003` now reaches DELETE and `executor/TEST101` completes its
+six-row NULL-scale UPDATE before later suite-convergence differences.
+
 Implement local update generation/execution, transaction pending mutations,
 PK/UNIQUE key changes, index-ready mutation hooks, read-own-update, statement
 atomicity, rollback, diagnostics, and row counts.
