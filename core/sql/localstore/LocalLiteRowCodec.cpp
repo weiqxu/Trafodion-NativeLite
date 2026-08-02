@@ -9,6 +9,7 @@
 #include "LocalLiteRowCodec.h"
 
 #include "BigNumHelper.h"
+#include "DatetimeType.h"
 #include "LocalLiteRocksDBStore.h"
 #include "Platform.h"
 #include "NABoolean.h"
@@ -44,6 +45,7 @@ struct LocalLiteStoredColumn
   size_t precision;
   size_t scale;
   bool decimalStorage;
+  bool unsignedNumeric;
   bool nullable;
   size_t voaOffset;
   size_t nullIndOffset;
@@ -122,12 +124,14 @@ static bool mapType(const std::string &typeText,
                     size_t *length,
                     size_t *precisionOut,
                     size_t *scale,
-                    bool *decimalStorage)
+                    bool *decimalStorage,
+                    bool *unsignedNumeric)
 {
   *scale = 0;
   *precisionOut = 0;
   *decimalStorage = false;
   std::string typeName = upper(typeText);
+  *unsignedNumeric = typeName.find("UNSIGNED") != std::string::npos;
   if (startsWithWord(typeName, "TINYINT"))
     {
       *type = LL_TYPE_INT8;
@@ -158,12 +162,21 @@ static bool mapType(const std::string &typeText,
       *precisionOut = *length;
       return true;
     }
-  if (startsWithWord(typeName, "REAL") ||
-      startsWithWord(typeName, "FLOAT"))
+  if (startsWithWord(typeName, "REAL"))
     {
       *type = LL_TYPE_FLOAT32;
       *length = 4;
       *precisionOut = *length;
+      return true;
+    }
+  if (startsWithWord(typeName, "FLOAT"))
+    {
+      size_t precision = typeArg(typeName, 54);
+      if (precision < 1 || precision > 54)
+        return false;
+      *type = precision <= 22 ? LL_TYPE_FLOAT32 : LL_TYPE_FLOAT64;
+      *length = precision <= 22 ? 4 : 8;
+      *precisionOut = precision;
       return true;
     }
   if (startsWithWord(typeName, "DOUBLE"))
@@ -214,6 +227,7 @@ static bool mapType(const std::string &typeText,
       *type = LL_TYPE_DATETIME;
       *length = 8;
       *precisionOut = *length;
+      *scale = typeArg(typeName, 0);
       return true;
     }
   if (startsWithWord(typeName, "TIMESTAMP"))
@@ -221,6 +235,7 @@ static bool mapType(const std::string &typeText,
       *type = LL_TYPE_DATETIME;
       *length = 11;
       *precisionOut = *length;
+      *scale = typeArg(typeName, 6);
       return true;
     }
   if (startsWithWord(typeName, "VARCHAR") ||
@@ -286,7 +301,8 @@ static bool computeLayout(const LocalLiteTableDef &table,
     {
       LocalLiteStoredColumn &col = (*columns)[i];
       if (!mapType(table.columns[i].type, &col.type, &col.length,
-                   &col.precision, &col.scale, &col.decimalStorage))
+                   &col.precision, &col.scale, &col.decimalStorage,
+                   &col.unsignedNumeric))
         {
           setError(error, "unsupported local-lite binary row column type: " +
                   table.columns[i].type);
@@ -650,8 +666,47 @@ static bool writeValue(char *row,
       }
     case LL_TYPE_DATETIME:
       {
-        setError(error, "local-lite datetime values require executor expression encoding");
-        return false;
+        rec_datetime_field startField = col.length == 8
+            ? REC_DATE_HOUR : REC_DATE_YEAR;
+        rec_datetime_field endField = col.length == 4
+            ? REC_DATE_DAY : REC_DATE_SECOND;
+        UInt32 actualFractionPrecision = 0;
+        DatetimeValue datetime(value.c_str(), startField, endField,
+                               actualFractionPrecision, FALSE);
+        if (!datetime.isValid())
+          {
+            setError(error, "invalid local-lite datetime literal");
+            return false;
+          }
+        const unsigned char *source = datetime.getValue();
+        size_t baseLength = startField == REC_DATE_YEAR ? 7 : 3;
+        if (endField == REC_DATE_DAY)
+          baseLength = 4;
+        if (datetime.getValueLen() < baseLength ||
+            baseLength > col.length)
+          {
+            setError(error, "invalid local-lite datetime storage");
+            return false;
+          }
+        memcpy(target, source, baseLength);
+        if (endField == REC_DATE_SECOND && col.length >= baseLength + 4)
+          {
+            UInt32 fraction = 0;
+            if (datetime.getValueLen() >= baseLength + 4)
+              memcpy(&fraction, source + baseLength, sizeof(fraction));
+            while (actualFractionPrecision < col.scale)
+              {
+                fraction *= 10;
+                actualFractionPrecision++;
+              }
+            while (actualFractionPrecision > col.scale)
+              {
+                fraction /= 10;
+                actualFractionPrecision--;
+              }
+            memcpy(target + baseLength, &fraction, sizeof(fraction));
+          }
+        return true;
       }
     case LL_TYPE_CHAR:
       {
@@ -1335,6 +1390,515 @@ bool LocalLiteBuildUniqueKeyFromTextFields(
   encoded.append(row);
   return LocalLiteBuildUniqueKey(table, encoded, keyColumns, keyOrdinal,
                                  key, hasKey, error);
+}
+
+bool LocalLiteBuildSecondaryIndexPrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const std::vector<size_t> &keyColumns,
+    const std::vector<std::string> &leadingKeyFields,
+    std::string *payloadPrefix,
+    std::string *error)
+{
+  if (!payloadPrefix)
+    {
+      setError(error, "missing local-lite secondary index prefix output");
+      return false;
+    }
+  if (keyColumns.empty() || leadingKeyFields.empty() ||
+      leadingKeyFields.size() > keyColumns.size())
+    {
+      setError(error, "invalid local-lite secondary index prefix fields");
+      return false;
+    }
+
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  if (!computeLayout(table, &columns, &rowLen, error))
+    return false;
+
+  std::string row(rowLen, '\0');
+  initializeCanonicalRow(columns, &row[0], row.size());
+  for (size_t i = 0; i < leadingKeyFields.size(); i++)
+    {
+      size_t columnIndex = keyColumns[i];
+      if (columnIndex >= columns.size())
+        {
+          setError(error, "local-lite secondary index column out of range");
+          return false;
+        }
+      if (!writeValue(&row[0], columns[columnIndex], leadingKeyFields[i],
+                      error))
+        return false;
+    }
+
+  payloadPrefix->clear();
+  appendKeyUint64(payloadPrefix, static_cast<uint64_t>(keyColumns.size()));
+  for (size_t i = 0; i < leadingKeyFields.size(); i++)
+    {
+      size_t sourceIndex = keyColumns[i];
+      const LocalLiteStoredColumn &col = columns[sourceIndex];
+      const char *src = NULL;
+      size_t len = 0;
+      if (col.type == LL_TYPE_VARCHAR)
+        {
+          len = ExpAlignedFormat::getVarLength(
+              &row[0] + col.vcLenIndOffset);
+          src = row.data() + col.offset;
+        }
+      else
+        {
+          len = col.length;
+          src = row.data() + col.offset;
+        }
+      appendKeyUint64(payloadPrefix, static_cast<uint64_t>(sourceIndex));
+      appendKeyUint64(payloadPrefix, static_cast<uint64_t>(len));
+      if (len > 0)
+        payloadPrefix->append(src, len);
+    }
+  return true;
+}
+
+static bool orderedIndexColumnSupported(const LocalLiteStoredColumn &column)
+{
+  switch (column.type)
+    {
+    case LL_TYPE_INT8:
+    case LL_TYPE_INT16:
+    case LL_TYPE_INT32:
+    case LL_TYPE_INT64:
+    case LL_TYPE_FLOAT32:
+    case LL_TYPE_FLOAT64:
+    case LL_TYPE_CHAR:
+    case LL_TYPE_VARCHAR:
+    case LL_TYPE_DATETIME:
+      return true;
+    case LL_TYPE_NUMERIC:
+      return true;
+    default:
+      return false;
+    }
+}
+
+static void appendOrderedEscapedByte(std::string *out, unsigned char value)
+{
+  if (value == 0)
+    {
+      out->push_back('\0');
+      out->push_back(static_cast<char>(0xff));
+    }
+  else
+    out->push_back(static_cast<char>(value));
+}
+
+static bool appendOrderedDecimalDigits(const std::string &storedRow,
+                                       const LocalLiteStoredColumn &column,
+                                       std::string *component,
+                                       std::string *error)
+{
+  std::string digits;
+  bool negative = false;
+  if (column.decimalStorage)
+    {
+      if (!hasRange(storedRow, column.offset, column.length) ||
+          column.length != column.precision)
+        {
+          setError(error, "invalid local-lite ordered decimal value");
+          return false;
+        }
+      digits.assign(storedRow.data() + column.offset, column.length);
+      negative = (static_cast<unsigned char>(digits[0]) & 0x80) != 0;
+      digits[0] = static_cast<char>(
+          static_cast<unsigned char>(digits[0]) & 0x7f);
+    }
+  else
+    {
+      if (!hasRange(storedRow, column.offset, column.length) ||
+          column.precision <= 18)
+        {
+          setError(error, "invalid local-lite ordered BigNum value");
+          return false;
+        }
+      std::string ascii(column.precision + 1, '0');
+      if (BigNumHelper::ConvBigNumWithSignToAsciiHelper(
+              static_cast<Lng32>(column.length),
+              static_cast<Lng32>(ascii.size()),
+              const_cast<char *>(storedRow.data()) + column.offset,
+              &ascii[0], NULL) != 0)
+        {
+          setError(error, "invalid local-lite ordered BigNum value");
+          return false;
+        }
+      negative = ascii[0] == '-';
+      digits.assign(ascii.data() + 1, column.precision);
+    }
+
+  bool zero = true;
+  for (size_t i = 0; i < digits.size(); i++)
+    if (digits[i] != '0')
+      zero = false;
+  if (zero)
+    negative = false;
+  appendOrderedEscapedByte(component, negative ? 1 : 2);
+  for (size_t i = 0; i < digits.size(); i++)
+    {
+      unsigned char digit = static_cast<unsigned char>(digits[i]);
+      if (digit < '0' || digit > '9')
+        {
+          setError(error, "invalid local-lite ordered decimal digit");
+          return false;
+        }
+      if (negative)
+        digit = static_cast<unsigned char>('9' - (digit - '0'));
+      appendOrderedEscapedByte(component, digit);
+    }
+  return true;
+}
+
+static bool appendOrderedDatetime(const std::string &storedRow,
+                                  const LocalLiteStoredColumn &column,
+                                  std::string *component,
+                                  std::string *error)
+{
+  if (!hasRange(storedRow, column.offset, column.length) ||
+      (column.length != 4 && column.length != 8 && column.length != 11))
+    {
+      setError(error, "invalid local-lite ordered datetime value");
+      return false;
+    }
+  const char *source = storedRow.data() + column.offset;
+  size_t pos = 0;
+  if (column.length != 8)
+    {
+      UInt16 year = 0;
+      memcpy(&year, source, sizeof(year));
+      appendOrderedEscapedByte(component,
+          static_cast<unsigned char>((year >> 8) & 0xff));
+      appendOrderedEscapedByte(component,
+          static_cast<unsigned char>(year & 0xff));
+      appendOrderedEscapedByte(component,
+          static_cast<unsigned char>(source[2]));
+      appendOrderedEscapedByte(component,
+          static_cast<unsigned char>(source[3]));
+      pos = 4;
+    }
+  if (column.length != 4)
+    {
+      appendOrderedEscapedByte(component,
+          static_cast<unsigned char>(source[pos]));
+      appendOrderedEscapedByte(component,
+          static_cast<unsigned char>(source[pos + 1]));
+      appendOrderedEscapedByte(component,
+          static_cast<unsigned char>(source[pos + 2]));
+      UInt32 fraction = 0;
+      memcpy(&fraction, source + pos + 3, sizeof(fraction));
+      for (int shift = 24; shift >= 0; shift -= 8)
+        appendOrderedEscapedByte(component,
+            static_cast<unsigned char>((fraction >> shift) & 0xff));
+    }
+  return true;
+}
+
+static bool appendOrderedIndexComponent(
+    const std::string &storedRow,
+    const LocalLiteStoredColumn &column,
+    bool descending,
+    std::string *out,
+    bool *hasKey,
+    bool *containsNull,
+    std::string *error)
+{
+  if (storedColumnIsNull(storedRow, column))
+    {
+      std::string component(1, '\0');
+      if (descending)
+        component[0] = static_cast<char>(0xff);
+      *out += component;
+      *hasKey = true;
+      if (containsNull)
+        *containsNull = true;
+      return true;
+    }
+  if (!orderedIndexColumnSupported(column))
+    {
+      setError(error, "unsupported ordered local-lite index column type");
+      return false;
+    }
+
+  std::string component;
+  component.push_back('\1');
+  if (column.type == LL_TYPE_VARCHAR || column.type == LL_TYPE_CHAR)
+    {
+      size_t len = column.type == LL_TYPE_VARCHAR
+          ? ExpAlignedFormat::getVarLength(
+                const_cast<char *>(storedRow.data()) + column.vcLenIndOffset)
+          : column.length;
+      if (!hasRange(storedRow, column.offset, len))
+        {
+          setError(error, "truncated local-lite ordered index value");
+          return false;
+        }
+      for (size_t i = 0; i < len; i++)
+        appendOrderedEscapedByte(
+            &component,
+            static_cast<unsigned char>(storedRow[column.offset + i]));
+    }
+  else if (column.type == LL_TYPE_FLOAT32 ||
+           column.type == LL_TYPE_FLOAT64)
+    {
+      if (!hasRange(storedRow, column.offset, column.length) ||
+          (column.length != 4 && column.length != 8))
+        {
+          setError(error, "invalid local-lite ordered floating index value");
+          return false;
+        }
+      uint64_t bits = 0;
+      memcpy(&bits, storedRow.data() + column.offset, column.length);
+      uint64_t signBit = static_cast<uint64_t>(1)
+          << (static_cast<unsigned int>(column.length * 8) - 1);
+      uint64_t valueMask = column.length == 8
+          ? ~static_cast<uint64_t>(0)
+          : (static_cast<uint64_t>(1) << 32) - 1;
+      if ((bits & ~signBit) == 0)
+        bits = 0;
+      bits = (bits & signBit) ? (~bits & valueMask) : (bits ^ signBit);
+      for (size_t i = column.length; i > 0; i--)
+        appendOrderedEscapedByte(
+            &component,
+            static_cast<unsigned char>((bits >> ((i - 1) * 8)) & 0xff));
+    }
+  else if (column.type == LL_TYPE_DATETIME)
+    {
+      if (!appendOrderedDatetime(storedRow, column, &component, error))
+        return false;
+    }
+  else if (column.type == LL_TYPE_NUMERIC &&
+           (column.decimalStorage || column.precision > 18))
+    {
+      if (!appendOrderedDecimalDigits(storedRow, column, &component, error))
+        return false;
+    }
+  else
+    {
+      if (!hasRange(storedRow, column.offset, column.length) ||
+          column.length == 0 || column.length > 8)
+        {
+          setError(error, "invalid local-lite ordered numeric index value");
+          return false;
+        }
+      uint64_t bits = 0;
+      memcpy(&bits, storedRow.data() + column.offset, column.length);
+      unsigned int width = static_cast<unsigned int>(column.length * 8);
+      if (!column.unsignedNumeric)
+        bits ^= static_cast<uint64_t>(1) << (width - 1);
+      for (size_t i = column.length; i > 0; i--)
+        appendOrderedEscapedByte(
+            &component,
+            static_cast<unsigned char>((bits >> ((i - 1) * 8)) & 0xff));
+    }
+  component.push_back('\0');
+  component.push_back('\0');
+  if (descending)
+    for (size_t i = 0; i < component.size(); i++)
+      component[i] = static_cast<char>(
+          ~static_cast<unsigned char>(component[i]));
+  *out += component;
+  *hasKey = true;
+  return true;
+}
+
+bool LocalLiteSecondaryIndexSupportsOrderedKeys(
+    const LocalLiteTableDef &table,
+    const std::vector<size_t> &keyColumns)
+{
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  std::string error;
+  if (keyColumns.empty() ||
+      !computeLayout(table, &columns, &rowLen, &error))
+    return false;
+  for (size_t i = 0; i < keyColumns.size(); i++)
+    if (keyColumns[i] >= columns.size() ||
+        !orderedIndexColumnSupported(columns[keyColumns[i]]))
+      return false;
+  return true;
+}
+
+bool LocalLiteBuildOrderedSecondaryKeyPayload(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::string &encodedRow,
+    std::string *payload,
+    bool *hasKey,
+    bool *containsNull,
+    std::string *error)
+{
+  if (!payload || !hasKey || !containsNull ||
+      encodedRow.size() < sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1 ||
+      memcmp(encodedRow.data(), LOCAL_LITE_BINARY_ROW_MAGIC,
+             sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1) != 0)
+    {
+      setError(error, "invalid local-lite ordered index input");
+      return false;
+    }
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  if (!computeLayout(table, &columns, &rowLen, error))
+    return false;
+  std::string storedRow =
+      encodedRow.substr(sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1);
+  payload->clear();
+  *hasKey = true;
+  *containsNull = false;
+  for (size_t i = 0; i < index.keyColumns.size(); i++)
+    {
+      size_t column = index.keyColumns[i];
+      bool componentHasKey = true;
+      if (column >= columns.size() ||
+          !appendOrderedIndexComponent(
+              storedRow, columns[column],
+              i < index.descending.size() && index.descending[i],
+              payload, &componentHasKey, containsNull, error))
+        return false;
+      if (!componentHasKey)
+        {
+          payload->clear();
+          *hasKey = false;
+          return true;
+        }
+    }
+  return true;
+}
+
+bool LocalLiteBuildOrderedSecondaryKeyPrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::vector<std::string> &leadingKeyFields,
+    std::string *payloadPrefix,
+    std::string *error)
+{
+  if (!payloadPrefix || leadingKeyFields.empty() ||
+      leadingKeyFields.size() > index.keyColumns.size())
+    {
+      setError(error, "invalid local-lite ordered index prefix fields");
+      return false;
+    }
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  if (!computeLayout(table, &columns, &rowLen, error))
+    return false;
+  std::string row(rowLen, '\0');
+  initializeCanonicalRow(columns, &row[0], row.size());
+  for (size_t i = 0; i < leadingKeyFields.size(); i++)
+    {
+      size_t column = index.keyColumns[i];
+      if (column >= columns.size() ||
+          !writeValue(&row[0], columns[column], leadingKeyFields[i], error))
+        return false;
+    }
+
+  payloadPrefix->clear();
+  for (size_t i = 0; i < leadingKeyFields.size(); i++)
+    {
+      bool hasKey = true;
+      size_t column = index.keyColumns[i];
+      if (!appendOrderedIndexComponent(
+              row, columns[column],
+              i < index.descending.size() && index.descending[i],
+              payloadPrefix, &hasKey, NULL, error) || !hasKey)
+        return false;
+    }
+  return true;
+}
+
+bool LocalLiteBuildOrderedSecondaryNullPrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::vector<std::string> &leadingKeyFields,
+    std::string *payloadPrefix,
+    std::string *error)
+{
+  if (!payloadPrefix ||
+      leadingKeyFields.size() >= index.keyColumns.size())
+    {
+      setError(error, "invalid local-lite ordered NULL index prefix");
+      return false;
+    }
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  if (!computeLayout(table, &columns, &rowLen, error))
+    return false;
+  std::string row(rowLen, '\0');
+  initializeCanonicalRow(columns, &row[0], row.size());
+  for (size_t i = 0; i < leadingKeyFields.size(); i++)
+    {
+      size_t column = index.keyColumns[i];
+      if (column >= columns.size() ||
+          !writeValue(&row[0], columns[column], leadingKeyFields[i], error))
+        return false;
+    }
+  size_t nullColumn = index.keyColumns[leadingKeyFields.size()];
+  if (nullColumn >= columns.size() || !columns[nullColumn].nullable ||
+      !writeValue(&row[0], columns[nullColumn], std::string(), error))
+    return false;
+
+  payloadPrefix->clear();
+  for (size_t i = 0; i <= leadingKeyFields.size(); i++)
+    {
+      bool hasKey = true;
+      size_t column = index.keyColumns[i];
+      if (!appendOrderedIndexComponent(
+              row, columns[column],
+              i < index.descending.size() && index.descending[i],
+              payloadPrefix, &hasKey, NULL, error) || !hasKey)
+        return false;
+    }
+  return true;
+}
+
+bool LocalLiteBuildOrderedSecondaryNullablePrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::vector<std::string> &leadingKeyFields,
+    const std::vector<bool> &nullFields,
+    std::string *payloadPrefix,
+    std::string *error)
+{
+  if (!payloadPrefix || leadingKeyFields.empty() ||
+      leadingKeyFields.size() != nullFields.size() ||
+      leadingKeyFields.size() > index.keyColumns.size())
+    {
+      setError(error, "invalid local-lite ordered nullable index prefix");
+      return false;
+    }
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  if (!computeLayout(table, &columns, &rowLen, error))
+    return false;
+  std::string row(rowLen, '\0');
+  initializeCanonicalRow(columns, &row[0], row.size());
+  for (size_t i = 0; i < leadingKeyFields.size(); i++)
+    {
+      size_t column = index.keyColumns[i];
+      if (column >= columns.size() ||
+          (nullFields[i] && !columns[column].nullable) ||
+          !writeValue(&row[0], columns[column],
+                      nullFields[i] ? std::string() : leadingKeyFields[i],
+                      error))
+        return false;
+    }
+
+  payloadPrefix->clear();
+  for (size_t i = 0; i < leadingKeyFields.size(); i++)
+    {
+      bool hasKey = true;
+      size_t column = index.keyColumns[i];
+      if (!appendOrderedIndexComponent(
+              row, columns[column],
+              i < index.descending.size() && index.descending[i],
+              payloadPrefix, &hasKey, NULL, error) || !hasKey)
+        return false;
+    }
+  return true;
 }
 
 static bool copyStoredToDest(const std::string &storedRow,

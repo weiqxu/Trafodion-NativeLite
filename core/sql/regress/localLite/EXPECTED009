@@ -41,7 +41,7 @@
 >>UPSERT USING LOAD INTO LLREG009_BASE VALUES (3, 'bulk-upserted');
 *** ERROR[local-lite] UPSERT USING LOAD is not supported for local-lite RocksDB tables; use UPSERT
 >>CREATE INDEX LLREG009_IX ON LLREG009_BASE(id);
-*** ERROR[local-lite] CREATE INDEX is not supported in local-lite
+--- SQL operation complete.
 >>CREATE VIEW LLREG009_VIEW AS SELECT * FROM LLREG009_BASE;
 *** ERROR[local-lite] CREATE VIEW is not supported in local-lite
 >>CREATE SEQUENCE LLREG009_SEQ;

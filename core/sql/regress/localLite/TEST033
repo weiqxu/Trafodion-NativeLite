@@ -1,0 +1,59 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+CREATE TABLE LLREG033_UNIQUE_NULL
+  (id INT NOT NULL PRIMARY KEY, code VARCHAR(8), label VARCHAR(20));
+INSERT INTO LLREG033_UNIQUE_NULL VALUES
+  (1, NULL, 'null-one'),
+  (2, NULL, 'null-two'),
+  (3, 'X', 'non-null');
+
+-- A unique index stores NULL rows but does not treat them as duplicates.
+CREATE UNIQUE INDEX LLREG033_UN_IX ON LLREG033_UNIQUE_NULL(code);
+SELECT id, label FROM LLREG033_UNIQUE_NULL WHERE code IS NULL ORDER BY id;
+INSERT INTO LLREG033_UNIQUE_NULL VALUES (4, NULL, 'null-three');
+UPDATE LLREG033_UNIQUE_NULL SET code = NULL WHERE id = 3;
+SELECT id, label FROM LLREG033_UNIQUE_NULL WHERE code IS NULL ORDER BY id;
+UPDATE LLREG033_UNIQUE_NULL SET code = 'X' WHERE id = 1;
+SELECT id, code FROM LLREG033_UNIQUE_NULL ORDER BY id;
+DROP TABLE LLREG033_UNIQUE_NULL;
+
+CREATE TABLE LLREG033_COMPOSITE_NULL
+  (id INT NOT NULL PRIMARY KEY, grp VARCHAR(4), score INT, label VARCHAR(20));
+INSERT INTO LLREG033_COMPOSITE_NULL VALUES
+  (1, 'A', NULL, 'a-null'),
+  (2, 'A', 10, 'a-ten'),
+  (3, 'B', NULL, 'b-null'),
+  (4, NULL, NULL, 'all-null');
+CREATE INDEX LLREG033_GS_IX ON LLREG033_COMPOSITE_NULL(grp, score DESC);
+
+SELECT id, label FROM LLREG033_COMPOSITE_NULL
+ WHERE grp = 'A' AND score IS NULL ORDER BY id;
+SELECT id, label FROM LLREG033_COMPOSITE_NULL
+ WHERE grp IS NULL ORDER BY id;
+
+BEGIN WORK;
+UPDATE LLREG033_COMPOSITE_NULL SET score = NULL WHERE id = 2;
+SELECT id, label FROM LLREG033_COMPOSITE_NULL
+ WHERE grp = 'A' AND score IS NULL ORDER BY id;
+ROLLBACK WORK;
+SELECT id, label FROM LLREG033_COMPOSITE_NULL
+ WHERE grp = 'A' AND score IS NULL ORDER BY id;
+
+DROP INDEX LLREG033_GS_IX;
+DROP TABLE LLREG033_COMPOSITE_NULL;
+exit;

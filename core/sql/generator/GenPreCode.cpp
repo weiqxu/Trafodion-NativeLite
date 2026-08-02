@@ -231,6 +231,17 @@ static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
       return TRUE;
     }
 
+  if (type->getTypeQualifier() == NA_DATETIME_TYPE)
+    {
+      if (negate)
+        return FALSE;
+      const NAString *raw = cv->getRawText();
+      if (!raw)
+        return FALSE;
+      *text = localLiteNAStringToStd(*raw);
+      return TRUE;
+    }
+
   if (type->getTypeQualifier() == NA_NUMERIC_TYPE &&
       cv->canGetExactNumericValue())
     {
@@ -244,6 +255,31 @@ static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
 
   if (type->getTypeQualifier() == NA_NUMERIC_TYPE)
     {
+      short fsDatatype = type->getFSDatatype();
+      const char *rawValue = static_cast<const char *>(cv->getConstValue()) +
+          type->getSQLnullHdrSize();
+      char floatText[64];
+      if (fsDatatype == REC_FLOAT32)
+        {
+          float value = 0;
+          memcpy(&value, rawValue, sizeof(value));
+          if (negate)
+            value = -value;
+          snprintf(floatText, sizeof(floatText), "%.9g",
+                   static_cast<double>(value));
+          *text = floatText;
+          return TRUE;
+        }
+      if (fsDatatype == REC_FLOAT64)
+        {
+          double value = 0;
+          memcpy(&value, rawValue, sizeof(value));
+          if (negate)
+            value = -value;
+          snprintf(floatText, sizeof(floatText), "%.17g", value);
+          *text = floatText;
+          return TRUE;
+        }
       const NAString *raw = cv->getRawText();
       if (!raw)
         return FALSE;
@@ -441,6 +477,69 @@ static NABoolean localLiteMatchVEGColumnConstEquality(ItemExpr *predicate,
   return FALSE;
 }
 
+static NABoolean localLiteMatchColumnConstRange(ItemExpr *predicate,
+                                                size_t *columnPosition)
+{
+  if (!predicate)
+    return FALSE;
+  OperatorTypeEnum op = predicate->getOperatorType();
+  if (op != ITM_LESS && op != ITM_LESS_EQ &&
+      op != ITM_GREATER && op != ITM_GREATER_EQ)
+    return FALSE;
+
+  std::string ignored;
+  ValueId left = predicate->child(0)->getValueId();
+  ValueId right = predicate->child(1)->getValueId();
+  if (localLiteColumnPosition(left, columnPosition) &&
+      localLiteConstValueToText(right, &ignored))
+    return TRUE;
+  if (localLiteColumnPosition(right, columnPosition) &&
+      localLiteConstValueToText(left, &ignored))
+    return TRUE;
+  return FALSE;
+}
+
+static OperatorTypeEnum localLiteReverseComparison(OperatorTypeEnum op)
+{
+  switch (op)
+    {
+    case ITM_LESS: return ITM_GREATER;
+    case ITM_LESS_EQ: return ITM_GREATER_EQ;
+    case ITM_GREATER: return ITM_LESS;
+    case ITM_GREATER_EQ: return ITM_LESS_EQ;
+    default: return op;
+    }
+}
+
+static NABoolean localLiteMatchColumnConstRangeValue(
+    ItemExpr *predicate,
+    size_t *columnPosition,
+    std::string *field,
+    OperatorTypeEnum *normalizedOperator)
+{
+  if (!predicate)
+    return FALSE;
+  OperatorTypeEnum op = predicate->getOperatorType();
+  if (op != ITM_LESS && op != ITM_LESS_EQ &&
+      op != ITM_GREATER && op != ITM_GREATER_EQ)
+    return FALSE;
+  ValueId left = predicate->child(0)->getValueId();
+  ValueId right = predicate->child(1)->getValueId();
+  if (localLiteColumnPosition(left, columnPosition) &&
+      localLiteConstValueToText(right, field))
+    {
+      *normalizedOperator = op;
+      return TRUE;
+    }
+  if (localLiteColumnPosition(right, columnPosition) &&
+      localLiteConstValueToText(left, field))
+    {
+      *normalizedOperator = localLiteReverseComparison(op);
+      return TRUE;
+    }
+  return FALSE;
+}
+
 static NABoolean localLiteBuildPrimaryKeyForSearchKey(
     const LocalLiteTableDef &table,
     HbaseSearchKey *searchKey,
@@ -520,6 +619,75 @@ static NABoolean localLiteBuildKeyFieldsFromPredicates(
   if (coveredPredicates)
     *coveredPredicates += matchedPredicates;
   return TRUE;
+}
+
+static size_t localLiteBuildLeadingKeyFieldsFromPredicates(
+    const std::vector<size_t> &keyColumns,
+    const ValueIdSet &predicates,
+    std::vector<std::string> *keyFields)
+{
+  keyFields->clear();
+  for (size_t keyNumber = 0; keyNumber < keyColumns.size(); keyNumber++)
+    {
+      bool found = false;
+      for (ValueId predId = predicates.init();
+           predicates.next(predId);
+           predicates.advance(predId))
+        {
+          size_t columnPosition = 0;
+          std::string field;
+          ItemExpr *pred = predId.getItemExpr();
+          if ((localLiteMatchColumnConstEquality(
+                   pred, &columnPosition, &field) ||
+               localLiteMatchVEGColumnConstEquality(
+                   pred, &columnPosition, &field)) &&
+              columnPosition == keyColumns[keyNumber])
+            {
+              keyFields->push_back(field);
+              found = true;
+              break;
+            }
+        }
+      if (!found)
+        break;
+    }
+  return keyFields->size();
+}
+
+static NABoolean localLiteHasRangePredicateForColumn(
+    size_t column,
+    const ValueIdSet &predicates)
+{
+  for (ValueId predId = predicates.init();
+       predicates.next(predId);
+       predicates.advance(predId))
+    {
+      size_t columnPosition = 0;
+      if (localLiteMatchColumnConstRange(predId.getItemExpr(),
+                                         &columnPosition) &&
+          columnPosition == column)
+        return TRUE;
+    }
+  return FALSE;
+}
+
+static NABoolean localLiteHasIsNullPredicateForColumn(
+    size_t column,
+    const ValueIdSet &predicates)
+{
+  for (ValueId predId = predicates.init();
+       predicates.next(predId);
+       predicates.advance(predId))
+    {
+      ItemExpr *predicate = predId.getItemExpr();
+      size_t columnPosition = 0;
+      if (predicate && predicate->getOperatorType() == ITM_IS_NULL &&
+          localLiteColumnPosition(predicate->child(0)->getValueId(),
+                                  &columnPosition) &&
+          columnPosition == column)
+        return TRUE;
+    }
+  return FALSE;
 }
 
 static NABoolean localLiteBuildPrimaryKeyFromPredicates(
@@ -654,6 +822,251 @@ static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
     }
 
   return FALSE;
+}
+
+static void localLiteAppendIndexUint64(std::string *out, uint64_t value)
+{
+  for (int shift = 56; shift >= 0; shift -= 8)
+    out->push_back(static_cast<char>((value >> shift) & 0xff));
+}
+
+static std::string localLiteEncodeIndexPrefix(const std::string &prefix,
+                                               NABoolean exact)
+{
+  static const char hex[] = "0123456789abcdef";
+  std::string encoded(exact ? "LLIX1:" : "LLIR1:");
+  encoded.reserve(encoded.size() + prefix.size() * 2);
+  for (size_t i = 0; i < prefix.size(); i++)
+    {
+      unsigned char c = static_cast<unsigned char>(prefix[i]);
+      encoded += hex[c >> 4];
+      encoded += hex[c & 0x0f];
+    }
+  return encoded;
+}
+
+static NABoolean localLitePrefixSuccessor(const std::string &prefix,
+                                          std::string *successor)
+{
+  *successor = prefix;
+  size_t pos = successor->size();
+  while (pos > 0 &&
+         static_cast<unsigned char>((*successor)[pos - 1]) == 0xff)
+    pos--;
+  if (pos == 0)
+    return FALSE;
+  successor->resize(pos);
+  (*successor)[pos - 1] = static_cast<char>(
+      static_cast<unsigned char>((*successor)[pos - 1]) + 1);
+  return TRUE;
+}
+
+static std::string localLiteHex(const std::string &value)
+{
+  static const char hex[] = "0123456789abcdef";
+  std::string encoded;
+  encoded.reserve(value.size() * 2);
+  for (size_t i = 0; i < value.size(); i++)
+    {
+      unsigned char c = static_cast<unsigned char>(value[i]);
+      encoded += hex[c >> 4];
+      encoded += hex[c & 0x0f];
+    }
+  return encoded;
+}
+
+static std::string localLiteEncodeIndexBounds(const std::string &startKey,
+                                               const std::string &endKey)
+{
+  return "LLIB1:" + localLiteHex(startKey) + ":" + localLiteHex(endKey);
+}
+
+static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
+    TableDesc *tdesc,
+    const ValueIdSet &predicates,
+    ListOfUniqueRows &listOfUniqueRows)
+{
+  LocalLiteTableDef table;
+  if (!localLiteLoadTable(tdesc, &table) || table.secondaryIndexes.empty())
+    return FALSE;
+
+  const LocalLiteIndexDef *bestIndex = NULL;
+  std::vector<std::string> bestKeyFields;
+  std::vector<bool> bestNullFields;
+  size_t bestLeadingKeys = 0;
+  Int32 bestScore = -1;
+  for (size_t indexNumber = 0;
+       indexNumber < table.secondaryIndexes.size(); indexNumber++)
+    {
+      const LocalLiteIndexDef &index = table.secondaryIndexes[indexNumber];
+      std::vector<std::string> keyFields;
+      std::vector<bool> nullFields;
+      for (size_t keyNumber = 0; keyNumber < index.keyColumns.size();
+           keyNumber++)
+        {
+          std::vector<std::string> equalityFields;
+          size_t equalityCount = localLiteBuildLeadingKeyFieldsFromPredicates(
+              std::vector<size_t>(1, index.keyColumns[keyNumber]),
+              predicates, &equalityFields);
+          if (equalityCount == 1)
+            {
+              keyFields.push_back(equalityFields[0]);
+              nullFields.push_back(false);
+            }
+          else if (index.keyEncodingVersion >= 3 &&
+                   localLiteHasIsNullPredicateForColumn(
+                       index.keyColumns[keyNumber], predicates))
+            {
+              keyFields.push_back(std::string());
+              nullFields.push_back(true);
+            }
+          else
+            break;
+        }
+      size_t leadingKeys = keyFields.size();
+      NABoolean hasRange =
+          leadingKeys < index.keyColumns.size() &&
+          localLiteHasRangePredicateForColumn(index.keyColumns[leadingKeys],
+                                              predicates);
+      if (leadingKeys == 0 && !hasRange)
+        continue;
+
+      NABoolean exact = leadingKeys == index.keyColumns.size();
+      Int32 score = static_cast<Int32>(leadingKeys * 100);
+      if (hasRange)
+        score += 20;
+      if (exact)
+        score += 1000;
+      if (exact && index.unique)
+        score += 10000;
+      if (!bestIndex || score > bestScore)
+        {
+          bestIndex = &index;
+          bestKeyFields = keyFields;
+          bestNullFields = nullFields;
+          bestLeadingKeys = leadingKeys;
+          bestScore = score;
+        }
+    }
+
+  if (!bestIndex)
+    return FALSE;
+
+  const LocalLiteIndexDef &index = *bestIndex;
+  const std::vector<std::string> &keyFields = bestKeyFields;
+  const std::vector<bool> &nullFields = bestNullFields;
+  size_t leadingKeys = bestLeadingKeys;
+  NABoolean exact = leadingKeys == index.keyColumns.size();
+
+      std::string physicalPrefix;
+      physicalPrefix.push_back('I');
+      localLiteAppendIndexUint64(&physicalPrefix, index.objectUid);
+      if (leadingKeys > 0 && index.keyEncodingVersion >= 2)
+        {
+          std::string payloadPrefix;
+          std::string error;
+          if (!LocalLiteBuildOrderedSecondaryNullablePrefixFromTextFields(
+                  table, index, keyFields, nullFields,
+                  &payloadPrefix, &error))
+            return FALSE;
+          physicalPrefix += payloadPrefix;
+        }
+      else if (leadingKeys > 0)
+        {
+          std::string payloadPrefix;
+          std::string error;
+          bool builtPrefix = index.keyEncodingVersion >= 2
+              ? LocalLiteBuildOrderedSecondaryKeyPrefixFromTextFields(
+                    table, index, keyFields, &payloadPrefix, &error)
+              : LocalLiteBuildSecondaryIndexPrefixFromTextFields(
+                    table, index.keyColumns, keyFields,
+                    &payloadPrefix, &error);
+          if (!builtPrefix)
+            return FALSE;
+          physicalPrefix += payloadPrefix;
+        }
+      std::string encoded;
+      if (index.keyEncodingVersion >= 2 && !exact)
+        {
+          std::string startKey = physicalPrefix;
+          std::string endKey;
+          if (!localLitePrefixSuccessor(physicalPrefix, &endKey))
+            return FALSE;
+
+          if (leadingKeys < index.keyColumns.size())
+            for (ValueId predId = predicates.init();
+                 predicates.next(predId);
+                 predicates.advance(predId))
+              {
+                size_t columnPosition = 0;
+                std::string field;
+                OperatorTypeEnum op = ITM_EQUAL;
+                if (!localLiteMatchColumnConstRangeValue(
+                        predId.getItemExpr(), &columnPosition,
+                        &field, &op) ||
+                    columnPosition != index.keyColumns[leadingKeys])
+                  continue;
+
+                std::vector<std::string> boundFields(keyFields);
+                boundFields.push_back(field);
+                std::vector<bool> boundNullFields(nullFields);
+                boundNullFields.push_back(false);
+                std::string boundPayload;
+                std::string error;
+                if (!LocalLiteBuildOrderedSecondaryNullablePrefixFromTextFields(
+                        table, index, boundFields, boundNullFields,
+                        &boundPayload, &error))
+                  continue;
+                std::string boundKey;
+                boundKey.push_back('I');
+                localLiteAppendIndexUint64(&boundKey, index.objectUid);
+                boundKey += boundPayload;
+                std::string afterBound;
+                if (!localLitePrefixSuccessor(boundKey, &afterBound))
+                  continue;
+
+                bool descending =
+                    leadingKeys < index.descending.size() &&
+                    index.descending[leadingKeys];
+                if ((!descending && op == ITM_GREATER_EQ) ||
+                    (descending && op == ITM_LESS_EQ))
+                  {
+                    if (boundKey > startKey)
+                      startKey = boundKey;
+                  }
+                else if ((!descending && op == ITM_GREATER) ||
+                         (descending && op == ITM_LESS))
+                  {
+                    if (afterBound > startKey)
+                      startKey = afterBound;
+                  }
+                else if ((!descending && op == ITM_LESS) ||
+                         (descending && op == ITM_GREATER))
+                  {
+                    if (boundKey < endKey)
+                      endKey = boundKey;
+                  }
+                else if ((!descending && op == ITM_LESS_EQ) ||
+                         (descending && op == ITM_GREATER_EQ))
+                  {
+                    if (afterBound < endKey)
+                      endKey = afterBound;
+                  }
+              }
+          if (endKey <= startKey)
+            return FALSE;
+          encoded = localLiteEncodeIndexBounds(startKey, endKey);
+        }
+      else
+        encoded = localLiteEncodeIndexPrefix(physicalPrefix, exact);
+
+      HbaseUniqueRows localGetSpec;
+      localGetSpec.rowTS_ = -1;
+      localGetSpec.rowIds_.insert(NAString(
+          encoded.data(), static_cast<Int32>(encoded.size())));
+      listOfUniqueRows.clear();
+      listOfUniqueRows.insert(localGetSpec);
+      return TRUE;
 }
 #endif
 
@@ -795,6 +1208,9 @@ static NABoolean processConstHBaseKeys(Generator * generator,
                       hba->selectionPred().subtractSet(coveredPredicates);
                     }
                 }
+              else
+                localLiteRewriteSecondaryIndexGetRowsFromPredicates(
+                    tdesc, localLitePreds, listOfUpdUniqueRows);
             }
         }
 #endif
@@ -12886,6 +13302,9 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
       executorPred().subtractSet(coveredPredicates);
       selectionPred().subtractSet(coveredPredicates);
     }
+  else
+    localLiteRewriteSecondaryIndexGetRowsFromPredicates(
+        getTableDesc(), localLitePreds, listOfUniqueRows_);
 #endif
 
   //compute isUnique:

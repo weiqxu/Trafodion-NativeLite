@@ -1,0 +1,126 @@
+>>CREATE TABLE LLREG031_BASE
++>  (id INT NOT NULL PRIMARY KEY,
++>   code VARCHAR(8),
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LLREG031_BASE VALUES
++>  (1, 'A', 'one'),
++>  (2, 'B', 'two'),
++>  (3, NULL, 'null-one'),
++>  (4, NULL, 'null-two');
+--- 4 row(s) inserted.
+>>CREATE UNIQUE INDEX LLREG031_UX ON LLREG031_BASE(code);
+--- SQL operation complete.
+>>SELECT id, label FROM LLREG031_BASE WHERE code = 'A' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          1  one
+--- 1 row(s) selected.
+>>INSERT INTO LLREG031_BASE VALUES (5, 'A', 'duplicate-insert');
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite unique index key <MXID>
+--- 0 row(s) inserted.
+>>INSERT INTO LLREG031_BASE VALUES
++>  (5, 'C', 'must-roll-back'),
++>  (6, 'B', 'late-duplicate');
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite unique index key <MXID>
+--- 0 row(s) inserted.
+>>UPDATE LLREG031_BASE SET code = 'A' WHERE id = 2;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate local-lite unique index key <MXID>
+--- 0 row(s) updated.
+>>DELETE FROM LLREG031_BASE WHERE id = 1;
+--- 1 row(s) deleted.
+>>INSERT INTO LLREG031_BASE VALUES (5, 'A', 'reused-after-delete');
+--- 1 row(s) inserted.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>UPDATE LLREG031_BASE SET code = 'Z' WHERE id = 5;
+--- 1 row(s) updated.
+>>INSERT INTO LLREG031_BASE VALUES (6, 'A', 'txn-reuse');
+--- 1 row(s) inserted.
+>>SELECT id, code FROM LLREG031_BASE WHERE id IN (5, 6) ORDER BY id;
+ID           CODE
+-----------  --------
+          5  Z
+          6  A
+--- 2 row(s) selected.
+>>SELECT id, label FROM LLREG031_BASE WHERE code = 'A' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          6  txn-reuse
+--- 1 row(s) selected.
+>>ROLLBACK WORK;
+--- SQL operation complete.
+>>SELECT id, label FROM LLREG031_BASE WHERE code = 'A' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          5  reused-after-delete
+--- 1 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>UPSERT INTO LLREG031_BASE VALUES (5, 'Z', 'upserted');
+--- 1 row(s) inserted.
+>>INSERT INTO LLREG031_BASE VALUES (6, 'A', 'reused-after-upsert');
+--- 1 row(s) inserted.
+>>MERGE INTO LLREG031_BASE
++>USING (SELECT id, code, label FROM LLREG031_BASE WHERE id = 2) AS source_rows
++>ON LLREG031_BASE.id = 5
++>WHEN MATCHED THEN UPDATE SET code = 'Y', label = 'merged';
+--- 1 row(s) updated.
+>>COMMIT WORK;
+--- SQL operation complete.
+>>SELECT id, code, label FROM LLREG031_BASE ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          2  B         two
+          3  ?         null-one
+          4  ?         null-two
+          5  Y         merged
+          6  A         reused-after-upsert
+--- 5 row(s) selected.
+>>DROP TABLE LLREG031_BASE;
+--- SQL operation complete.
+>>CREATE TABLE LLREG031_DUP (id INT NOT NULL PRIMARY KEY, code VARCHAR(8));
+--- SQL operation complete.
+>>INSERT INTO LLREG031_DUP VALUES (1, 'D'), (2, 'D');
+--- 2 row(s) inserted.
+>>CREATE UNIQUE INDEX LLREG031_DUP_UX ON LLREG031_DUP(code);
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. duplicate local-lite unique index key <MXID>
+--- SQL operation failed with errors.
+>>DELETE FROM LLREG031_DUP WHERE id = 2;
+--- 1 row(s) deleted.
+>>CREATE UNIQUE INDEX LLREG031_DUP_UX ON LLREG031_DUP(code);
+--- SQL operation complete.
+>>DROP INDEX LLREG031_DUP_UX;
+--- SQL operation complete.
+>>DROP TABLE LLREG031_DUP;
+--- SQL operation complete.
+>>CREATE TABLE LLREG031_MULTI
++>  (id INT NOT NULL PRIMARY KEY, code VARCHAR(8), label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LLREG031_MULTI VALUES
++>  (1, 'G', 'first'), (2, 'G', 'second'), (3, 'H', 'third');
+--- 3 row(s) inserted.
+>>CREATE INDEX LLREG031_MULTI_IX ON LLREG031_MULTI(code);
+--- SQL operation complete.
+>>SELECT id, label FROM LLREG031_MULTI WHERE code = 'G' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          1  first
+          2  second
+--- 2 row(s) selected.
+>>UPDATE LLREG031_MULTI SET code = 'H' WHERE id = 2;
+--- 1 row(s) updated.
+>>SELECT id, label FROM LLREG031_MULTI WHERE code = 'G' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          1  first
+--- 1 row(s) selected.
+>>DROP INDEX LLREG031_MULTI_IX;
+--- SQL operation complete.
+>>DROP TABLE LLREG031_MULTI;
+--- SQL operation complete.
+>>exit;

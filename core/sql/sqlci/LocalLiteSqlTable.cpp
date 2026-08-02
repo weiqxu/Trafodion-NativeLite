@@ -65,11 +65,6 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
   if (sql.empty())
     return false;
 
-  if (startsWithWord(sql, "CREATE INDEX"))
-    {
-      *retcode = reportError(sqlciEnv, "CREATE INDEX is not supported in local-lite");
-      return true;
-    }
   if (startsWithWord(sql, "CREATE VIEW"))
     {
       *retcode = reportError(sqlciEnv, "CREATE VIEW is not supported in local-lite");

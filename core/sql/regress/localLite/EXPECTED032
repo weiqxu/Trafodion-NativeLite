@@ -1,0 +1,88 @@
+>>CREATE TABLE LLREG032_RANGE
++>  (id INT NOT NULL PRIMARY KEY,
++>   grp VARCHAR(4),
++>   score INT,
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LLREG032_RANGE VALUES
++>  (1, 'A', 10, 'a-ten'),
++>  (2, 'A', 20, 'a-twenty'),
++>  (3, 'A', 30, 'a-thirty'),
++>  (4, 'B', 15, 'b-fifteen'),
++>  (5, 'B', 25, 'b-twenty-five'),
++>  (6, NULL, 99, 'null-group'),
++>  (7, 'C', -10, 'negative'),
++>  (8, 'C', 0, 'zero');
+--- 8 row(s) inserted.
+>>CREATE INDEX LLREG032_GS_IX ON LLREG032_RANGE(grp, score DESC);
+--- SQL operation complete.
+>>SELECT id, score FROM LLREG032_RANGE WHERE grp = 'A' ORDER BY id;
+ID           SCORE
+-----------  -----------
+          1           10
+          2           20
+          3           30
+--- 3 row(s) selected.
+>>SELECT id, score FROM LLREG032_RANGE
++> WHERE grp = 'A' AND score >= 20 ORDER BY id;
+ID           SCORE
+-----------  -----------
+          2           20
+          3           30
+--- 2 row(s) selected.
+>>SELECT id, score FROM LLREG032_RANGE
++> WHERE grp = 'B' AND score BETWEEN 10 AND 20 ORDER BY id;
+ID           SCORE
+-----------  -----------
+          4           15
+--- 1 row(s) selected.
+>>SELECT id, score FROM LLREG032_RANGE WHERE score >= 25 ORDER BY id;
+ID           SCORE
+-----------  -----------
+          3           30
+          5           25
+          6           99
+--- 3 row(s) selected.
+>>CREATE INDEX LLREG032_SCORE_IX ON LLREG032_RANGE(score);
+--- SQL operation complete.
+>>SELECT id, score FROM LLREG032_RANGE
++> WHERE score > 15 AND score <= 30 ORDER BY id;
+ID           SCORE
+-----------  -----------
+          2           20
+          3           30
+          5           25
+--- 3 row(s) selected.
+>>SELECT id, score FROM LLREG032_RANGE WHERE 25 < score ORDER BY id;
+ID           SCORE
+-----------  -----------
+          3           30
+          6           99
+--- 2 row(s) selected.
+>>SELECT id, score FROM LLREG032_RANGE WHERE score < 0 ORDER BY id;
+ID           SCORE
+-----------  -----------
+          7          -10
+--- 1 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>UPDATE LLREG032_RANGE SET score = 40 WHERE id = 1;
+--- 1 row(s) updated.
+>>SELECT id, score FROM LLREG032_RANGE
++> WHERE grp = 'A' AND score >= 35 ORDER BY id;
+ID           SCORE
+-----------  -----------
+          1           40
+--- 1 row(s) selected.
+>>ROLLBACK WORK;
+--- SQL operation complete.
+>>SELECT id, score FROM LLREG032_RANGE
++> WHERE grp = 'A' AND score >= 35 ORDER BY id;
+--- 0 row(s) selected.
+>>DROP INDEX LLREG032_SCORE_IX;
+--- SQL operation complete.
+>>DROP INDEX LLREG032_GS_IX;
+--- SQL operation complete.
+>>DROP TABLE LLREG032_RANGE;
+--- SQL operation complete.
+>>exit;

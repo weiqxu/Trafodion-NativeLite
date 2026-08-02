@@ -915,6 +915,23 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
 				    Generator *generator)
 {
   NAString description("scan_type: " + getTypeText());
+
+#ifdef TRAF_LOCAL_LITE
+  description += " local_lite_storage: rocksdb ";
+  NABoolean localLiteSecondaryIndex = FALSE;
+  for (CollIndex i = 0; i < listOfUniqueRows_.entries(); i++)
+    for (CollIndex j = 0; j < listOfUniqueRows_[i].rowIds_.entries(); j++)
+      {
+        const NAString &rowId = listOfUniqueRows_[i].rowIds_[j];
+        if (rowId.length() >= 6 &&
+            (memcmp(rowId.data(), "LLIX1:", 6) == 0 ||
+             memcmp(rowId.data(), "LLIR1:", 6) == 0 ||
+             memcmp(rowId.data(), "LLIB1:", 6) == 0))
+          localLiteSecondaryIndex = TRUE;
+      }
+  if (localLiteSecondaryIndex)
+    description += "secondary_index: yes index_only: yes ";
+#endif
   
   if (getTableDesc()->getNATable()->isSeabaseTable())
     {
@@ -2433,5 +2450,4 @@ ExplainTuple *ExeUtilHbaseCoProcAggr::addSpecificExplainInfo(
 
   return explainTuple;
 }
-
 

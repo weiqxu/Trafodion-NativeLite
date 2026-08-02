@@ -20,6 +20,19 @@ struct LocalLiteColumnDef
   bool nullable;
 };
 
+struct LocalLiteIndexDef
+{
+  LocalLiteIndexDef()
+    : objectUid(0), unique(false), keyEncodingVersion(1) {}
+
+  std::string name;
+  uint64_t objectUid;
+  bool unique;
+  uint32_t keyEncodingVersion;
+  std::vector<size_t> keyColumns;
+  std::vector<bool> descending;
+};
+
 struct LocalLiteTableDef
 {
   std::string catalog;
@@ -30,6 +43,7 @@ struct LocalLiteTableDef
   std::vector<LocalLiteColumnDef> columns;
   std::vector<size_t> primaryKeyColumns;
   std::vector< std::vector<size_t> > uniqueKeyColumns;
+  std::vector<LocalLiteIndexDef> secondaryIndexes;
 };
 
 struct LocalLiteRow
@@ -75,6 +89,14 @@ public:
                  const std::string &name,
                  LocalLiteTableDef *table,
                  std::string *error);
+  bool createIndex(const LocalLiteTableDef &table,
+                   const LocalLiteIndexDef &index,
+                   std::string *error);
+  bool dropIndex(const std::string &catalog,
+                 const std::string &schema,
+                 const std::string &name,
+                 bool ifExists,
+                 std::string *error);
 
   bool insertRow(const LocalLiteTableDef &table,
                  const std::string &encodedRow,
@@ -94,6 +116,15 @@ public:
   bool scanRows(const LocalLiteTableDef &table,
                 std::vector<LocalLiteRow> *rows,
                 std::string *error);
+  bool scanIndexPrefix(const LocalLiteTableDef &table,
+                       const std::string &physicalPrefix,
+                       std::vector<LocalLiteRow> *rows,
+                       std::string *error);
+  bool scanIndexRange(const LocalLiteTableDef &table,
+                      const std::string &startKey,
+                      const std::string &endKey,
+                      std::vector<LocalLiteRow> *rows,
+                      std::string *error);
 
 private:
   friend class LocalLiteTxnState;

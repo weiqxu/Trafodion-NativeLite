@@ -15,6 +15,7 @@
 
 class ExpTupleDesc;
 struct LocalLiteTableDef;
+struct LocalLiteIndexDef;
 
 bool LocalLiteEncodeBinaryRow(const LocalLiteTableDef &table,
                               const std::vector<std::string> &fields,
@@ -79,6 +80,48 @@ bool LocalLiteBuildUniqueKeyFromTextFields(
     const std::vector<std::string> &keyFields,
     std::string *key,
     bool *hasKey,
+    std::string *error);
+
+bool LocalLiteBuildSecondaryIndexPrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const std::vector<size_t> &keyColumns,
+    const std::vector<std::string> &leadingKeyFields,
+    std::string *payloadPrefix,
+    std::string *error);
+
+bool LocalLiteSecondaryIndexSupportsOrderedKeys(
+    const LocalLiteTableDef &table,
+    const std::vector<size_t> &keyColumns);
+
+bool LocalLiteBuildOrderedSecondaryKeyPayload(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::string &encodedRow,
+    std::string *payload,
+    bool *hasKey,
+    bool *containsNull,
+    std::string *error);
+
+bool LocalLiteBuildOrderedSecondaryKeyPrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::vector<std::string> &leadingKeyFields,
+    std::string *payloadPrefix,
+    std::string *error);
+
+bool LocalLiteBuildOrderedSecondaryNullPrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::vector<std::string> &leadingKeyFields,
+    std::string *payloadPrefix,
+    std::string *error);
+
+bool LocalLiteBuildOrderedSecondaryNullablePrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const LocalLiteIndexDef &index,
+    const std::vector<std::string> &leadingKeyFields,
+    const std::vector<bool> &nullFields,
+    std::string *payloadPrefix,
     std::string *error);
 
 #endif

@@ -1,0 +1,64 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+CREATE TABLE LLREG032_RANGE
+  (id INT NOT NULL PRIMARY KEY,
+   grp VARCHAR(4),
+   score INT,
+   label VARCHAR(20));
+
+INSERT INTO LLREG032_RANGE VALUES
+  (1, 'A', 10, 'a-ten'),
+  (2, 'A', 20, 'a-twenty'),
+  (3, 'A', 30, 'a-thirty'),
+  (4, 'B', 15, 'b-fifteen'),
+  (5, 'B', 25, 'b-twenty-five'),
+  (6, NULL, 99, 'null-group'),
+  (7, 'C', -10, 'negative'),
+  (8, 'C', 0, 'zero');
+
+CREATE INDEX LLREG032_GS_IX ON LLREG032_RANGE(grp, score DESC);
+
+-- A leading equality scans only the matching composite-index prefix.
+SELECT id, score FROM LLREG032_RANGE WHERE grp = 'A' ORDER BY id;
+SELECT id, score FROM LLREG032_RANGE
+ WHERE grp = 'A' AND score >= 20 ORDER BY id;
+SELECT id, score FROM LLREG032_RANGE
+ WHERE grp = 'B' AND score BETWEEN 10 AND 20 ORDER BY id;
+
+-- A non-leading predicate cannot use the composite index by itself.
+SELECT id, score FROM LLREG032_RANGE WHERE score >= 25 ORDER BY id;
+
+CREATE INDEX LLREG032_SCORE_IX ON LLREG032_RANGE(score);
+SELECT id, score FROM LLREG032_RANGE
+ WHERE score > 15 AND score <= 30 ORDER BY id;
+SELECT id, score FROM LLREG032_RANGE WHERE 25 < score ORDER BY id;
+SELECT id, score FROM LLREG032_RANGE WHERE score < 0 ORDER BY id;
+
+-- Pending updates are filtered from the transaction-visible row set.
+BEGIN WORK;
+UPDATE LLREG032_RANGE SET score = 40 WHERE id = 1;
+SELECT id, score FROM LLREG032_RANGE
+ WHERE grp = 'A' AND score >= 35 ORDER BY id;
+ROLLBACK WORK;
+SELECT id, score FROM LLREG032_RANGE
+ WHERE grp = 'A' AND score >= 35 ORDER BY id;
+
+DROP INDEX LLREG032_SCORE_IX;
+DROP INDEX LLREG032_GS_IX;
+DROP TABLE LLREG032_RANGE;
+exit;

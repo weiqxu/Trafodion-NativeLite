@@ -8683,18 +8683,20 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
     CmpCommon::context()->sqlSession()->getParentQid());
 
 #ifdef TRAF_LOCAL_LITE
-  NABoolean localLiteLocalTableDDL =
+  NABoolean localLiteLocalStoreDDL =
     (ddlNode &&
      ((ddlNode->getOperatorType() == DDL_CREATE_TABLE) ||
-      (ddlNode->getOperatorType() == DDL_DROP_TABLE)));
+      (ddlNode->getOperatorType() == DDL_DROP_TABLE) ||
+      (ddlNode->getOperatorType() == DDL_CREATE_INDEX) ||
+      (ddlNode->getOperatorType() == DDL_DROP_INDEX)));
 #else
-  NABoolean localLiteLocalTableDDL = FALSE;
+  NABoolean localLiteLocalStoreDDL = FALSE;
 #endif
 
   // error accessing hbase. Return.
   if ((CmpCommon::context()->isUninitializedSeabase()) &&
       (CmpCommon::context()->uninitializedSeabaseErrNum() == -TRAF_HBASE_ACCESS_ERROR) &&
-      (NOT localLiteLocalTableDDL))
+      (NOT localLiteLocalStoreDDL))
     {
       *CmpCommon::diags() << DgSqlCode(CmpCommon::context()->uninitializedSeabaseErrNum())
                           << DgInt0(CmpCommon::context()->hbaseErrNum())
@@ -8727,7 +8729,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   if (dws && dws->getInitTraf())
     ignoreUninitTrafErr = TRUE;
 
-  if (localLiteLocalTableDDL)
+  if (localLiteLocalStoreDDL)
     ignoreUninitTrafErr = TRUE;
 
   if ((CmpCommon::context()->isUninitializedSeabase()) &&
@@ -8737,7 +8739,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
       return -1;
     }
 
-  if ((NOT localLiteLocalTableDDL) && sendAllControlsAndFlags())
+  if ((NOT localLiteLocalStoreDDL) && sendAllControlsAndFlags())
     {
       CMPASSERT(0);
       return -1;
@@ -8748,7 +8750,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   if (ddlExpr && ddlExpr->ddlXnsInfo(ddlXns, startXn))
     return -1;
 
-  if (localLiteLocalTableDDL)
+  if (localLiteLocalStoreDDL)
     startXn = FALSE;
   
   if (startXn)
@@ -9416,7 +9418,8 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   
 label_return:
 
-  restoreAllControlsAndFlags();
+  if (NOT localLiteLocalStoreDDL)
+    restoreAllControlsAndFlags();
 
   if (CmpCommon::diags()->getNumber(DgSqlCode::ERROR_))
     {

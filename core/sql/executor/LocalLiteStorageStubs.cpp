@@ -28,6 +28,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 static std::mutex localLiteScanRowMutex;
@@ -438,11 +439,18 @@ private:
     LocalLiteTxn txn(&store_, statementGlobals,
                      statementGlobals->getExecutionCount());
     bool handledGetRows = false;
-    if (!loadGetRows(&txn, &handledGetRows, error))
+    bool handledIndexLookup = false;
+    bool handledIndexRange = false;
+    bool handledIndexBounded = false;
+    if (!loadGetRows(&txn, &handledGetRows, &handledIndexLookup,
+                     &handledIndexRange, &handledIndexBounded, error))
       return false;
     if (handledGetRows)
       {
-        localLiteTraceScan("GET_ROW", scanTdb().getTableName());
+        const char *scanPath = handledIndexBounded ? "INDEX_BOUNDED" :
+            (handledIndexRange ? "INDEX_RANGE" :
+             (handledIndexLookup ? "INDEX_EQ" : "GET_ROW"));
+        localLiteTraceScan(scanPath, scanTdb().getTableName());
         return true;
       }
 
@@ -450,14 +458,24 @@ private:
     return txn.scanRows(table_, &rows_, error);
   }
 
-  bool loadGetRows(LocalLiteTxn *txn, bool *handled, std::string *error)
+  bool loadGetRows(LocalLiteTxn *txn,
+                   bool *handled,
+                   bool *handledIndexLookup,
+                   bool *handledIndexRange,
+                   bool *handledIndexBounded,
+                   std::string *error)
   {
     *handled = false;
+    *handledIndexLookup = false;
+    *handledIndexRange = false;
+    *handledIndexBounded = false;
     Queue *getRows = scanTdb().listOfGetRows();
     if (!getRows || getRows->numEntries() == 0)
       return true;
 
     std::vector<std::string> storageKeys;
+    std::vector<std::string> indexPrefixes;
+    std::vector< std::pair<std::string, std::string> > indexRanges;
     getRows->position();
     for (Lng32 i = 0; i < getRows->numEntries(); i++)
       {
@@ -474,6 +492,41 @@ private:
         for (Lng32 j = 0; j < rowIds->numEntries(); j++)
           {
             const char *rawKey = static_cast<const char *>(rowIds->getNext());
+            if (rawKey && strncmp(rawKey, "LLIB1:", 6) == 0)
+              {
+                std::string bounds(rawKey + 6);
+                size_t separator = bounds.find(':');
+                if (separator == std::string::npos)
+                  {
+                    *error = "invalid local-lite secondary index bounds";
+                    return false;
+                  }
+                std::string startKey;
+                std::string endKey;
+                if (!decodeHexGetRowKey(
+                        bounds.substr(0, separator).c_str(),
+                        &startKey, error) ||
+                    !decodeHexGetRowKey(
+                        bounds.substr(separator + 1).c_str(),
+                        &endKey, error))
+                  return false;
+                indexRanges.push_back(std::make_pair(startKey, endKey));
+                *handledIndexRange = true;
+                *handledIndexBounded = true;
+                continue;
+              }
+            if (rawKey &&
+                (strncmp(rawKey, "LLIX1:", 6) == 0 ||
+                 strncmp(rawKey, "LLIR1:", 6) == 0))
+              {
+                if (strncmp(rawKey, "LLIR1:", 6) == 0)
+                  *handledIndexRange = true;
+                std::string prefix;
+                if (!decodeHexGetRowKey(rawKey + 6, &prefix, error))
+                  return false;
+                indexPrefixes.push_back(prefix);
+                continue;
+              }
             std::string storageKey;
             if (!decodeGetRowKey(rawKey, &storageKey, error))
               return false;
@@ -484,6 +537,28 @@ private:
       }
 
     *handled = true;
+    if (!indexPrefixes.empty() || !indexRanges.empty())
+      {
+        if (!storageKeys.empty() ||
+            indexPrefixes.size() + indexRanges.size() != 1)
+          {
+            *error = "invalid local-lite mixed secondary index lookup";
+            return false;
+          }
+        *handledIndexLookup = true;
+        // Pending transaction mutations have not reached the physical index.
+        // A visible-row scan plus the retained executor predicate preserves
+        // read-your-writes semantics until transactional index overlays exist.
+        if (LocalLiteTxnManager::active())
+          return txn->scanRows(table_, &rows_, error);
+        if (!indexRanges.empty())
+          return store_.scanIndexRange(table_, indexRanges[0].first,
+                                       indexRanges[0].second,
+                                       &rows_, error);
+        return store_.scanIndexPrefix(table_, indexPrefixes[0],
+                                      &rows_, error);
+      }
+
     for (size_t i = 0; i < storageKeys.size(); i++)
       {
         LocalLiteRow row;

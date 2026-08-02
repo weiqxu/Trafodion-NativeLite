@@ -442,6 +442,49 @@ unique_get_row_count=$(grep -c 'LOCAL_LITE_SCAN_GET_ROW' <<<"$trace_unique_outpu
 [[ "$unique_get_row_count" -ge 7 ]] ||
   fail "unique-key equality queries did not use local-lite get-row scan"
 
+secondary_index_setup_output=$(
+  printf "CREATE TABLE ix_trace(id INT PRIMARY KEY, code VARCHAR(8), label VARCHAR(20));\nINSERT INTO ix_trace VALUES (1, 'G', 'first'), (2, 'G', 'second'), (3, 'H', 'third');\nCREATE INDEX ix_trace_code ON ix_trace(code);\nCREATE UNIQUE INDEX ix_trace_label ON ix_trace(label);\nCREATE TABLE ix_null_trace(id INT PRIMARY KEY, code VARCHAR(8));\nINSERT INTO ix_null_trace VALUES (4, NULL), (5, NULL), (6, 'X');\nCREATE UNIQUE INDEX ix_null_trace_code ON ix_null_trace(code);\nCREATE TABLE ix_type_trace(id INT PRIMARY KEY, c CHAR(4), r REAL, d FLOAT(54), label VARCHAR(20));\nINSERT INTO ix_type_trace VALUES (1, 'A', -2.5, -20.5, 'negative'), (2, 'B', 0.0, 0.0, 'zero'), (3, 'C', 2.5, 20.5, 'positive');\nCREATE INDEX ix_type_trace_c ON ix_type_trace(c DESC);\nCREATE INDEX ix_type_trace_r ON ix_type_trace(r);\nCREATE INDEX ix_type_trace_d ON ix_type_trace(d DESC);\nexit;\n" |
+    run_sqlci
+)
+grep -q -- '--- 3 row(s) inserted.' <<<"$secondary_index_setup_output" ||
+  fail "secondary-index trace setup table did not insert rows"
+
+secondary_index_trace_output=$(
+  printf "SELECT id FROM ix_trace WHERE code = 'G' ORDER BY id;\nSELECT id FROM ix_trace WHERE label = 'third';\nSELECT id FROM ix_trace WHERE code > 'F' ORDER BY id;\nSELECT id FROM ix_null_trace WHERE code IS NULL ORDER BY id;\nSELECT label FROM ix_type_trace WHERE c >= 'B' ORDER BY id;\nSELECT label FROM ix_type_trace WHERE r < 0;\nSELECT label FROM ix_type_trace WHERE d > 0;\nSELECT label FROM ix_type_trace WHERE d = CAST(20.5 AS FLOAT(54));\nBEGIN WORK;\nUPDATE ix_trace SET code = 'Z' WHERE id = 1;\nSELECT id FROM ix_trace WHERE code = 'Z';\nROLLBACK WORK;\nSELECT id FROM ix_trace WHERE code = 'G' ORDER BY id;\nDROP TABLE ix_trace;\nDROP TABLE ix_null_trace;\nDROP TABLE ix_type_trace;\nexit;\n" |
+    run_sqlci_trace_scan 2>&1
+)
+grep -Eq '^ *1 *$' <<<"$secondary_index_trace_output" ||
+  fail "secondary-index equality query did not return the first row"
+grep -Eq '^ *2 *$' <<<"$secondary_index_trace_output" ||
+  fail "non-unique secondary-index equality query did not return all rows"
+grep -Eq '^ *3 *$' <<<"$secondary_index_trace_output" ||
+  fail "unique secondary-index equality query did not return its row"
+grep -Eq '^ *4 *$' <<<"$secondary_index_trace_output" ||
+  fail "nullable unique-index lookup did not return its first NULL row"
+grep -Eq '^ *5 *$' <<<"$secondary_index_trace_output" ||
+  fail "nullable unique-index lookup did not return its second NULL row"
+grep -q 'negative' <<<"$secondary_index_trace_output" ||
+  fail "REAL secondary-index range lookup did not return its row"
+grep -q 'zero' <<<"$secondary_index_trace_output" ||
+  fail "CHAR secondary-index range lookup did not return its first row"
+grep -q 'positive' <<<"$secondary_index_trace_output" ||
+  fail "CHAR/FLOAT(54) secondary-index range lookups did not return rows"
+secondary_index_scan_count=$(
+  grep -c 'LOCAL_LITE_SCAN_INDEX_EQ' <<<"$secondary_index_trace_output"
+)
+[[ "$secondary_index_scan_count" -ge 5 ]] ||
+  fail "secondary-index equality queries did not use local-lite index scans"
+grep -q 'LOCAL_LITE_SCAN_INDEX_BOUNDED' <<<"$secondary_index_trace_output" ||
+  fail "secondary-index range query did not use bounded local-lite index scan"
+grep -q 'LOCAL_LITE_INDEX_BOUNDS index=IX_TRACE_CODE' <<<"$secondary_index_trace_output" ||
+  fail "optimizer did not select the code secondary index"
+grep -q 'LOCAL_LITE_INDEX_BOUNDS index=IX_TRACE_LABEL' <<<"$secondary_index_trace_output" ||
+  fail "optimizer did not select the unique label secondary index"
+grep -Eq 'LOCAL_LITE_INDEX_ONLY covering=[1-9][0-9]* base_lookups=0' <<<"$secondary_index_trace_output" ||
+  fail "current secondary-index records did not use covering RocksDB values"
+grep -Eq 'LOCAL_LITE_INDEX_BOUNDS .*candidates=2' <<<"$secondary_index_trace_output" ||
+  fail "nullable unique-index lookup did not scan its RocksDB NULL-key range"
+
 trace_full_output=$(
   printf "SELECT a FROM pk_trace WHERE b = 'seven';\nDROP TABLE pk_trace;\nexit;\n" |
     run_sqlci_trace_scan 2>&1
@@ -472,16 +515,19 @@ grep -q 'key_columns: SYSKEY' <<<"$explain_output" ||
 grep -Eq 'HASH_GROUPBY|SORT_GROUPBY' <<<"$explain_output" ||
   fail "keyless grouped aggregate plan eliminated the required groupby"
 
-unsupported_output=$(
-  printf "UPDATE t SET a = 2;\nDELETE FROM t;\nCREATE INDEX ix ON t(a);\nUPSERT INTO t VALUES (3, 'three');\nCREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |
+secondary_explain_output=$(
+  printf "CONTROL QUERY DEFAULT GENERATE_EXPLAIN 'ON';\nCREATE TABLE ix_plan(id INT PRIMARY KEY, a INT, payload VARCHAR(20));\nINSERT INTO ix_plan VALUES (1, 10, 'covered');\nCREATE INDEX ix_plan_a ON ix_plan(a);\nPREPARE ix FROM SELECT payload FROM ix_plan WHERE a = 10;\nSELECT operator, description FROM TABLE(EXPLAIN(NULL, 'IX'));\nDROP TABLE ix_plan;\nexit;\n" |
     run_sqlci
 )
-grep -q 'UPDATE, DELETE, and MERGE are not supported in local-lite' <<<"$unsupported_output" ||
-  fail "UPDATE/DELETE unsupported diagnostic missing"
-grep -q 'CREATE INDEX is not supported in local-lite' <<<"$unsupported_output" ||
-  fail "CREATE INDEX unsupported diagnostic missing"
-grep -q 'UPSERT is not supported in local-lite v1; use INSERT' <<<"$unsupported_output" ||
-  fail "UPSERT unsupported diagnostic missing"
+grep -q 'local_lite_storage: rocksdb' <<<"$secondary_explain_output" ||
+  fail "secondary-index explain did not identify RocksDB storage"
+grep -q 'secondary_index: yes index_only: yes' <<<"$secondary_explain_output" ||
+  fail "secondary-index explain did not expose index-only access"
+
+unsupported_output=$(
+  printf "CREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |
+    run_sqlci
+)
 grep -q 'CREATE VIEW is not supported in local-lite' <<<"$unsupported_output" ||
   fail "CREATE VIEW unsupported diagnostic missing"
 grep -q 'ALTER TABLE is not supported in local-lite' <<<"$unsupported_output" ||

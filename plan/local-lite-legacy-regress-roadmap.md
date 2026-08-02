@@ -158,6 +158,44 @@ and transaction overlay behavior.
 
 ## Milestone 3: Secondary Indexes
 
+Status: complete. The RocksDB-only implementation persists unique and
+non-unique index definitions in the local catalog, supports `CREATE INDEX` and
+`DROP INDEX`, records composite key order, backfills physical index records,
+and maintains them atomically with INSERT, UPDATE, DELETE, UPSERT, MERGE, and
+transaction commit. It validates object and column conflicts, rejects duplicate
+keys while building or mutating a unique index, and removes index registrations
+and physical records on DROP. Full-key equality predicates on unique and
+non-unique indexes are compiled into RocksDB index-prefix scans with residual
+predicate validation; explicit transactions safely fall back to visible-row
+filtering while physical index changes are pending. Native coverage is in
+`localLite/TEST030` through `localLite/TEST034`. Composite leading-key prefixes
+and first-key range predicates now use RocksDB scans with residual validation.
+New integer, fixed-width NUMERIC, and VARCHAR indexes use versioned
+order-preserving keys plus half-open lower/upper RocksDB bounds, including DESC
+inversion; legacy and unsupported-type encodings safely retain candidate scans.
+The ordered encoding also covers fixed-width CHAR, REAL/FLOAT(1-22), and
+FLOAT(23-54)/DOUBLE values; floating signed zero is canonicalized so `-0` and
+`+0` remain one UNIQUE key.
+Version 3 ordered keys persist NULL components, allow multiple NULL values in a
+UNIQUE index, and compile leading-key `IS NULL` predicates into RocksDB prefix
+or bounded scans; transactional mutations still use visible-row filtering until
+commit. Version 4 index values contain the base row key and encoded row, enabling
+index-only scans without a RocksDB base-row lookup while retaining transparent
+fallback for legacy index values. Optimizer metadata now exposes explicit
+secondary indexes, key direction, uniqueness, primary-key suffixes, and covering
+columns; the optimizer can cost and select them, and the executor resolves the
+selected index back to its owning RocksDB table. Generator-side candidate ranking
+prefers longer prefixes and exact unique matches when several usable indexes are
+available. Ordered keys cover every type currently accepted by local-lite table
+DDL: integer and floating numerics, fixed and wide NUMERIC/DECIMAL, CHAR/VARCHAR,
+and DATE/TIME/TIMESTAMP. Nullable composite prefixes support consecutive
+`IS NULL` components and range predicates following NULL/equality components.
+EXPLAIN identifies RocksDB access and secondary index-only scans, while scan
+tracing reports the selected index and covering/base-lookup counts. Native
+coverage is in `localLite/TEST030` through `localLite/TEST035`; the RocksDB SQLCI
+smoke also asserts optimizer selection, index-only execution, EXPLAIN visibility,
+and absence of HBase/Hadoop/JVM runtime linkage.
+
 Implement index DDL and metadata, unique/non-unique key encoding, mutation
 maintenance, lookup/range/index-only scans, optimizer exposure, residual
 predicates, and EXPLAIN coverage.

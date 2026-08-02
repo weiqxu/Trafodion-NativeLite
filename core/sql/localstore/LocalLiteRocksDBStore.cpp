@@ -32,6 +32,20 @@ static void setError(std::string *error, const std::string &message)
     *error = message;
 }
 
+static std::string localLiteHexKey(const std::string &key)
+{
+  static const char hex[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(key.size() * 2);
+  for (size_t i = 0; i < key.size(); i++)
+    {
+      unsigned char c = static_cast<unsigned char>(key[i]);
+      out += hex[c >> 4];
+      out += hex[c & 0x0f];
+    }
+  return out;
+}
+
 static void traceStatementSnapshot(const char *action,
                                    const std::string &tablePath,
                                    uint64_t statementExecutionId)
@@ -187,6 +201,13 @@ static std::string tableKey(const LocalLiteTableDef &table)
   return tableKey(table.catalog, table.schema, table.name);
 }
 
+static std::string indexKey(const std::string &catalog,
+                            const std::string &schema,
+                            const std::string &name)
+{
+  return "index|" + catalog + "|" + schema + "|" + name;
+}
+
 static std::string uidKey(uint64_t uid)
 {
   char buf[64];
@@ -215,7 +236,7 @@ static uint64_t readUint64(const std::string &s, size_t *offset)
 static std::string encodeTable(const LocalLiteTableDef &table)
 {
   std::string out;
-  out += "LLT3\n";
+  out += "LLT5\n";
   out += table.catalog + "\n";
   out += table.schema + "\n";
   out += table.name + "\n";
@@ -262,6 +283,30 @@ static std::string encodeTable(const LocalLiteTableDef &table)
           out += buf;
         }
     }
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.secondaryIndexes.size()));
+  out += buf;
+  for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+    {
+      const LocalLiteIndexDef &index = table.secondaryIndexes[i];
+      out += index.name + "\n";
+      snprintf(buf, sizeof(buf), "%llu\n",
+               static_cast<unsigned long long>(index.objectUid));
+      out += buf;
+      out += index.unique ? "1\n" : "0\n";
+      snprintf(buf, sizeof(buf), "%u\n", index.keyEncodingVersion);
+      out += buf;
+      snprintf(buf, sizeof(buf), "%lu\n",
+               static_cast<unsigned long>(index.keyColumns.size()));
+      out += buf;
+      for (size_t j = 0; j < index.keyColumns.size(); j++)
+        {
+          snprintf(buf, sizeof(buf), "%lu\t%d\n",
+                   static_cast<unsigned long>(index.keyColumns[j]),
+                   (j < index.descending.size() && index.descending[j]) ? 1 : 0);
+          out += buf;
+        }
+    }
   return out;
 }
 
@@ -284,13 +329,19 @@ static bool decodeTable(const std::string &encoded,
   std::string line;
   size_t pos = 0;
   if (!nextLine(encoded, &pos, &line) ||
-      (line != "LLT1" && line != "LLT2" && line != "LLT3"))
+      (line != "LLT1" && line != "LLT2" && line != "LLT3" &&
+       line != "LLT4" && line != "LLT5"))
     {
       setError(error, "invalid local-lite table metadata");
       return false;
     }
-  const bool hasKeyMetadata = (line == "LLT2" || line == "LLT3");
-  const bool hasUniqueMetadata = (line == "LLT3");
+  const bool hasKeyMetadata =
+      (line == "LLT2" || line == "LLT3" || line == "LLT4" ||
+       line == "LLT5");
+  const bool hasUniqueMetadata =
+      (line == "LLT3" || line == "LLT4" || line == "LLT5");
+  const bool hasIndexMetadata = (line == "LLT4" || line == "LLT5");
+  const bool hasIndexEncodingMetadata = (line == "LLT5");
   if (!nextLine(encoded, &pos, &table->catalog) ||
       !nextLine(encoded, &pos, &table->schema) ||
       !nextLine(encoded, &pos, &table->name) ||
@@ -309,6 +360,7 @@ static bool decodeTable(const std::string &encoded,
   table->columns.clear();
   table->primaryKeyColumns.clear();
   table->uniqueKeyColumns.clear();
+  table->secondaryIndexes.clear();
   for (unsigned long i = 0; i < count; i++)
     {
       if (!nextLine(encoded, &pos, &line))
@@ -393,6 +445,83 @@ static bool decodeTable(const std::string &encoded,
           table->uniqueKeyColumns.push_back(keyColumns);
         }
     }
+  if (hasIndexMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite index metadata");
+          return false;
+        }
+      unsigned long indexCount = strtoul(line.c_str(), NULL, 10);
+      for (unsigned long i = 0; i < indexCount; i++)
+        {
+          LocalLiteIndexDef index;
+          if (!nextLine(encoded, &pos, &index.name) ||
+              !nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite index metadata");
+              return false;
+            }
+          index.objectUid = strtoull(line.c_str(), NULL, 10);
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite index metadata");
+              return false;
+            }
+          index.unique = (line == "1");
+          if (hasIndexEncodingMetadata)
+            {
+              if (!nextLine(encoded, &pos, &line))
+                {
+                  setError(error, "truncated local-lite index metadata");
+                  return false;
+                }
+              index.keyEncodingVersion =
+                  static_cast<uint32_t>(strtoul(line.c_str(), NULL, 10));
+              if (index.keyEncodingVersion == 0 ||
+                  index.keyEncodingVersion > 4)
+                {
+                  setError(error, "invalid local-lite index key encoding");
+                  return false;
+                }
+            }
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite index metadata");
+              return false;
+            }
+          unsigned long keyCount = strtoul(line.c_str(), NULL, 10);
+          if (index.name.empty() || index.objectUid == 0 || keyCount == 0)
+            {
+              setError(error, "invalid local-lite index metadata");
+              return false;
+            }
+          for (unsigned long j = 0; j < keyCount; j++)
+            {
+              if (!nextLine(encoded, &pos, &line))
+                {
+                  setError(error, "truncated local-lite index metadata");
+                  return false;
+                }
+              size_t tab = line.find('\t');
+              if (tab == std::string::npos)
+                {
+                  setError(error, "invalid local-lite index metadata");
+                  return false;
+                }
+              unsigned long column = strtoul(line.substr(0, tab).c_str(),
+                                             NULL, 10);
+              if (column >= table->columns.size())
+                {
+                  setError(error, "invalid local-lite index metadata");
+                  return false;
+                }
+              index.keyColumns.push_back(static_cast<size_t>(column));
+              index.descending.push_back(line.substr(tab + 1) == "1");
+            }
+          table->secondaryIndexes.push_back(index);
+        }
+    }
   return true;
 }
 
@@ -423,6 +552,154 @@ static bool decodeRowValue(const std::string &value,
       return false;
     }
   *encodedRow = value.substr(offset, static_cast<size_t>(len));
+  return true;
+}
+
+struct LocalLitePhysicalIndexEntry
+{
+  std::string key;
+  std::string rowKey;
+  std::string value;
+  bool unique;
+};
+
+static std::string encodeCoveringIndexValue(const std::string &rowKey,
+                                             const std::string &encodedRow)
+{
+  std::string value("LLIV1", 5);
+  appendUint64(value, static_cast<uint64_t>(rowKey.size()));
+  value += rowKey;
+  appendUint64(value, static_cast<uint64_t>(encodedRow.size()));
+  value += encodedRow;
+  return value;
+}
+
+static bool decodeIndexValue(const std::string &value,
+                             std::string *rowKey,
+                             std::string *encodedRow,
+                             bool *covering,
+                             std::string *error)
+{
+  *covering = value.size() >= 5 && value.compare(0, 5, "LLIV1") == 0;
+  if (!*covering)
+    {
+      *rowKey = value;
+      encodedRow->clear();
+      return true;
+    }
+  size_t offset = 5;
+  if (offset + 8 > value.size())
+    {
+      setError(error, "truncated local-lite covering index row key");
+      return false;
+    }
+  uint64_t rowKeyLen = readUint64(value, &offset);
+  if (rowKeyLen > value.size() - offset)
+    {
+      setError(error, "truncated local-lite covering index row key");
+      return false;
+    }
+  *rowKey = value.substr(offset, static_cast<size_t>(rowKeyLen));
+  offset += static_cast<size_t>(rowKeyLen);
+  if (offset + 8 > value.size())
+    {
+      setError(error, "truncated local-lite covering index row payload");
+      return false;
+    }
+  uint64_t rowLen = readUint64(value, &offset);
+  if (rowLen > value.size() - offset || offset + rowLen != value.size())
+    {
+      setError(error, "truncated local-lite covering index row payload");
+      return false;
+    }
+  *encodedRow = value.substr(offset, static_cast<size_t>(rowLen));
+  return true;
+}
+
+static bool buildSecondaryIndexEntry(const LocalLiteTableDef &table,
+                                     const LocalLiteIndexDef &index,
+                                     const std::string &encodedRow,
+                                     const std::string &rowKey,
+                                     LocalLitePhysicalIndexEntry *entry,
+                                     bool *hasEntry,
+                                     std::string *error)
+{
+  if (!entry || !hasEntry)
+    {
+      setError(error, "missing local-lite secondary index output");
+      return false;
+    }
+
+  std::string columnKey;
+  bool hasColumnKey = false;
+  bool containsNull = false;
+  if (index.keyEncodingVersion >= 2)
+    {
+      if (!LocalLiteBuildOrderedSecondaryKeyPayload(
+              table, index, encodedRow, &columnKey, &hasColumnKey,
+              &containsNull, error))
+        return false;
+    }
+  else if (!LocalLiteBuildUniqueKey(table, encodedRow, index.keyColumns, 0,
+                                    &columnKey, &hasColumnKey, error))
+    return false;
+
+  // UNIQUE semantics allow multiple rows when any indexed column is NULL.
+  // Those rows are intentionally absent from the physical index until NULL
+  // entries are encoded for index scans in the optimizer-facing increment.
+  if (!hasColumnKey)
+    {
+      *hasEntry = false;
+      return true;
+    }
+  if (index.keyEncodingVersion < 2 &&
+      (columnKey.size() < 9 || columnKey[0] != 'U'))
+    {
+      setError(error, "invalid local-lite secondary index key payload");
+      return false;
+    }
+
+  entry->key.clear();
+  entry->key.push_back('I');
+  appendUint64(entry->key, index.objectUid);
+  if (index.keyEncodingVersion >= 2)
+    entry->key += columnKey;
+  else
+    entry->key.append(columnKey.data() + 9, columnKey.size() - 9);
+  if (!index.unique || containsNull)
+    {
+      entry->key.push_back('R');
+      appendUint64(entry->key, static_cast<uint64_t>(rowKey.size()));
+      entry->key += rowKey;
+    }
+  entry->rowKey = rowKey;
+  entry->value = index.keyEncodingVersion >= 4
+      ? encodeCoveringIndexValue(rowKey, encodedRow)
+      : rowKey;
+  entry->unique = index.unique && !containsNull;
+  *hasEntry = true;
+  return true;
+}
+
+static bool buildSecondaryIndexEntries(
+    const LocalLiteTableDef &table,
+    const std::string &encodedRow,
+    const std::string &rowKey,
+    std::vector<LocalLitePhysicalIndexEntry> *entries,
+    std::string *error)
+{
+  entries->clear();
+  for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+    {
+      LocalLitePhysicalIndexEntry entry;
+      bool hasEntry = false;
+      if (!buildSecondaryIndexEntry(table, table.secondaryIndexes[i],
+                                    encodedRow, rowKey, &entry, &hasEntry,
+                                    error))
+        return false;
+      if (hasEntry)
+        entries->push_back(entry);
+    }
   return true;
 }
 
@@ -659,6 +936,10 @@ public:
         if (hasUniqueKey)
           uniqueKeys.push_back(uniqueKey);
       }
+    std::vector<LocalLitePhysicalIndexEntry> indexEntries;
+    if (!buildSecondaryIndexEntries(loaded, encodedRow, key,
+                                    &indexEntries, error))
+      return false;
 
     const uint64_t allocatedRowId = loaded.nextRowId;
     LocalLiteTableDef updated = loaded;
@@ -737,6 +1018,36 @@ public:
             return false;
           }
       }
+    for (size_t i = 0; i < indexEntries.size(); i++)
+      {
+        readOptions = rocksdb_readoptions_create();
+        err = NULL;
+        existingLen = 0;
+        existing = rocksdb_get(db, readOptions,
+                               indexEntries[i].key.data(),
+                               indexEntries[i].key.size(),
+                               &existingLen, &err);
+        rocksdb_readoptions_destroy(readOptions);
+        if (!checkRocksError(err, "read local-lite secondary index key",
+                             error))
+          {
+            if (loaded.primaryKeyColumns.empty())
+              putCatalogLocked(tableMetadataKey, oldMetadata,
+                               "rollback local-lite row id metadata", NULL);
+            return false;
+          }
+        if (existing)
+          {
+            rocksdb_free(existing);
+            if (loaded.primaryKeyColumns.empty())
+              putCatalogLocked(tableMetadataKey, oldMetadata,
+                               "rollback local-lite row id metadata", NULL);
+            setError(error, indexEntries[i].unique
+                            ? "duplicate local-lite unique index key"
+                            : "duplicate local-lite secondary index key");
+            return false;
+          }
+      }
 
     std::string value = encodeRowValue(encodedRow);
     rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
@@ -745,6 +1056,11 @@ public:
     for (size_t i = 0; i < uniqueKeys.size(); i++)
       rocksdb_writebatch_put(batch, uniqueKeys[i].data(), uniqueKeys[i].size(),
                              key.data(), key.size());
+    for (size_t i = 0; i < indexEntries.size(); i++)
+      rocksdb_writebatch_put(batch, indexEntries[i].key.data(),
+                             indexEntries[i].key.size(),
+                             indexEntries[i].value.data(),
+                             indexEntries[i].value.size());
     rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
     err = NULL;
     rocksdb_write(db, writeOptions, batch, &err);
@@ -796,9 +1112,14 @@ public:
     std::vector<std::string> newRowKeys(mutations.size());
     std::vector< std::vector<std::string> > oldUniqueKeys(mutations.size());
     std::vector< std::vector<std::string> > newUniqueKeys(mutations.size());
+    std::vector< std::vector<LocalLitePhysicalIndexEntry> > oldIndexEntries(
+        mutations.size());
+    std::vector< std::vector<LocalLitePhysicalIndexEntry> > newIndexEntries(
+        mutations.size());
     std::set<std::string> oldRowKeySet;
     std::set<std::string> newRowKeySet;
     std::set<std::string> newUniqueKeySet;
+    std::set<std::string> newIndexKeySet;
 
     for (size_t i = 0; i < mutations.size(); i++)
       {
@@ -825,6 +1146,22 @@ public:
             setError(error, "duplicate local-lite primary key");
             return false;
           }
+
+        if (!buildSecondaryIndexEntries(
+                loaded, mutations[i].before.value, oldRowKeys[i],
+                &oldIndexEntries[i], error) ||
+            !buildSecondaryIndexEntries(
+                loaded, mutations[i].after, newRowKeys[i],
+                &newIndexEntries[i], error))
+          return false;
+        for (size_t entry = 0; entry < newIndexEntries[i].size(); entry++)
+          if (!newIndexKeySet.insert(newIndexEntries[i][entry].key).second)
+            {
+              setError(error, newIndexEntries[i][entry].unique
+                              ? "duplicate local-lite unique index key"
+                              : "duplicate local-lite secondary index key");
+              return false;
+            }
 
         for (size_t keyIndex = 0;
              keyIndex < loaded.uniqueKeyColumns.size(); keyIndex++)
@@ -930,12 +1267,48 @@ public:
               }
             if (!value)
               continue;
+            std::string referencedRowKey;
+            std::string ignoredRow;
+            bool covering = false;
+            std::string indexValue(value, valueLen);
+            rocksdb_free(value);
+            if (!decodeIndexValue(indexValue, &referencedRowKey,
+                                  &ignoredRow, &covering, error))
+              {
+                rocksdb_readoptions_destroy(readOptions);
+                return false;
+              }
+            if (oldRowKeySet.find(referencedRowKey) == oldRowKeySet.end())
+              {
+                rocksdb_readoptions_destroy(readOptions);
+                setError(error, "duplicate local-lite unique key");
+                return false;
+              }
+          }
+        for (size_t entry = 0; entry < newIndexEntries[i].size(); entry++)
+          {
+            err = NULL;
+            valueLen = 0;
+            value = rocksdb_get(db, readOptions,
+                                newIndexEntries[i][entry].key.data(),
+                                newIndexEntries[i][entry].key.size(),
+                                &valueLen, &err);
+            if (!checkRocksError(err,
+                                 "read updated local-lite index key", error))
+              {
+                rocksdb_readoptions_destroy(readOptions);
+                return false;
+              }
+            if (!value)
+              continue;
             std::string referencedRowKey(value, valueLen);
             rocksdb_free(value);
             if (oldRowKeySet.find(referencedRowKey) == oldRowKeySet.end())
               {
                 rocksdb_readoptions_destroy(readOptions);
-                setError(error, "duplicate local-lite unique key");
+                setError(error, newIndexEntries[i][entry].unique
+                                ? "duplicate local-lite unique index key"
+                                : "duplicate local-lite secondary index key");
                 return false;
               }
           }
@@ -951,6 +1324,9 @@ public:
              keyIndex < oldUniqueKeys[i].size(); keyIndex++)
           rocksdb_writebatch_delete(batch, oldUniqueKeys[i][keyIndex].data(),
                                     oldUniqueKeys[i][keyIndex].size());
+        for (size_t entry = 0; entry < oldIndexEntries[i].size(); entry++)
+          rocksdb_writebatch_delete(batch, oldIndexEntries[i][entry].key.data(),
+                                    oldIndexEntries[i][entry].key.size());
       }
     for (size_t i = 0; i < mutations.size(); i++)
       {
@@ -964,6 +1340,12 @@ public:
                                  newUniqueKeys[i][keyIndex].data(),
                                  newUniqueKeys[i][keyIndex].size(),
                                  newRowKeys[i].data(), newRowKeys[i].size());
+        for (size_t entry = 0; entry < newIndexEntries[i].size(); entry++)
+          rocksdb_writebatch_put(batch,
+                                 newIndexEntries[i][entry].key.data(),
+                                 newIndexEntries[i][entry].key.size(),
+                                 newIndexEntries[i][entry].value.data(),
+                                 newIndexEntries[i][entry].value.size());
       }
 
     rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
@@ -999,6 +1381,8 @@ public:
 
     std::vector<std::string> rowKeys(rows.size());
     std::vector< std::vector<std::string> > uniqueKeys(rows.size());
+    std::vector< std::vector<LocalLitePhysicalIndexEntry> > indexEntries(
+        rows.size());
     std::set<std::string> selectedKeys;
     for (size_t i = 0; i < rows.size(); i++)
       {
@@ -1012,6 +1396,9 @@ public:
             setError(error, "local-lite delete selected a row more than once");
             return false;
           }
+        if (!buildSecondaryIndexEntries(loaded, rows[i].value, rowKeys[i],
+                                        &indexEntries[i], error))
+          return false;
 
         for (size_t keyIndex = 0;
              keyIndex < loaded.uniqueKeyColumns.size(); keyIndex++)
@@ -1073,6 +1460,9 @@ public:
           rocksdb_writebatch_delete(batch,
                                     uniqueKeys[i][keyIndex].data(),
                                     uniqueKeys[i][keyIndex].size());
+        for (size_t entry = 0; entry < indexEntries[i].size(); entry++)
+          rocksdb_writebatch_delete(batch, indexEntries[i][entry].key.data(),
+                                    indexEntries[i][entry].key.size());
       }
     rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
     char *err = NULL;
@@ -1110,10 +1500,12 @@ public:
     const bool keyless = loaded.primaryKeyColumns.empty();
     std::vector<std::string> rowKeys;
     std::vector< std::vector<std::string> > uniqueKeys;
+    std::vector< std::vector<LocalLitePhysicalIndexEntry> > indexEntries;
     std::set<std::string> pendingRowKeys;
     std::set<std::string> pendingUniqueKeys;
     rowKeys.reserve(rows.size());
     uniqueKeys.resize(rows.size());
+    indexEntries.resize(rows.size());
 
     for (size_t i = 0; i < rows.size(); i++)
       {
@@ -1145,6 +1537,9 @@ public:
             return false;
           }
         rowKeys.push_back(rowKey);
+        if (!buildSecondaryIndexEntries(loaded, rows[i].value, rowKey,
+                                        &indexEntries[i], error))
+          return false;
 
         for (size_t keyIndex = 0;
              keyIndex < loaded.uniqueKeyColumns.size(); keyIndex++)
@@ -1193,6 +1588,20 @@ public:
                 return false;
               }
           }
+        for (size_t entry = 0; entry < indexEntries[i].size(); entry++)
+          {
+            if (!keyExistsLocked(db, indexEntries[i][entry].key,
+                                 "read local-lite secondary index key",
+                                 &exists, error))
+              return false;
+            if (exists)
+              {
+                setError(error, indexEntries[i][entry].unique
+                                ? "duplicate local-lite unique index key"
+                                : "duplicate local-lite secondary index key");
+                return false;
+              }
+          }
       }
 
     std::string tableMetadataKey;
@@ -1225,6 +1634,12 @@ public:
                                  uniqueKeys[i][keyIndex].data(),
                                  uniqueKeys[i][keyIndex].size(),
                                  rowKeys[i].data(), rowKeys[i].size());
+        for (size_t entry = 0; entry < indexEntries[i].size(); entry++)
+          rocksdb_writebatch_put(batch,
+                                 indexEntries[i][entry].key.data(),
+                                 indexEntries[i][entry].key.size(),
+                                 indexEntries[i][entry].value.data(),
+                                 indexEntries[i][entry].value.size());
       }
 
     rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
@@ -1296,7 +1711,7 @@ public:
         std::string key(rawKey, keyLen);
         std::string value(rawValue, valueLen);
         originalRecords[key] = value;
-        if (!key.empty() && key[0] == 'U')
+        if (!key.empty() && (key[0] == 'U' || key[0] == 'I'))
           continue;
 
         LocalLiteRow row;
@@ -1449,6 +1864,19 @@ public:
                 return false;
               }
           }
+        std::vector<LocalLitePhysicalIndexEntry> indexEntries;
+        if (!buildSecondaryIndexEntries(loaded, row->second.value,
+                                        row->first, &indexEntries, error))
+          return false;
+        for (size_t indexEntry = 0;
+             indexEntry < indexEntries.size(); indexEntry++)
+          if (!finalRecords.insert(std::make_pair(
+                  indexEntries[indexEntry].key,
+                  indexEntries[indexEntry].value)).second)
+            {
+              setError(error, "duplicate local-lite unique index key");
+              return false;
+            }
       }
 
     std::string tableMetadataKey;
@@ -2325,13 +2753,32 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
       return false;
     }
 
+  std::string collidingIndexKey = indexKey(table.catalog, table.schema,
+                                           table.name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                            readOptions, collidingIndexKey.data(),
+                            collidingIndexKey.size(), &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite object metadata", error))
+    return false;
+  if (value)
+    {
+      rocksdb_free(value);
+      setError(error, "local-lite object already exists: " + table.catalog +
+                      "." + table.schema + "." + table.name);
+      return false;
+    }
+
   if (!mkdirs(parentDir(tablePath(table)), error))
     return false;
 
   LocalLiteStorageManager::instance().closeTable(tablePath(table));
   rocksdb_options_t *tableOptions = rocksdb_options_create();
   rocksdb_options_set_create_if_missing(tableOptions, 1);
-  char *err = NULL;
+  err = NULL;
   rocksdb_t *tableDb = rocksdb_open(tableOptions, tablePath(table).c_str(), &err);
   rocksdb_options_destroy(tableOptions);
   if (!checkRocksError(err, "create RocksDB table " + tablePath(table), error))
@@ -2373,6 +2820,14 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
   std::string uid = uidKey(table.objectUid);
   rocksdb_writebatch_delete(batch, key.data(), key.size());
   rocksdb_writebatch_delete(batch, uid.data(), uid.size());
+  for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+    {
+      std::string idxKey = indexKey(catalog, schema,
+                                    table.secondaryIndexes[i].name);
+      std::string idxUid = uidKey(table.secondaryIndexes[i].objectUid);
+      rocksdb_writebatch_delete(batch, idxKey.data(), idxKey.size());
+      rocksdb_writebatch_delete(batch, idxUid.data(), idxUid.size());
+    }
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
   char *err = NULL;
   rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
@@ -2442,13 +2897,328 @@ bool LocalLiteRocksDBStore::loadTable(const std::string &catalog,
     return false;
   if (!value)
     {
-      setError(error, "local-lite table does not exist: " +
-              catalog + "." + schema + "." + name);
-      return false;
+      // Optimizer-visible secondary indexes use their own external name in
+      // the generated scan TDB.  They are still physically stored in the
+      // owning RocksDB table, so resolve the catalog's index-to-table link.
+      std::string idxKey = indexKey(catalog, schema, name);
+      readOptions = rocksdb_readoptions_create();
+      size_t tableKeyLen = 0;
+      char *rawTableKey = rocksdb_get(
+          LocalLiteStorageManager::instance().catalogDb(), readOptions,
+          idxKey.data(), idxKey.size(), &tableKeyLen, &err);
+      rocksdb_readoptions_destroy(readOptions);
+      if (!checkRocksError(err, "read local-lite index metadata", error))
+        return false;
+      if (!rawTableKey)
+        {
+          setError(error, "local-lite table does not exist: " +
+                  catalog + "." + schema + "." + name);
+          return false;
+        }
+      std::string owningTableKey(rawTableKey, tableKeyLen);
+      rocksdb_free(rawTableKey);
+      readOptions = rocksdb_readoptions_create();
+      value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                          readOptions, owningTableKey.data(),
+                          owningTableKey.size(), &valueLen, &err);
+      rocksdb_readoptions_destroy(readOptions);
+      if (!checkRocksError(err, "read local-lite owning table metadata", error))
+        return false;
+      if (!value)
+        {
+          setError(error, "local-lite index references a missing table: " +
+                  catalog + "." + schema + "." + name);
+          return false;
+        }
     }
   std::string encoded(value, valueLen);
   rocksdb_free(value);
   return decodeTable(encoded, table, error);
+}
+
+bool LocalLiteRocksDBStore::createIndex(const LocalLiteTableDef &table,
+                                        const LocalLiteIndexDef &index,
+                                        std::string *error)
+{
+  if (!open(error))
+    return false;
+  if (index.name.empty() || index.objectUid == 0 || index.keyColumns.empty() ||
+      index.descending.size() != index.keyColumns.size())
+    {
+      setError(error, "invalid local-lite index definition");
+      return false;
+    }
+
+  LocalLiteTableDef loaded;
+  if (!loadTable(table.catalog, table.schema, table.name, &loaded, error))
+    return false;
+  bool tableNameCollision = false;
+  if (!tableExists(loaded.catalog, loaded.schema, index.name,
+                   &tableNameCollision, error))
+    return false;
+  if (tableNameCollision)
+    {
+      setError(error, "local-lite object already exists: " + loaded.catalog +
+                      "." + loaded.schema + "." + index.name);
+      return false;
+    }
+  for (size_t i = 0; i < index.keyColumns.size(); i++)
+    {
+      if (index.keyColumns[i] >= loaded.columns.size())
+        {
+          setError(error, "invalid local-lite index column metadata");
+          return false;
+        }
+      for (size_t j = 0; j < i; j++)
+        if (index.keyColumns[j] == index.keyColumns[i])
+          {
+            setError(error, "duplicate local-lite index column");
+            return false;
+          }
+    }
+
+  std::string idxKey = indexKey(loaded.catalog, loaded.schema, index.name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                            readOptions, idxKey.data(), idxKey.size(),
+                            &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite index metadata", error))
+    return false;
+  if (value)
+    {
+      rocksdb_free(value);
+      setError(error, "local-lite index already exists: " + loaded.catalog +
+                      "." + loaded.schema + "." + index.name);
+      return false;
+    }
+
+  rocksdb_t *tableDb = LocalLiteStorageManager::instance().openTable(
+      tablePath(loaded), false, error);
+  if (!tableDb)
+    return false;
+
+  std::map<std::string, std::string> backfillEntries;
+  readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(tableDb, readOptions);
+  for (rocksdb_iter_seek_to_first(it); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t rowKeyLen = 0;
+      size_t rowValueLen = 0;
+      const char *rawRowKey = rocksdb_iter_key(it, &rowKeyLen);
+      const char *rawRowValue = rocksdb_iter_value(it, &rowValueLen);
+      std::string rowKey(rawRowKey, rowKeyLen);
+      if (!rowKey.empty() && (rowKey[0] == 'U' || rowKey[0] == 'I'))
+        continue;
+
+      std::string encodedRow;
+      if (!decodeRowValue(std::string(rawRowValue, rowValueLen),
+                          &encodedRow, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+      LocalLitePhysicalIndexEntry entry;
+      bool hasEntry = false;
+      if (!buildSecondaryIndexEntry(loaded, index, encodedRow, rowKey,
+                                    &entry, &hasEntry, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+      if (hasEntry &&
+          !backfillEntries.insert(
+              std::make_pair(entry.key, entry.value)).second)
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          setError(error, "duplicate local-lite unique index key");
+          return false;
+        }
+    }
+  char *iteratorError = NULL;
+  rocksdb_iter_get_error(it, &iteratorError);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(iteratorError,
+                       "scan local-lite rows for index backfill", error))
+    return false;
+
+  rocksdb_writebatch_t *dataBatch = rocksdb_writebatch_create();
+  for (std::map<std::string, std::string>::const_iterator entry =
+           backfillEntries.begin(); entry != backfillEntries.end(); ++entry)
+    rocksdb_writebatch_put(dataBatch, entry->first.data(), entry->first.size(),
+                           entry->second.data(), entry->second.size());
+  rocksdb_writeoptions_t *dataWriteOptions = rocksdb_writeoptions_create();
+  err = NULL;
+  rocksdb_write(tableDb, dataWriteOptions, dataBatch, &err);
+  rocksdb_writeoptions_destroy(dataWriteOptions);
+  rocksdb_writebatch_destroy(dataBatch);
+  if (!checkRocksError(err, "backfill local-lite index", error))
+    return false;
+
+  loaded.secondaryIndexes.push_back(index);
+  std::string tabKey = tableKey(loaded);
+  std::string idxUid = uidKey(index.objectUid);
+  std::string encoded = encodeTable(loaded);
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  rocksdb_writebatch_put(batch, tabKey.data(), tabKey.size(),
+                         encoded.data(), encoded.size());
+  rocksdb_writebatch_put(batch, idxKey.data(), idxKey.size(),
+                         tabKey.data(), tabKey.size());
+  rocksdb_writebatch_put(batch, idxUid.data(), idxUid.size(),
+                         idxKey.data(), idxKey.size());
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  err = NULL;
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
+                writeOptions, batch, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  if (checkRocksError(err, "write local-lite index metadata", error))
+    return true;
+
+  rocksdb_writebatch_t *rollback = rocksdb_writebatch_create();
+  for (std::map<std::string, std::string>::const_iterator entry =
+           backfillEntries.begin(); entry != backfillEntries.end(); ++entry)
+    rocksdb_writebatch_delete(rollback, entry->first.data(),
+                              entry->first.size());
+  dataWriteOptions = rocksdb_writeoptions_create();
+  char *rollbackError = NULL;
+  rocksdb_write(tableDb, dataWriteOptions, rollback, &rollbackError);
+  rocksdb_writeoptions_destroy(dataWriteOptions);
+  rocksdb_writebatch_destroy(rollback);
+  if (rollbackError)
+    {
+      if (error)
+        *error += "; rollback local-lite index backfill: " +
+                  std::string(rollbackError);
+      rocksdb_free(rollbackError);
+    }
+  return false;
+}
+
+bool LocalLiteRocksDBStore::dropIndex(const std::string &catalog,
+                                      const std::string &schema,
+                                      const std::string &name,
+                                      bool ifExists,
+                                      std::string *error)
+{
+  if (!open(error))
+    return false;
+
+  std::string idxKey = indexKey(catalog, schema, name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t tableKeyLen = 0;
+  char *rawTableKey = rocksdb_get(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions,
+      idxKey.data(), idxKey.size(), &tableKeyLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite index metadata", error))
+    return false;
+  if (!rawTableKey)
+    {
+      if (ifExists)
+        return true;
+      setError(error, "local-lite index does not exist: " + catalog + "." +
+                      schema + "." + name);
+      return false;
+    }
+  std::string tabKey(rawTableKey, tableKeyLen);
+  rocksdb_free(rawTableKey);
+
+  readOptions = rocksdb_readoptions_create();
+  size_t tableValueLen = 0;
+  char *rawTable = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                               readOptions, tabKey.data(), tabKey.size(),
+                               &tableValueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite table metadata", error))
+    return false;
+  if (!rawTable)
+    {
+      setError(error, "local-lite index references a missing table");
+      return false;
+    }
+
+  LocalLiteTableDef table;
+  std::string encodedTable(rawTable, tableValueLen);
+  rocksdb_free(rawTable);
+  if (!decodeTable(encodedTable, &table, error))
+    return false;
+
+  size_t found = table.secondaryIndexes.size();
+  for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+    if (table.secondaryIndexes[i].name == name)
+      {
+        found = i;
+        break;
+      }
+  if (found == table.secondaryIndexes.size())
+    {
+      setError(error, "local-lite index metadata is inconsistent");
+      return false;
+    }
+  LocalLiteIndexDef droppedIndex = table.secondaryIndexes[found];
+  std::string idxUid = uidKey(droppedIndex.objectUid);
+  table.secondaryIndexes.erase(table.secondaryIndexes.begin() + found);
+
+  encodedTable = encodeTable(table);
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  rocksdb_writebatch_put(batch, tabKey.data(), tabKey.size(),
+                         encodedTable.data(), encodedTable.size());
+  rocksdb_writebatch_delete(batch, idxKey.data(), idxKey.size());
+  rocksdb_writebatch_delete(batch, idxUid.data(), idxUid.size());
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  err = NULL;
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
+                writeOptions, batch, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  if (!checkRocksError(err, "delete local-lite index metadata", error))
+    return false;
+
+  rocksdb_t *tableDb = LocalLiteStorageManager::instance().openTable(
+      tablePath(table), false, error);
+  if (!tableDb)
+    return false;
+  std::string physicalPrefix;
+  physicalPrefix.push_back('I');
+  appendUint64(physicalPrefix, droppedIndex.objectUid);
+  readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(tableDb, readOptions);
+  rocksdb_writebatch_t *dataBatch = rocksdb_writebatch_create();
+  for (rocksdb_iter_seek(it, physicalPrefix.data(), physicalPrefix.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      if (keyLen < physicalPrefix.size() ||
+          memcmp(rawKey, physicalPrefix.data(), physicalPrefix.size()) != 0)
+        break;
+      rocksdb_writebatch_delete(dataBatch, rawKey, keyLen);
+    }
+  char *iteratorError = NULL;
+  rocksdb_iter_get_error(it, &iteratorError);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(iteratorError,
+                       "scan local-lite index for drop", error))
+    {
+      rocksdb_writebatch_destroy(dataBatch);
+      return false;
+    }
+  rocksdb_writeoptions_t *dataWriteOptions = rocksdb_writeoptions_create();
+  err = NULL;
+  rocksdb_write(tableDb, dataWriteOptions, dataBatch, &err);
+  rocksdb_writeoptions_destroy(dataWriteOptions);
+  rocksdb_writebatch_destroy(dataBatch);
+  return checkRocksError(err, "delete local-lite index records", error);
 }
 
 bool LocalLiteRocksDBStore::insertRow(const LocalLiteTableDef &table,
@@ -2584,6 +3354,165 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
   return scanRows(table, NULL, 0, rows, error);
 }
 
+bool LocalLiteRocksDBStore::scanIndexPrefix(
+    const LocalLiteTableDef &table,
+    const std::string &physicalPrefix,
+    std::vector<LocalLiteRow> *rows,
+    std::string *error)
+{
+  if (physicalPrefix.size() < 9 || physicalPrefix[0] != 'I')
+    {
+      setError(error, "invalid local-lite secondary index prefix");
+      return false;
+    }
+  std::string endKey = physicalPrefix;
+  size_t pos = endKey.size();
+  while (pos > 0 &&
+         static_cast<unsigned char>(endKey[pos - 1]) == 0xff)
+    pos--;
+  if (pos == 0)
+    {
+      setError(error, "local-lite index prefix has no upper bound");
+      return false;
+    }
+  endKey.resize(pos);
+  endKey[pos - 1] = static_cast<char>(
+      static_cast<unsigned char>(endKey[pos - 1]) + 1);
+  return scanIndexRange(table, physicalPrefix, endKey, rows, error);
+}
+
+bool LocalLiteRocksDBStore::scanIndexRange(
+    const LocalLiteTableDef &table,
+    const std::string &startKey,
+    const std::string &endKey,
+    std::vector<LocalLiteRow> *rows,
+    std::string *error)
+{
+  rows->clear();
+  if (startKey.size() < 9 || startKey[0] != 'I' ||
+      endKey.empty() || endKey <= startKey)
+    {
+      setError(error, "invalid local-lite secondary index range");
+      return false;
+    }
+  if (!open(error))
+    return false;
+
+  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(
+      tablePath(table), false, error);
+  if (!db)
+    return false;
+
+  const rocksdb_snapshot_t *snapshot = rocksdb_create_snapshot(db);
+  if (!snapshot)
+    {
+      setError(error, "create local-lite RocksDB index snapshot failed");
+      return false;
+    }
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_readoptions_set_snapshot(readOptions, snapshot);
+  rocksdb_iterator_t *it = rocksdb_create_iterator(db, readOptions);
+  std::map<std::string, LocalLiteRow> rowsByStorageKey;
+  size_t coveringRows = 0;
+  size_t baseLookups = 0;
+  for (rocksdb_iter_seek(it, startKey.data(), startKey.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      size_t valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      std::string physicalKey(rawKey, keyLen);
+      if (physicalKey >= endKey)
+        break;
+
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      std::string rowKey;
+      std::string encodedRow;
+      bool covering = false;
+      if (!decodeIndexValue(std::string(rawValue, valueLen), &rowKey,
+                            &encodedRow, &covering, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          rocksdb_release_snapshot(db, snapshot);
+          return false;
+        }
+      if (rowsByStorageKey.find(rowKey) != rowsByStorageKey.end())
+        continue;
+
+      LocalLiteRow row;
+      bool found = covering;
+      if (covering)
+        {
+          row.rowId = 0;
+          if (rowKey.size() == 8)
+            {
+              size_t offset = 0;
+              row.rowId = readUint64(rowKey, &offset);
+            }
+          row.value = encodedRow;
+          coveringRows++;
+        }
+      else if (!getRowByKeyAtSnapshot(db, snapshot, rowKey,
+                                      &row, &found, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          rocksdb_release_snapshot(db, snapshot);
+          return false;
+        }
+      else
+        baseLookups++;
+      if (!found)
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          rocksdb_release_snapshot(db, snapshot);
+          setError(error, "local-lite secondary index references a missing row");
+          return false;
+        }
+      rowsByStorageKey.insert(std::make_pair(rowKey, row));
+    }
+
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  rocksdb_release_snapshot(db, snapshot);
+  if (!checkRocksError(err, "scan local-lite secondary index", error))
+    return false;
+  for (std::map<std::string, LocalLiteRow>::const_iterator row =
+           rowsByStorageKey.begin(); row != rowsByStorageKey.end(); ++row)
+    rows->push_back(row->second);
+  const char *trace = getenv("TRAF_LOCAL_LITE_TRACE_SCAN");
+  if (trace && trace[0])
+    {
+      std::string indexName;
+      if (startKey.size() >= 9 && startKey[0] == 'I')
+        {
+          size_t uidOffset = 1;
+          uint64_t indexUid = readUint64(startKey, &uidOffset);
+          for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+            if (table.secondaryIndexes[i].objectUid == indexUid)
+              {
+                indexName = table.secondaryIndexes[i].name;
+                break;
+              }
+        }
+      fprintf(stderr,
+              "LOCAL_LITE_INDEX_BOUNDS index=%s start=%s end=%s candidates=%lu\n",
+              indexName.c_str(), localLiteHexKey(startKey).c_str(),
+              localLiteHexKey(endKey).c_str(),
+              static_cast<unsigned long>(rows->size()));
+    }
+  if (trace && trace[0])
+    fprintf(stderr,
+            "LOCAL_LITE_INDEX_ONLY covering=%lu base_lookups=%lu\n",
+            static_cast<unsigned long>(coveringRows),
+            static_cast<unsigned long>(baseLookups));
+  return true;
+}
+
 bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
                                      const void *statementOwner,
                                      uint64_t statementExecutionId,
@@ -2628,7 +3557,7 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
       const char *rawKey = rocksdb_iter_key(it, &keyLen);
       const char *rawValue = rocksdb_iter_value(it, &valueLen);
       std::string key(rawKey, keyLen);
-      if (key.size() > 0 && key[0] == 'U')
+      if (key.size() > 0 && (key[0] == 'U' || key[0] == 'I'))
         continue;
       std::string value(rawValue, valueLen);
       size_t offset = 0;

@@ -63,6 +63,26 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &,
   return true;
 }
 
+bool LocalLiteBuildOrderedSecondaryKeyPayload(
+    const LocalLiteTableDef &,
+    const LocalLiteIndexDef &,
+    const std::string &,
+    std::string *payload,
+    bool *hasKey,
+    bool *containsNull,
+    std::string *error)
+{
+  if (payload)
+    payload->clear();
+  if (hasKey)
+    *hasKey = false;
+  if (containsNull)
+    *containsNull = false;
+  if (error)
+    *error = "ordered index codec is not used by the transaction probe";
+  return false;
+}
+
 static std::string rowKey(uint64_t rowId)
 {
   std::string key;

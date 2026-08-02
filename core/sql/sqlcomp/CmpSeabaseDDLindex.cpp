@@ -66,6 +66,142 @@
 
 #include "PrivMgrCommands.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#include "LocalLiteRowCodec.h"
+
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <string>
+
+static void localLiteIndexDDLDiag(const std::string &reason)
+{
+  *CmpCommon::diags() << DgSqlCode(-3242)
+                      << DgString0((char *)reason.c_str());
+}
+
+static uint64_t localLiteNewIndexUid()
+{
+  uint64_t uid = static_cast<uint64_t>(time(NULL));
+  uid = (uid << 24) ^ static_cast<uint64_t>(getpid() & 0xffff);
+  uid = (uid << 8) ^ static_cast<uint64_t>(rand() & 0xff);
+  return uid ? uid : 1;
+}
+
+static bool localLiteFindIndexColumn(const LocalLiteTableDef &table,
+                                     const NAString &name,
+                                     size_t *column)
+{
+  for (size_t i = 0; i < table.columns.size(); i++)
+    if (table.columns[i].name == name.data())
+      {
+        *column = i;
+        return true;
+      }
+  return false;
+}
+
+static bool localLiteCreateIndex(StmtDDLCreateIndex *node,
+                                 const ComObjectName &tableName,
+                                 const ComObjectName &indexName)
+{
+  if (node->isVolatile() || node->isAttributeSpecified() ||
+      node->isLocationSpecified() || node->isPartitionSpecified() ||
+      node->isPartitionBySpecified() || node->isDivisionClauseSpecified() ||
+      node->isHbaseOptionsSpecified() ||
+      node->isParallelExecutionClauseSpecified() ||
+      node->isNoPopulateOptionSpecified())
+    {
+      localLiteIndexDDLDiag(
+          "local-lite RocksDB indexes do not support physical, partition, volatile, or NO POPULATE options");
+      return false;
+    }
+
+  LocalLiteTableDef table;
+  table.catalog = tableName.getCatalogNamePartAsAnsiString().data();
+  table.schema = tableName.getSchemaNamePartAsAnsiString(TRUE).data();
+  table.name = tableName.getObjectNamePartAsAnsiString(TRUE).data();
+
+  LocalLiteRocksDBStore store;
+  std::string error;
+  if (!store.loadTable(table.catalog, table.schema, table.name, &table, &error))
+    {
+      localLiteIndexDDLDiag(error);
+      return false;
+    }
+
+  if (indexName.getCatalogNamePartAsAnsiString() !=
+          tableName.getCatalogNamePartAsAnsiString() ||
+      indexName.getSchemaNamePartAsAnsiString(TRUE) !=
+          tableName.getSchemaNamePartAsAnsiString(TRUE))
+    {
+      localLiteIndexDDLDiag(
+          "local-lite index must be in the same catalog and schema as its table");
+      return false;
+    }
+
+  LocalLiteIndexDef index;
+  index.name = indexName.getObjectNamePartAsAnsiString(TRUE).data();
+  index.objectUid = localLiteNewIndexUid();
+  index.unique = node->isUniqueSpecified();
+
+  ElemDDLColRefArray &columns = node->getColRefArray();
+  if (columns.entries() == 0)
+    {
+      localLiteIndexDDLDiag("CREATE INDEX requires at least one column");
+      return false;
+    }
+  for (CollIndex i = 0; i < columns.entries(); i++)
+    {
+      size_t column = 0;
+      if (!columns[i] ||
+          !localLiteFindIndexColumn(table, columns[i]->getColumnName(),
+                                    &column))
+        {
+          localLiteIndexDDLDiag("local-lite index column does not exist");
+          return false;
+        }
+      for (size_t j = 0; j < index.keyColumns.size(); j++)
+        if (index.keyColumns[j] == column)
+          {
+            localLiteIndexDDLDiag("duplicate local-lite index column");
+            return false;
+          }
+      index.keyColumns.push_back(column);
+      index.descending.push_back(
+          columns[i]->getColumnOrdering() == COM_DESCENDING_ORDER);
+    }
+
+  index.keyEncodingVersion =
+      LocalLiteSecondaryIndexSupportsOrderedKeys(table, index.keyColumns)
+          ? 4 : 1;
+
+  if (!store.createIndex(table, index, &error))
+    {
+      localLiteIndexDDLDiag(error);
+      return false;
+    }
+  return true;
+}
+
+static bool localLiteDropIndex(const ComObjectName &indexName)
+{
+  LocalLiteRocksDBStore store;
+  std::string error;
+  if (!store.dropIndex(
+          indexName.getCatalogNamePartAsAnsiString().data(),
+          indexName.getSchemaNamePartAsAnsiString(TRUE).data(),
+          indexName.getObjectNamePartAsAnsiString(TRUE).data(), false, &error))
+    {
+      localLiteIndexDDLDiag(error);
+      return false;
+    }
+  return true;
+}
+#endif
+
 short 
 CmpSeabaseDDL::createIndexColAndKeyInfoArrays(
      ElemDDLColRefArray &indexColRefArray,
@@ -428,6 +564,16 @@ void CmpSeabaseDDL::createSeabaseIndex( StmtDDLCreateIndex * createIndexNode,
   NAString objectNamePart = indexName.getObjectNamePartAsAnsiString(TRUE);
   NAString extIndexName = indexName.getExternalName(TRUE);
   NAString extNameForHbase = catalogNamePart + "." + schemaNamePart + "." + objectNamePart;
+
+#ifdef TRAF_LOCAL_LITE
+  ExeCliInterface localLiteCliInterface(
+      STMTHEAP, 0, NULL,
+      CmpCommon::context()->sqlSession()->getParentQid());
+  if (!localLiteCreateIndex(createIndexNode, tableName, indexName))
+    processReturn();
+  return;
+#endif
+
   NABoolean alignedFormatNotAllowed = FALSE; 
   ExpHbaseInterface * ehi = allocEHI();
   if (ehi == NULL)
@@ -1444,6 +1590,15 @@ void CmpSeabaseDDL::dropSeabaseIndex(
   NAString schemaNamePart = indexName.getSchemaNamePartAsAnsiString(TRUE);
   NAString objectNamePart = indexName.getObjectNamePartAsAnsiString(TRUE);
   const NAString extIndexName = indexName.getExternalName(TRUE);
+
+#ifdef TRAF_LOCAL_LITE
+  ExeCliInterface localLiteCliInterface(
+      STMTHEAP, 0, NULL,
+      CmpCommon::context()->sqlSession()->getParentQid());
+  if (!localLiteDropIndex(indexName))
+    processReturn();
+  return;
+#endif
 
   ExeCliInterface cliInterface(STMTHEAP, 0, NULL, 
        CmpCommon::context()->sqlSession()->getParentQid());
