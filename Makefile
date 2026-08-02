@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress
+.PHONY: all local-lite local-lite-regress local-lite-legacy-audit
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 
 all:
@@ -35,6 +35,10 @@ local-lite:
 local-lite-regress:
 	@echo "Running local-lite SQL regressions"
 	core/sql/regress/localLite/runregr $(LOCAL_LITE_REGR_TESTS)
+
+local-lite-legacy-audit:
+	@echo "Auditing local-lite legacy regression inventory"
+	scripts/audit-local-lite-legacy-regress.sh --report
 
 package: 
 	@echo "Packaging Trafodion components"

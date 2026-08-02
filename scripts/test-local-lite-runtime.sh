@@ -19,6 +19,10 @@ local_statement_snapshot="$repo_root/scripts/test-local-lite-statement-snapshot.
 local_transaction_snapshot="$repo_root/scripts/test-local-lite-transaction-snapshot.sh"
 local_regress_dir="$repo_root/core/sql/regress/localLite"
 local_regress="$local_regress_dir/runregr"
+local_legacy_regress_dir="$repo_root/core/sql/regress/localLiteLegacy"
+local_legacy_manifest="$local_legacy_regress_dir/manifest.tsv"
+local_legacy_regress="$local_legacy_regress_dir/runregr"
+local_legacy_audit="$repo_root/scripts/audit-local-lite-legacy-regress.sh"
 storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
 executor_root="$repo_root/core/sql/executor/ex_root.cpp"
 localstore_dir="$repo_root/core/sql/localstore"
@@ -160,6 +164,28 @@ grep -q 'unique conflicts advanced keyless row ids' "$local_store_concurrency" |
   fail "missing executable local-lite regress runner: $local_regress"
 [[ -x "$local_regress_dir/FILTER" ]] ||
   fail "missing executable local-lite regress output filter"
+[[ -f "$local_legacy_manifest" ]] ||
+  fail "missing local-lite legacy regress manifest"
+[[ -x "$local_legacy_regress" ]] ||
+  fail "missing executable local-lite legacy regress adapter"
+[[ -x "$local_legacy_audit" ]] ||
+  fail "missing executable local-lite legacy regress audit"
+"$local_legacy_audit" --check >/dev/null ||
+  fail "local-lite legacy regress manifest audit failed"
+grep -q 'TRAF_LOCAL_STORE_DIR' "$local_legacy_regress" ||
+  fail "local-lite legacy regress adapter must isolate its RocksDB store"
+grep -q 'lowercase_name=${copied_name,,}' "$local_legacy_regress" ||
+  fail "local-lite legacy regress adapter must support lowercase self-OBEY names"
+grep -q 'append_section' "$local_legacy_regress" ||
+  fail "local-lite legacy regress adapter must materialize selected section bodies"
+grep -q -- "-iname 'LOG\*'" "$local_legacy_regress" ||
+  fail "local-lite legacy regress adapter must find case-insensitive LOG names"
+grep -q 'unsafe directive detected before SQLCI start' "$local_legacy_regress" ||
+  fail "local-lite legacy regress adapter must reject unsafe helpers"
+grep -q '\[A-Za-z_\]\[A-Za-z0-9_\]\*' "$local_legacy_regress" ||
+  fail "local-lite legacy regress adapter must reject macro-based external OBEY"
+grep -Fq 'cleanup[[:space:]]+obsolete' "$local_legacy_regress" ||
+  fail "local-lite legacy regress adapter must reject crashing volatile cleanup"
 for test_number in 001 002 003 004 005 006 007 008 009 010 011 012 013 014 015 016 017 018 019 020 021 022 023 024 025; do
   [[ -f "$local_regress_dir/TEST$test_number" &&
      -f "$local_regress_dir/EXPECTED$test_number" ]] ||

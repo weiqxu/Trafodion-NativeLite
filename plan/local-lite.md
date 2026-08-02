@@ -494,6 +494,11 @@ unchanged in local-lite.
 The next compatibility increment is portable single-byte
 `TRIM`/`LTRIM`/`RTRIM` family coverage over local tables.
 
+The broader effort to run portable sections from the legacy regress suites is
+tracked separately in `plan/local-lite-legacy-regress-roadmap.md`. Milestone 0
+provides a versioned TEST manifest, safety audit, isolated RocksDB adapter, and
+baseline evidence before mutable DML and catalog surface expansion begins.
+
 ## RocksDB Local Store Implementation
 
 This section records the implementation state of the current local-lite
@@ -922,8 +927,10 @@ Remaining, in suggested implementation order:
    concatenation, and predicates. Keep UTF8/UCS2 variants out of this
    increment.
 
-The next task to start is **Portable single-byte TRIM family regress
-coverage**.
+For the portable function-only lane, the next increment remains **single-byte
+TRIM family regress coverage**. The active broader legacy-suite task is
+**Milestone 0 inventory, adapter, and baseline** in
+`plan/local-lite-legacy-regress-roadmap.md`.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
