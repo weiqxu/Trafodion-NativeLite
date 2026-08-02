@@ -323,6 +323,24 @@ grep -q 'after-failure' <<<"$atomic_unique_verify_output" ||
 grep -Eq '^ *2 *$' <<<"$atomic_unique_verify_output" ||
   fail "failed UNIQUE commit advanced keyless metadata or leaked a row"
 
+autocommit_atomic_values_output=$(
+  printf "CREATE TABLE autocommit_atomic_values(a INT PRIMARY KEY, b VARCHAR(32));\nINSERT INTO autocommit_atomic_values VALUES (2, 'committed');\nINSERT INTO autocommit_atomic_values VALUES (1, 'must-not-commit'), (2, 'duplicate');\nexit;\n" |
+    run_sqlci
+)
+grep -q 'duplicate local-lite primary key' \
+  <<<"$autocommit_atomic_values_output" ||
+  fail "autocommit multi-row VALUES did not report the late primary-key conflict"
+
+autocommit_atomic_values_verify_output=$(
+  printf "SELECT b FROM autocommit_atomic_values WHERE a = 1;\nSELECT b FROM autocommit_atomic_values WHERE a = 2;\nDROP TABLE autocommit_atomic_values;\nexit;\n" |
+    run_sqlci
+)
+grep -q -- '--- 0 row(s) selected.' \
+  <<<"$autocommit_atomic_values_verify_output" ||
+  fail "failed autocommit multi-row VALUES partially published an earlier row"
+grep -q 'committed' <<<"$autocommit_atomic_values_verify_output" ||
+  fail "failed autocommit multi-row VALUES damaged the existing committed row"
+
 primary_key_output=$(
   printf "CREATE TABLE pk_t(a INT PRIMARY KEY, b VARCHAR(20));\nINSERT INTO pk_t VALUES (1, 'one');\nSELECT b FROM pk_t WHERE a = 1;\nINSERT INTO pk_t VALUES (1, 'dup');\nBEGIN WORK;\nINSERT INTO pk_t VALUES (2, 'two');\nSELECT b FROM pk_t WHERE a = 2;\nINSERT INTO pk_t VALUES (2, 'dup-pending');\nROLLBACK WORK;\nSELECT b FROM pk_t WHERE a = 2;\nDROP TABLE pk_t;\nexit;\n" |
     run_sqlci

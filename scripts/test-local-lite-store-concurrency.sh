@@ -28,26 +28,45 @@ cat >"$src" <<'CPP'
 #include <string>
 #include <vector>
 
-bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &,
-                              const std::string &,
-                              std::string *,
+bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
+                              const std::string &encodedRow,
+                              std::string *key,
                               std::string *error)
 {
+  if (table.primaryKeyColumns.empty())
+    {
+      if (error)
+        *error = "primary-key codec called for keyless table";
+      return false;
+    }
+  *key = "P" + encodedRow;
   if (error)
-    *error = "primary-key codec should not be used by this probe";
-  return false;
+    error->clear();
+  return true;
 }
 
 bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &,
-                             const std::string &,
-                             const std::vector<size_t> &,
-                             size_t,
-                             std::string *,
+                             const std::string &encodedRow,
+                             const std::vector<size_t> &keyColumns,
+                             size_t keyOrdinal,
+                             std::string *key,
                              bool *hasKey,
                              std::string *error)
 {
+  if (keyColumns.empty())
+    {
+      if (hasKey)
+        *hasKey = false;
+      if (error)
+        error->clear();
+      return true;
+    }
+  char ordinal[32];
+  snprintf(ordinal, sizeof(ordinal), "%lu",
+           static_cast<unsigned long>(keyOrdinal));
+  *key = "U" + std::string(ordinal) + ":" + encodedRow;
   if (hasKey)
-    *hasKey = false;
+    *hasKey = true;
   if (error)
     error->clear();
   return true;
@@ -67,6 +86,19 @@ struct WriterArg
   SharedState *state;
   int writer;
   int rows;
+};
+
+struct ConflictState
+{
+  LocalLiteTableDef table;
+  std::string payload;
+  std::string expectedError;
+  pthread_mutex_t mutex;
+  pthread_barrier_t barrier;
+  int successes;
+  int expectedConflicts;
+  bool failed;
+  std::string error;
 };
 
 static void recordError(SharedState *state, const std::string &error)
@@ -136,6 +168,77 @@ static void *scannerMain(void *arg)
       if (done)
         return NULL;
     }
+}
+
+static void *conflictWriterMain(void *arg)
+{
+  ConflictState *state = static_cast<ConflictState *>(arg);
+  LocalLiteRocksDBStore store;
+  LocalLiteTxn txn(&store);
+  pthread_barrier_wait(&state->barrier);
+
+  uint64_t rowId = 0;
+  std::string error;
+  bool inserted = txn.insertRow(state->table, state->payload, &rowId, &error);
+
+  pthread_mutex_lock(&state->mutex);
+  if (inserted)
+    state->successes++;
+  else if (error == state->expectedError)
+    state->expectedConflicts++;
+  else
+    {
+      state->failed = true;
+      if (state->error.empty())
+        state->error = error;
+    }
+  pthread_mutex_unlock(&state->mutex);
+  return NULL;
+}
+
+static bool runConflictProbe(const LocalLiteTableDef &table,
+                             const std::string &payload,
+                             const std::string &expectedError,
+                             std::string *error)
+{
+  const int writerCount = 8;
+  ConflictState state;
+  state.table = table;
+  state.payload = payload;
+  state.expectedError = expectedError;
+  state.successes = 0;
+  state.expectedConflicts = 0;
+  state.failed = false;
+  pthread_mutex_init(&state.mutex, NULL);
+  pthread_barrier_init(&state.barrier, NULL, writerCount);
+
+  pthread_t writers[writerCount];
+  for (int i = 0; i < writerCount; i++)
+    if (pthread_create(&writers[i], NULL, conflictWriterMain, &state) != 0)
+      {
+        *error = "create conflict writer thread failed";
+        return false;
+      }
+  for (int i = 0; i < writerCount; i++)
+    pthread_join(writers[i], NULL);
+
+  pthread_barrier_destroy(&state.barrier);
+  pthread_mutex_destroy(&state.mutex);
+  if (state.failed)
+    {
+      *error = state.error;
+      return false;
+    }
+  if (state.successes != 1 || state.expectedConflicts != writerCount - 1)
+    {
+      char counts[128];
+      snprintf(counts, sizeof(counts),
+               "expected 1 success and %d conflicts, found %d and %d",
+               writerCount - 1, state.successes, state.expectedConflicts);
+      *error = counts;
+      return false;
+    }
+  return true;
 }
 
 int main()
@@ -235,6 +338,66 @@ int main()
     {
       fprintf(stderr, "row ids are not contiguous from 1 to %zu\n",
               expectedRows);
+      return 1;
+    }
+
+  LocalLiteTableDef primaryTable = state.table;
+  primaryTable.name = "CONC_PK_T";
+  primaryTable.objectUid = 1002;
+  primaryTable.nextRowId = 1;
+  primaryTable.primaryKeyColumns.push_back(0);
+  if (!setupStore.createTable(primaryTable, &error))
+    {
+      fprintf(stderr, "create primary-key table failed: %s\n", error.c_str());
+      return 1;
+    }
+  if (!runConflictProbe(primaryTable, "same-primary-key",
+                        "duplicate local-lite primary key", &error))
+    {
+      fprintf(stderr, "primary-key conflict probe failed: %s\n", error.c_str());
+      return 1;
+    }
+  rows.clear();
+  if (!verifyTxn.scanRows(primaryTable, &rows, &error) ||
+      rows.size() != 1 || rows[0].value != "same-primary-key")
+    {
+      fprintf(stderr, "primary-key conflict changed persisted rows: %s\n",
+              error.c_str());
+      return 1;
+    }
+
+  LocalLiteTableDef uniqueTable = state.table;
+  uniqueTable.name = "CONC_UQ_T";
+  uniqueTable.objectUid = 1003;
+  uniqueTable.nextRowId = 1;
+  uniqueTable.uniqueKeyColumns.push_back(std::vector<size_t>(1, 0));
+  if (!setupStore.createTable(uniqueTable, &error))
+    {
+      fprintf(stderr, "create unique-key table failed: %s\n", error.c_str());
+      return 1;
+    }
+  if (!runConflictProbe(uniqueTable, "same-unique-key",
+                        "duplicate local-lite unique key", &error))
+    {
+      fprintf(stderr, "unique-key conflict probe failed: %s\n", error.c_str());
+      return 1;
+    }
+  LocalLiteTableDef loadedUnique;
+  if (!setupStore.loadTable(uniqueTable.catalog, uniqueTable.schema,
+                            uniqueTable.name, &loadedUnique, &error) ||
+      loadedUnique.nextRowId != 2)
+    {
+      fprintf(stderr, "unique conflicts advanced keyless row ids: %s\n",
+              error.c_str());
+      return 1;
+    }
+  uint64_t nextUniqueRowId = 0;
+  if (!verifyTxn.insertRow(uniqueTable, "different-unique-key",
+                           &nextUniqueRowId, &error) ||
+      nextUniqueRowId != 2)
+    {
+      fprintf(stderr, "unique conflict left row-id metadata unusable: %s\n",
+              error.c_str());
       return 1;
     }
 

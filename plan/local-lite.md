@@ -697,7 +697,8 @@ above.
 
 ### Current Task Status
 
-Last updated after adding native prepared-statement execution regress coverage.
+Last updated after closing the Phase 1 through 5 local transaction/storage v1
+acceptance matrix and adding native `REPEAT()` regress coverage.
 
 Completed:
 
@@ -734,6 +735,10 @@ Completed:
 - Same-process local store concurrency probe covering multiple writer threads,
   overlapping scans, shared RocksDB handles, and duplicate-free row-id
   allocation through the transaction facade.
+- The same concurrency probe now covers simultaneous primary-key and UNIQUE-key
+  conflicts. Exactly one writer may publish each key, duplicate writers cannot
+  overwrite the persisted row, and failed UNIQUE attempts do not advance the
+  keyless row-id metadata.
 - Cross-process shared-store boundary enforcement for `TRAF_LOCAL_STORE_DIR`:
   a second process that tries to open an already-held local store receives an
   explicit local-lite diagnostic instead of a raw RocksDB `LOCK` message.
@@ -900,6 +905,13 @@ Completed:
   statement transaction when no explicit local transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
   either child error or cancellation.
+- RocksDB SQLCI smoke now verifies that an autocommit multi-row `INSERT VALUES`
+  with a late primary-key conflict does not partially publish an earlier row.
+
+The transaction/concurrency roadmap Phases 1 through 5 are complete for the
+documented local-lite v1 boundary. Cross-process writers, cross-table atomic
+snapshots, crash-atomic catalog/table publication, multi-table atomic commit,
+and TMF coordination remain explicit post-v1 or Phase 6 work.
 
 Remaining, in suggested implementation order:
 

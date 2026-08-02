@@ -103,8 +103,8 @@ database handles:
 
 ### Phase 1: Shared RocksDB Handle Ownership
 
-Status: implemented for process-local handle sharing and covered by the
-RocksDB SQLCI smoke self-join regression.
+Status: completed for the local-lite v1 process boundary. Process-local handle
+sharing is covered by the RocksDB SQLCI smoke self-join regression.
 
 Fix the current same-process lock problem first.
 
@@ -128,8 +128,8 @@ Validation:
 
 ### Phase 2: Statement-Level Atomic Writes
 
-Status: implemented for local table INSERT, including multi-row tuple-flow
-plans. Row-id allocation and row persistence go through
+Status: completed for local-lite v1 local table INSERT, including multi-row
+tuple-flow plans. Row-id allocation and row persistence go through
 `LocalLiteTxn::insertRow()`; an autocommit tuple flow targeting the local insert
 TCB opens an implicit local transaction, commits its pending rows only after
 complete source/target EOD, and rolls back on source errors, target errors, or
@@ -168,7 +168,7 @@ Validation:
 
 ### Phase 3: Snapshot-Based Statement Reads
 
-Status: implemented for statement-wide reads of each local RocksDB table.
+Status: completed for statement-wide reads of each local RocksDB table.
 Executor root begin/end hooks identify a prepared statement execution with the
 statement globals pointer plus execution count. `LocalLiteTxn` uses that token
 for both full scans and get-row access, and every scan TCB that reads the same
@@ -207,7 +207,8 @@ Validation:
 
 ### Phase 4: Explicit Local Transactions
 
-Status: repeatable-read context implemented for single-process local-lite SQLCI.
+Status: completed for the single-process local-lite v1 transaction boundary.
+The implementation provides a repeatable-read context for local-lite SQLCI.
 `BEGIN WORK` creates a pending write set and a transaction read context. The
 first access to each table lazily acquires its RocksDB snapshot, and later
 statements in the transaction reuse that snapshot for both full scans and
@@ -264,7 +265,8 @@ Validation:
 
 ### Phase 5: Deterministic Row Keys And Conflict Detection
 
-Status: initial primary-key storage support implemented. Local-lite DDL now
+Status: completed for the local-lite v1 key and conflict-detection scope.
+Local-lite DDL now
 accepts PRIMARY KEY and UNIQUE, persists key column ordinals in `LLT3` table
 metadata, and rejects RI/CHECK constraints. INSERTs into primary-key tables
 build a deterministic `P`-prefixed RocksDB row key from the binary aligned
@@ -328,6 +330,16 @@ Validation:
   rollback, primary-key/unique-key get-row trace assertions, explain subset-scan
   assertions, and keyless table regression are covered by the RocksDB SQLCI
   smoke.
+- The same-process store concurrency probe starts simultaneous writers for one
+  primary key and one UNIQUE key, verifies exactly one writer succeeds, and
+  confirms failed UNIQUE attempts do not advance keyless `nextRowId`.
+
+Phases 1 through 5 are complete for the v1 boundary defined by this roadmap.
+This completion deliberately does not claim cross-process concurrent writers,
+cross-table atomic snapshots, crash-atomic catalog/table publication,
+multi-table atomic commit, or TMF coordination. Those require a different
+storage layout or the optional Phase 6 integration rather than additional work
+inside the completed Phase 1 through 5 scope.
 
 ### Phase 6: Optional TMF Integration Boundary
 

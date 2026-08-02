@@ -144,6 +144,12 @@ grep -q 'LocalLiteSqlTable_process' "$sqlcmd_source" ||
 [[ -f "$local_sqlci_smoke" ]] || fail "missing local-lite RocksDB SQLCI smoke test: $local_sqlci_smoke"
 [[ -x "$local_store_concurrency" ]] ||
   fail "missing executable local-lite store concurrency test: $local_store_concurrency"
+grep -q 'same-primary-key' "$local_store_concurrency" ||
+  fail "local-lite concurrency test must cover simultaneous primary-key conflicts"
+grep -q 'same-unique-key' "$local_store_concurrency" ||
+  fail "local-lite concurrency test must cover simultaneous UNIQUE-key conflicts"
+grep -q 'unique conflicts advanced keyless row ids' "$local_store_concurrency" ||
+  fail "local-lite concurrency test must guard keyless row-id metadata after conflicts"
 [[ -x "$local_store_process_boundary" ]] ||
   fail "missing executable local-lite store process-boundary test: $local_store_process_boundary"
 [[ -x "$local_statement_snapshot" ]] ||
@@ -216,6 +222,8 @@ grep -q 'LOCAL_LITE_SCAN_GET_ROW' "$local_sqlci_smoke" ||
   fail "SQLCI smoke must verify primary-key equality uses get-row scan"
 grep -q 'LOCAL_LITE_SCAN_FULL' "$local_sqlci_smoke" ||
   fail "SQLCI smoke must verify non-key predicates fall back to full scan"
+grep -q 'autocommit multi-row VALUES partially published' "$local_sqlci_smoke" ||
+  fail "SQLCI smoke must cover atomic autocommit multi-row VALUES failure"
 grep -q 'ddl_tdb->setHbaseDDL(TRUE)' "$gen_relmisc" ||
   fail "generator must route local-lite CREATE/DROP through PROCESSDDL"
 grep -q 'switchToCmpContext' "$ex_ddl" ||
