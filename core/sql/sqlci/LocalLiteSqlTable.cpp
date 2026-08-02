@@ -107,18 +107,13 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       *retcode = reportError(sqlciEnv, "TRUNCATE TABLE is not supported in local-lite");
       return true;
     }
-  if (startsWithWord(sql, "DELETE") ||
-      startsWithWord(sql, "MERGE"))
+  if (startsWithWord(sql, "UPSERT USING LOAD"))
     {
-      *retcode = reportError(sqlciEnv, "DELETE and MERGE are not supported in local-lite");
+      *retcode = reportError(
+          sqlciEnv,
+          "UPSERT USING LOAD is not supported for local-lite RocksDB tables; use UPSERT");
       return true;
     }
-  if (startsWithWord(sql, "UPSERT"))
-    {
-      *retcode = reportError(sqlciEnv, "UPSERT is not supported in local-lite v1; use INSERT");
-      return true;
-    }
-
   return false;
 }
 

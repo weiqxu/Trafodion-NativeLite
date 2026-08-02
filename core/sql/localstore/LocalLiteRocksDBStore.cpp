@@ -974,6 +974,114 @@ public:
     return checkRocksError(err, "update local-lite rows", error);
   }
 
+  bool deleteRows(const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRow> &rows,
+                  std::string *error)
+  {
+    if (rows.empty())
+      return true;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    LocalLiteTableDef loaded;
+    if (!loadTableLocked(table.catalog, table.schema, table.name,
+                         &loaded, error))
+      return false;
+    if (loaded.objectUid != table.objectUid)
+      {
+        setError(error, "local-lite table changed during delete");
+        return false;
+      }
+
+    rocksdb_t *db = openTableLocked(LocalLiteRocksDBStore::tablePath(loaded),
+                                    false, error);
+    if (!db)
+      return false;
+
+    std::vector<std::string> rowKeys(rows.size());
+    std::vector< std::vector<std::string> > uniqueKeys(rows.size());
+    std::set<std::string> selectedKeys;
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        if (loaded.primaryKeyColumns.empty())
+          appendUint64(rowKeys[i], rows[i].rowId);
+        else if (!LocalLiteBuildPrimaryKey(loaded, rows[i].value,
+                                           &rowKeys[i], error))
+          return false;
+        if (!selectedKeys.insert(rowKeys[i]).second)
+          {
+            setError(error, "local-lite delete selected a row more than once");
+            return false;
+          }
+
+        for (size_t keyIndex = 0;
+             keyIndex < loaded.uniqueKeyColumns.size(); keyIndex++)
+          {
+            std::string uniqueKey;
+            bool hasUniqueKey = false;
+            if (!LocalLiteBuildUniqueKey(
+                    loaded, rows[i].value,
+                    loaded.uniqueKeyColumns[keyIndex], keyIndex,
+                    &uniqueKey, &hasUniqueKey, error))
+              return false;
+            if (hasUniqueKey)
+              uniqueKeys[i].push_back(uniqueKey);
+          }
+      }
+
+    rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        char *err = NULL;
+        size_t valueLen = 0;
+        char *value = rocksdb_get(db, readOptions,
+                                  rowKeys[i].data(), rowKeys[i].size(),
+                                  &valueLen, &err);
+        if (!checkRocksError(err, "read local-lite row for delete", error))
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            return false;
+          }
+        if (!value)
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            setError(error, "local-lite delete row no longer exists");
+            return false;
+          }
+        std::string encodedValue(value, valueLen);
+        rocksdb_free(value);
+        std::string currentRow;
+        if (!decodeRowValue(encodedValue, &currentRow, error))
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            return false;
+          }
+        if (currentRow != rows[i].value)
+          {
+            rocksdb_readoptions_destroy(readOptions);
+            setError(error, "local-lite delete row changed; restart statement");
+            return false;
+          }
+      }
+    rocksdb_readoptions_destroy(readOptions);
+
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        rocksdb_writebatch_delete(batch, rowKeys[i].data(), rowKeys[i].size());
+        for (size_t keyIndex = 0;
+             keyIndex < uniqueKeys[i].size(); keyIndex++)
+          rocksdb_writebatch_delete(batch,
+                                    uniqueKeys[i][keyIndex].data(),
+                                    uniqueKeys[i][keyIndex].size());
+      }
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    char *err = NULL;
+    rocksdb_write(db, writeOptions, batch, &err);
+    rocksdb_writeoptions_destroy(writeOptions);
+    rocksdb_writebatch_destroy(batch);
+    return checkRocksError(err, "delete local-lite rows", error);
+  }
+
   bool commitPendingRows(const LocalLiteTableDef &table,
                          const std::vector<LocalLiteRow> &rows,
                          std::string *error)
@@ -1142,6 +1250,249 @@ public:
         return false;
       }
 
+    return true;
+  }
+
+  bool commitPendingMutations(
+      const LocalLiteTableDef &table,
+      const std::vector<LocalLiteRowMutation> &updates,
+      const std::vector<LocalLiteRow> &deletes,
+      const std::vector<LocalLiteRow> &inserts,
+      std::string *error)
+  {
+    if (updates.empty() && deletes.empty() && inserts.empty())
+      return true;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    LocalLiteTableDef loaded;
+    if (!loadTableLocked(table.catalog, table.schema, table.name,
+                         &loaded, error))
+      return false;
+    if (loaded.objectUid != table.objectUid)
+      {
+        setError(error,
+                 "local-lite table changed while transaction was active");
+        return false;
+      }
+
+    rocksdb_t *db = openTableLocked(LocalLiteRocksDBStore::tablePath(loaded),
+                                    false, error);
+    if (!db)
+      return false;
+
+    typedef std::map<std::string, std::string> RecordMap;
+    typedef std::map<std::string, LocalLiteRow> RowMap;
+    RecordMap originalRecords;
+    RowMap originalRows;
+    rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+    rocksdb_iterator_t *it = rocksdb_create_iterator(db, readOptions);
+    for (rocksdb_iter_seek_to_first(it); rocksdb_iter_valid(it);
+         rocksdb_iter_next(it))
+      {
+        size_t keyLen = 0;
+        size_t valueLen = 0;
+        const char *rawKey = rocksdb_iter_key(it, &keyLen);
+        const char *rawValue = rocksdb_iter_value(it, &valueLen);
+        std::string key(rawKey, keyLen);
+        std::string value(rawValue, valueLen);
+        originalRecords[key] = value;
+        if (!key.empty() && key[0] == 'U')
+          continue;
+
+        LocalLiteRow row;
+        row.rowId = 0;
+        if (key.size() == 8)
+          {
+            size_t offset = 0;
+            row.rowId = readUint64(key, &offset);
+          }
+        if (!decodeRowValue(value, &row.value, error))
+          {
+            rocksdb_iter_destroy(it);
+            rocksdb_readoptions_destroy(readOptions);
+            return false;
+          }
+        originalRows[key] = row;
+      }
+    char *iteratorError = NULL;
+    rocksdb_iter_get_error(it, &iteratorError);
+    rocksdb_iter_destroy(it);
+    rocksdb_readoptions_destroy(readOptions);
+    if (!checkRocksError(iteratorError,
+                         "scan local-lite rows for transaction commit",
+                         error))
+      return false;
+
+    RowMap finalRows = originalRows;
+    std::set<std::string> removedKeys;
+    std::vector<std::string> updatedKeys(updates.size());
+    std::vector<std::string> insertedKeys(inserts.size());
+    const bool keyless = loaded.primaryKeyColumns.empty();
+
+    for (size_t i = 0; i < updates.size(); i++)
+      {
+        std::string oldKey;
+        if (keyless)
+          appendUint64(oldKey, updates[i].before.rowId);
+        else if (!LocalLiteBuildPrimaryKey(loaded,
+                                           updates[i].before.value,
+                                           &oldKey, error))
+          return false;
+        RowMap::iterator current = originalRows.find(oldKey);
+        if (current == originalRows.end() ||
+            current->second.value != updates[i].before.value)
+          {
+            setError(error,
+                     "local-lite update row changed; restart transaction");
+            return false;
+          }
+        if (!removedKeys.insert(oldKey).second)
+          {
+            setError(error,
+                     "local-lite transaction selected a row more than once");
+            return false;
+          }
+        if (keyless)
+          updatedKeys[i] = oldKey;
+        else if (!LocalLiteBuildPrimaryKey(loaded, updates[i].after,
+                                           &updatedKeys[i], error))
+          return false;
+      }
+
+    for (size_t i = 0; i < deletes.size(); i++)
+      {
+        std::string rowKey;
+        if (keyless)
+          appendUint64(rowKey, deletes[i].rowId);
+        else if (!LocalLiteBuildPrimaryKey(loaded, deletes[i].value,
+                                           &rowKey, error))
+          return false;
+        RowMap::iterator current = originalRows.find(rowKey);
+        if (current == originalRows.end() ||
+            current->second.value != deletes[i].value)
+          {
+            setError(error,
+                     "local-lite delete row changed; restart transaction");
+            return false;
+          }
+        if (!removedKeys.insert(rowKey).second)
+          {
+            setError(error,
+                     "local-lite transaction selected a row more than once");
+            return false;
+          }
+      }
+
+    for (std::set<std::string>::const_iterator key = removedKeys.begin();
+         key != removedKeys.end(); ++key)
+      finalRows.erase(*key);
+
+    for (size_t i = 0; i < updates.size(); i++)
+      {
+        LocalLiteRow row;
+        row.rowId = updates[i].before.rowId;
+        row.value = updates[i].after;
+        if (!finalRows.insert(std::make_pair(updatedKeys[i], row)).second)
+          {
+            setError(error, "duplicate local-lite primary key");
+            return false;
+          }
+      }
+
+    for (size_t i = 0; i < inserts.size(); i++)
+      {
+        if (keyless)
+          {
+            const uint64_t expectedRowId = loaded.nextRowId + i;
+            if (inserts[i].rowId != expectedRowId)
+              {
+                setError(error,
+                         "local-lite keyless row-id allocation changed while "
+                         "transaction was active; restart and retry the "
+                         "transaction");
+                return false;
+              }
+            appendUint64(insertedKeys[i], inserts[i].rowId);
+          }
+        else if (!LocalLiteBuildPrimaryKey(loaded, inserts[i].value,
+                                           &insertedKeys[i], error))
+          return false;
+        if (!finalRows.insert(
+                std::make_pair(insertedKeys[i], inserts[i])).second)
+          {
+            setError(error, keyless ? "duplicate local-lite row key"
+                                    : "duplicate local-lite primary key");
+            return false;
+          }
+      }
+
+    RecordMap finalRecords;
+    for (RowMap::const_iterator row = finalRows.begin();
+         row != finalRows.end(); ++row)
+      {
+        finalRecords[row->first] = encodeRowValue(row->second.value);
+        for (size_t keyIndex = 0;
+             keyIndex < loaded.uniqueKeyColumns.size(); keyIndex++)
+          {
+            std::string uniqueKey;
+            bool hasUniqueKey = false;
+            if (!LocalLiteBuildUniqueKey(
+                    loaded, row->second.value,
+                    loaded.uniqueKeyColumns[keyIndex], keyIndex,
+                    &uniqueKey, &hasUniqueKey, error))
+              return false;
+            if (hasUniqueKey &&
+                !finalRecords.insert(
+                    std::make_pair(uniqueKey, row->first)).second)
+              {
+                setError(error, "duplicate local-lite unique key");
+                return false;
+              }
+          }
+      }
+
+    std::string tableMetadataKey;
+    std::string oldMetadata;
+    if (keyless && !inserts.empty())
+      {
+        LocalLiteTableDef updated = loaded;
+        updated.nextRowId += inserts.size();
+        tableMetadataKey = tableKey(loaded.catalog, loaded.schema, loaded.name);
+        oldMetadata = encodeTable(loaded);
+        if (!putCatalogLocked(tableMetadataKey, encodeTable(updated),
+                              "update local-lite row id metadata", error))
+          return false;
+      }
+
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    for (RecordMap::const_iterator record = originalRecords.begin();
+         record != originalRecords.end(); ++record)
+      if (finalRecords.find(record->first) == finalRecords.end())
+        rocksdb_writebatch_delete(batch,
+                                  record->first.data(), record->first.size());
+    for (RecordMap::const_iterator record = finalRecords.begin();
+         record != finalRecords.end(); ++record)
+      {
+        RecordMap::const_iterator old = originalRecords.find(record->first);
+        if (old == originalRecords.end() || old->second != record->second)
+          rocksdb_writebatch_put(batch,
+                                 record->first.data(), record->first.size(),
+                                 record->second.data(), record->second.size());
+      }
+
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    char *writeError = NULL;
+    rocksdb_write(db, writeOptions, batch, &writeError);
+    rocksdb_writeoptions_destroy(writeOptions);
+    rocksdb_writebatch_destroy(batch);
+    if (!checkRocksError(writeError,
+                         "commit local-lite table mutations", error))
+      {
+        if (keyless && !inserts.empty())
+          putCatalogLocked(tableMetadataKey, oldMetadata,
+                           "rollback local-lite row id metadata", NULL);
+        return false;
+      }
     return true;
   }
 
@@ -1402,10 +1753,9 @@ public:
     size_t committedTables = 0;
     for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
       {
-        if (!LocalLiteStorageManager::instance().updateRows(
-                t->second.table, t->second.updates, error) ||
-            !LocalLiteStorageManager::instance().commitPendingRows(
-                t->second.table, t->second.rows, error))
+        if (!LocalLiteStorageManager::instance().commitPendingMutations(
+                t->second.table, t->second.updates, t->second.deletes,
+                t->second.rows, error))
           {
             if (committedTables > 0 && error)
               *error +=
@@ -1597,6 +1947,69 @@ public:
     return true;
   }
 
+  bool deleteRows(LocalLiteRocksDBStore *store,
+                  const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRow> &rows,
+                  std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_)
+      return store->deleteRows(table, rows, error);
+
+    PendingTable &pending = pendingTables_[tableKey(table)];
+    if (!pending.initialized)
+      {
+        LocalLiteTableDef loaded;
+        if (!store->loadTable(table.catalog, table.schema, table.name,
+                              &loaded, error))
+          return false;
+        pending.table = loaded;
+        pending.nextRowId = loaded.nextRowId;
+        pending.initialized = true;
+      }
+
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        bool merged = false;
+        for (size_t rowIndex = 0; rowIndex < pending.rows.size(); rowIndex++)
+          if (pending.rows[rowIndex].rowId == rows[i].rowId &&
+              pending.rows[rowIndex].value == rows[i].value)
+            {
+              pending.rows.erase(pending.rows.begin() + rowIndex);
+              merged = true;
+              break;
+            }
+        if (merged)
+          continue;
+
+        for (size_t updateIndex = 0;
+             updateIndex < pending.updates.size(); updateIndex++)
+          if (pending.updates[updateIndex].before.rowId == rows[i].rowId &&
+              pending.updates[updateIndex].after == rows[i].value)
+            {
+              pending.deletes.push_back(
+                  pending.updates[updateIndex].before);
+              pending.updates.erase(pending.updates.begin() + updateIndex);
+              merged = true;
+              break;
+            }
+        if (merged)
+          continue;
+
+        for (size_t deleteIndex = 0;
+             deleteIndex < pending.deletes.size(); deleteIndex++)
+          if (pending.deletes[deleteIndex].rowId == rows[i].rowId &&
+              pending.deletes[deleteIndex].value == rows[i].value)
+            {
+              setError(error,
+                       "local-lite delete selected a row more than once");
+              return false;
+            }
+        pending.deletes.push_back(rows[i]);
+      }
+    return true;
+  }
+
   bool scanRows(LocalLiteRocksDBStore *store,
                 const LocalLiteTableDef &table,
                 const void *statementOwner,
@@ -1639,6 +2052,17 @@ public:
               break;
             }
       }
+    for (size_t deleteIndex = 0;
+         deleteIndex < it->second.deletes.size(); deleteIndex++)
+      for (size_t rowIndex = 0; rowIndex < rows->size(); rowIndex++)
+        if ((*rows)[rowIndex].rowId ==
+              it->second.deletes[deleteIndex].rowId &&
+            (*rows)[rowIndex].value ==
+              it->second.deletes[deleteIndex].value)
+          {
+            rows->erase(rows->begin() + rowIndex);
+            break;
+          }
     for (size_t i = 0; i < it->second.rows.size(); i++)
       rows->push_back(it->second.rows[i]);
     return true;
@@ -1672,6 +2096,18 @@ public:
           PendingMap::iterator it = pendingTables_.find(tableKey(table));
           if (it != pendingTables_.end())
             {
+              for (size_t i = 0; i < it->second.deletes.size(); i++)
+                {
+                  bool matchesDelete = false;
+                  if (!pendingRowMatchesKey(it->second.table,
+                                            it->second.deletes[i],
+                                            storageKey,
+                                            &matchesDelete,
+                                            error))
+                    return false;
+                  if (matchesDelete)
+                    return true;
+                }
               for (size_t i = it->second.updates.size(); i > 0; i--)
                 {
                   const LocalLiteRowMutation &mutation =
@@ -1742,6 +2178,7 @@ private:
     uint64_t nextRowId;
     std::vector<LocalLiteRow> rows;
     std::vector<LocalLiteRowMutation> updates;
+    std::vector<LocalLiteRow> deletes;
   };
   typedef std::map<std::string, PendingTable> PendingMap;
 
@@ -2037,6 +2474,16 @@ bool LocalLiteRocksDBStore::updateRows(
                                                         error);
 }
 
+bool LocalLiteRocksDBStore::deleteRows(
+    const LocalLiteTableDef &table,
+    const std::vector<LocalLiteRow> &rows,
+    std::string *error)
+{
+  if (!open(error))
+    return false;
+  return LocalLiteStorageManager::instance().deleteRows(table, rows, error);
+}
+
 bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,
                                         const std::string &storageKey,
                                         LocalLiteRow *row,
@@ -2233,6 +2680,44 @@ bool LocalLiteTxn::insertRow(const LocalLiteTableDef &table,
                                                 rowId, error);
 }
 
+bool LocalLiteTxn::upsertRow(const LocalLiteTableDef &table,
+                             const std::string &encodedRow,
+                             uint64_t *rowId,
+                             std::string *error)
+{
+  if (!store_)
+    {
+      setError(error, "local-lite transaction missing store");
+      return false;
+    }
+  if (table.primaryKeyColumns.empty())
+    {
+      setError(error, "local-lite UPSERT requires a primary key");
+      return false;
+    }
+
+  std::string key;
+  if (!LocalLiteBuildPrimaryKey(table, encodedRow, &key, error))
+    return false;
+
+  LocalLiteRow existing;
+  bool found = false;
+  if (!getRowByKey(table, key, &existing, &found, error))
+    return false;
+  if (!found)
+    return insertRow(table, encodedRow, rowId, error);
+
+  LocalLiteRowMutation mutation;
+  mutation.before = existing;
+  mutation.after = encodedRow;
+  std::vector<LocalLiteRowMutation> mutations(1, mutation);
+  if (!updateRows(table, mutations, error))
+    return false;
+  if (rowId)
+    *rowId = existing.rowId;
+  return true;
+}
+
 bool LocalLiteTxn::updateRows(
     const LocalLiteTableDef &table,
     const std::vector<LocalLiteRowMutation> &mutations,
@@ -2245,6 +2730,18 @@ bool LocalLiteTxn::updateRows(
     }
   return LocalLiteTxnState::instance().updateRows(store_, table, mutations,
                                                   error);
+}
+
+bool LocalLiteTxn::deleteRows(const LocalLiteTableDef &table,
+                              const std::vector<LocalLiteRow> &rows,
+                              std::string *error)
+{
+  if (!store_)
+    {
+      setError(error, "local-lite transaction missing store");
+      return false;
+    }
+  return LocalLiteTxnState::instance().deleteRows(store_, table, rows, error);
 }
 
 bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,

@@ -102,6 +102,7 @@ ExTupleFlowTcb::ExTupleFlowTcb(const ExTupleFlowTdb &  tuple_flow_tdb,
 
 #ifdef TRAF_LOCAL_LITE
   localLiteAutocommitTxnStarted_ = FALSE;
+  localLiteRowsAffectedBefore_ = 0;
 #endif
 
   ex_cri_desc * from_parent_cri = tuple_flow_tdb.criDescDown_;  
@@ -213,9 +214,14 @@ short ExTupleFlowTcb::work()
             // The target receives one request per source row. Keep those rows
             // pending until the complete source/target flow reaches EOD.
             if ((tcbTgt_->isLocalLiteInsert() ||
-                 tcbTgt_->isLocalLiteUpdate()) &&
+                 tcbTgt_->isLocalLiteUpdate() ||
+                 tcbTgt_->isLocalLiteDelete()) &&
                 !LocalLiteTxnManager::active())
               {
+                ExMasterStmtGlobals *master = getGlobals()->
+                  castToExExeStmtGlobals()->castToExMasterStmtGlobals();
+                localLiteRowsAffectedBefore_ =
+                  master ? master->getRowsAffected() : 0;
                 std::string error;
                 if (!LocalLiteTxnManager::begin(&error))
                   {
@@ -754,6 +760,10 @@ short ExTupleFlowTcb::work()
                     std::string error;
                     LocalLiteTxnManager::rollback(&error);
                     localLiteAutocommitTxnStarted_ = FALSE;
+                    ExMasterStmtGlobals *master = getGlobals()->
+                      castToExExeStmtGlobals()->castToExMasterStmtGlobals();
+                    if (master)
+                      master->setRowsAffected(localLiteRowsAffectedBefore_);
                   }
 #endif
 	        pstate.step_ = DONE_; 
@@ -776,6 +786,10 @@ short ExTupleFlowTcb::work()
                 if (!LocalLiteTxnManager::commit(&error))
                   {
                     localLiteAutocommitTxnStarted_ = FALSE;
+                    ExMasterStmtGlobals *master = getGlobals()->
+                      castToExExeStmtGlobals()->castToExMasterStmtGlobals();
+                    if (master)
+                      master->setRowsAffected(localLiteRowsAffectedBefore_);
 
                     ex_queue_entry *upEntry = qParent_.up->getTailEntry();
                     upEntry->copyAtp(pentry_down);
@@ -793,7 +807,9 @@ short ExTupleFlowTcb::work()
                       qParent_.down->getHeadIndex();
                     upEntry->upState.parentIndex =
                       pentry_down->downState.parentIndex;
-                    upEntry->upState.setMatchNo(pstate.matchCount_);
+                    // The RocksDB table batch was rejected, so none of the
+                    // staged target rows became visible.
+                    upEntry->upState.setMatchNo(0);
                     qParent_.up->insert();
                     return WORK_CALL_AGAIN;
                   }
@@ -928,9 +944,6 @@ ex_tcb_private_state * ExTupleFlowPrivateState::allocate_new(const ex_tcb *tcb)
 {
   return new(((ex_tcb *)tcb)->getSpace()) ExTupleFlowPrivateState((ExTupleFlowTcb *) tcb);
 }
-
-
-
 
 
 

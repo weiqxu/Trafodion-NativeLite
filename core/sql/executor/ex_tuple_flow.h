@@ -117,6 +117,7 @@ class ExTupleFlowTcb : public ex_tcb
 
 #ifdef TRAF_LOCAL_LITE
   NABoolean localLiteAutocommitTxnStarted_;
+  Int64 localLiteRowsAffectedBefore_;
 #endif
 
 public:

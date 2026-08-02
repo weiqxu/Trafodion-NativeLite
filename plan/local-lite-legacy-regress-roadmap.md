@@ -137,6 +137,21 @@ key changes, late conflicts, autocommit, and explicit transaction coverage.
 
 ## Milestone 2: DELETE, UPSERT, And MERGE
 
+Status: completed in the working tree. DELETE, primary-key UPSERT, and MERGE
+have native coverage in `localLite/TEST027`, `TEST028`, and `TEST029`. UPSERT
+covers insert/update selection, multi-row VALUES, INSERT/DELETE overlay,
+explicit commit/rollback, UNIQUE-key replacement/reuse, and UPSERT SELECT.
+MERGE covers matched update, not-matched insert, conditional matched actions,
+read-own-write in an explicit transaction, rollback, and statement rollback on
+a late UNIQUE conflict. Per-table transaction publication validates the final
+row/key image and applies UPDATE/DELETE/INSERT through one RocksDB WriteBatch.
+
+The executor uses RocksDB rows exclusively. Historical compiler/executor class
+names containing `Hbase` remain node names, not a dependency on an HBase client,
+transaction manager, or HFile path. Accordingly, the HBase/HFile-specific
+UPSERT USING LOAD path remains intentionally unsupported. Cross-table commit is
+also still intentionally not atomic.
+
 Implement pending deletes, UNIQUE record removal, DELETE visibility, UPSERT
 insert/update selection, MERGE matched/not-matched paths, statement atomicity,
 and transaction overlay behavior.

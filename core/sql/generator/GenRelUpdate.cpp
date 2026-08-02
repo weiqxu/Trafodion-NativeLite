@@ -949,6 +949,12 @@ short HbaseDelete::codeGen(Generator * generator)
 				     NULL,
 				     FALSE /* doBulkMove */);
 
+#ifdef TRAF_LOCAL_LITE
+  // The local-lite DELETE executor projects persisted canonical rows into the
+  // conversion tuple before evaluating the generated predicate.
+  work_cri_desc->setTupleDescriptor(convertTuppIndex, tuple_desc);
+#endif
+
   if ((asciiRowFormat == ExpTupleDesc::SQLMX_ALIGNED_FORMAT) &&
       (hasAddedColumns))
     {

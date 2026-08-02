@@ -1154,7 +1154,12 @@ private:
 
     LocalLiteTxn txn(&store_);
     uint64_t rowId = 0;
-    if (!txn.insertRow(table_, encodedRow, &rowId, error))
+    if (insertTdb().getAccessType() == ComTdbHbaseAccess::UPSERT_)
+      {
+        if (!txn.upsertRow(table_, encodedRow, &rowId, error))
+          return false;
+      }
+    else if (!txn.insertRow(table_, encodedRow, &rowId, error))
       return false;
 
     matches_++;
@@ -1230,6 +1235,335 @@ private:
   LocalLiteTableDef table_;
 };
 
+class LocalLiteHbaseDeleteTcb : public ex_tcb
+{
+public:
+  LocalLiteHbaseDeleteTcb(const ComTdbHbaseAccess &tdb, ex_globals *globals)
+    : ex_tcb(tdb, 1, globals),
+      qparent_(),
+      pool_(NULL),
+      workAtp_(NULL),
+      asciiRow_(NULL),
+      convertRow_(NULL),
+      matches_(0)
+  {
+    Space *space = globals->getSpace();
+    CollHeap *heap = globals->getDefaultHeap();
+    allocateParentQueues(qparent_);
+    pool_ = new(space) sql_buffer_pool(tdb.numBuffers_, tdb.bufferSize_,
+                                       space, SqlBufferBase::NORMAL_);
+    pool_->setStaticMode(TRUE);
+    if (tdb.workCriDesc_)
+      {
+        workAtp_ = allocateAtp(tdb.workCriDesc_, space);
+        if (tdb.asciiTuppIndex_ > 0)
+          pool_->get_free_tuple(workAtp_->getTupp(tdb.asciiTuppIndex_), 0);
+        if (tdb.convertTuppIndex_ > 0)
+          pool_->get_free_tuple(workAtp_->getTupp(tdb.convertTuppIndex_), 0);
+      }
+    if (tdb.asciiRowLen_ > 0)
+      asciiRow_ = new(heap) char[tdb.asciiRowLen_];
+    if (tdb.convertRowLen_ > 0)
+      convertRow_ = new(heap) char[tdb.convertRowLen_];
+    if (tdb.scanExpr_)
+      tdb.scanExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                           FALSE, globals);
+    if (tdb.convertExpr_)
+      tdb.convertExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                              FALSE, globals);
+  }
+
+  ~LocalLiteHbaseDeleteTcb() { freeResources(); }
+
+  NABoolean isLocalLiteDelete() const { return TRUE; }
+
+  void freeResources()
+  {
+    NADELETEBASICARRAY(asciiRow_, getGlobals()->getDefaultHeap());
+    NADELETEBASICARRAY(convertRow_, getGlobals()->getDefaultHeap());
+    asciiRow_ = NULL;
+    convertRow_ = NULL;
+    if (workAtp_)
+      {
+        deallocateAtp(workAtp_, getGlobals()->getSpace());
+        workAtp_ = NULL;
+      }
+    delete pool_;
+    pool_ = NULL;
+    delete qparent_.up;
+    qparent_.up = NULL;
+    delete qparent_.down;
+    qparent_.down = NULL;
+  }
+
+  ex_queue_pair getParentQueue() const { return qparent_; }
+  Int32 numChildren() const { return 0; }
+  const ex_tcb *getChild(Int32) const { return NULL; }
+
+  ex_tcb_private_state *allocatePstates(Lng32 &numElems, Lng32 &pstateLength)
+  {
+    PstateAllocator<ex_tcb_private_state> pa;
+    return pa.allocatePstates(this, numElems, pstateLength);
+  }
+
+  void registerSubtasks()
+  {
+    ex_tcb::registerSubtasks();
+    ExScheduler *sched = getGlobals()->getScheduler();
+    sched->registerInsertSubtask(ex_tcb::sWork, this, qparent_.down);
+    sched->registerUnblockSubtask(ex_tcb::sWork, this, qparent_.up);
+    sched->registerCancelSubtask(ex_tcb::sWork, this, qparent_.down);
+  }
+
+  ExWorkProcRetcode work()
+  {
+    while (!qparent_.down->isEmpty())
+      {
+        if (qparent_.up->isFull())
+          return WORK_OK;
+        matches_ = 0;
+        ex_queue_entry *down = qparent_.down->getHeadEntry();
+        if (down->downState.request != ex_queue::GET_NOMORE)
+          {
+            std::string error;
+            if (!evaluateAndDelete(&error))
+              {
+                if (sendError(error))
+                  return WORK_OK;
+              }
+          }
+        if (sendDone())
+          return WORK_OK;
+      }
+    return WORK_OK;
+  }
+
+private:
+  const ComTdbHbaseAccess &deleteTdb() const
+  {
+    return static_cast<const ComTdbHbaseAccess &>(tdb);
+  }
+
+  ComTdbHbaseAccess &deleteTdb()
+  {
+    return const_cast<ComTdbHbaseAccess &>(
+        static_cast<const ComTdbHbaseAccess &>(tdb));
+  }
+
+  ex_queue_entry *downEntry()
+  {
+    return qparent_.down->getHeadEntry();
+  }
+
+  bool decodeColumnIndex(const char *raw, size_t *index) const
+  {
+    if (!raw || !index)
+      return false;
+    short len = 0;
+    str_cpy_all(reinterpret_cast<char *>(&len), raw, sizeof(short));
+    if (len <= 0)
+      return false;
+    const unsigned char *p =
+      reinterpret_cast<const unsigned char *>(raw + sizeof(short));
+    const unsigned char *end = p + len;
+    while (p < end && *p != ':')
+      p++;
+    if (p == end)
+      return false;
+    p++;
+    if (p < end && *p == '@')
+      p++;
+    uint64_t qualifier = 0;
+    unsigned shift = 0;
+    while (p < end && shift < 64)
+      {
+        qualifier |= static_cast<uint64_t>(*p) << shift;
+        shift += 8;
+        p++;
+      }
+    if (qualifier == 0)
+      return false;
+    *index = static_cast<size_t>(qualifier - 1);
+    return true;
+  }
+
+  bool sourceIndexes(ExpTupleDesc *td,
+                     Queue *names,
+                     std::vector<size_t> *indexes,
+                     std::string *error) const
+  {
+    indexes->clear();
+    if (!td)
+      {
+        *error = "local-lite delete missing tuple descriptor";
+        return false;
+      }
+    if (names && names->numEntries() >= td->numAttrs())
+      {
+        for (UInt32 i = 0; i < td->numAttrs(); i++)
+          {
+            size_t index = 0;
+            if (!decodeColumnIndex(static_cast<char *>(names->get(i)),
+                                   &index))
+              {
+                *error = "local-lite delete column mapping is invalid";
+                return false;
+              }
+            indexes->push_back(index);
+          }
+        return true;
+      }
+    for (UInt32 i = 0; i < td->numAttrs(); i++)
+      indexes->push_back(i);
+    return true;
+  }
+
+  bool loadTable(std::string *error)
+  {
+    std::string catalog;
+    std::string schema;
+    std::string object;
+    localLiteTableNameParts(deleteTdb().getTableName(),
+                            &catalog, &schema, &object);
+    if (object.empty())
+      {
+        *error = "invalid local-lite table name";
+        return false;
+      }
+    return store_.loadTable(catalog, schema, object, &table_, error);
+  }
+
+  bool evaluateAndDelete(std::string *error)
+  {
+    if (!workAtp_ || !asciiRow_ || !convertRow_ ||
+        !deleteTdb().convertExpr_)
+      {
+        *error = "local-lite delete missing executor row buffers";
+        return false;
+      }
+    if (!loadTable(error))
+      return false;
+
+    ExpTupleDesc *asciiTd = deleteTdb().workCriDesc_->getTupleDescriptor(
+        deleteTdb().asciiTuppIndex_);
+    std::vector<size_t> asciiIndexes;
+    if (!sourceIndexes(asciiTd, deleteTdb().listOfFetchedColNames(),
+                       &asciiIndexes, error))
+      return false;
+
+    ExExeStmtGlobals *statementGlobals =
+      getGlobals()->castToExExeStmtGlobals();
+    LocalLiteTxn txn(&store_, statementGlobals,
+                     statementGlobals->getExecutionCount());
+    std::vector<LocalLiteRow> sourceRows;
+    LocalLiteRow sourceRow;
+    if (localLiteTakeScanRow(localLiteScanRowKey(
+            deleteTdb().getTableName(), statementGlobals), &sourceRow))
+      sourceRows.push_back(sourceRow);
+    else
+      {
+        std::vector<LocalLiteRow> rows;
+        if (!txn.scanRows(table_, &rows, error))
+          return false;
+        for (size_t i = 0; i < rows.size(); i++)
+          {
+            workAtp_->getTupp(deleteTdb().asciiTuppIndex_)
+              .setDataPointer(asciiRow_);
+            workAtp_->getTupp(deleteTdb().convertTuppIndex_)
+              .setDataPointer(convertRow_);
+            unsigned int sourceLen = 0;
+            if (!LocalLiteProjectBinaryRow(
+                    table_, rows[i].value, rows[i].rowId,
+                    asciiIndexes, asciiTd, asciiRow_,
+                    deleteTdb().asciiRowLen_, &sourceLen, error))
+              return false;
+            str_pad(convertRow_, deleteTdb().convertRowLen_, '\0');
+            ULng32 convertLen = deleteTdb().convertRowLen_;
+            ex_expr::exp_return_type rc = deleteTdb().convertExpr_->eval(
+                downEntry()->getAtp(), workAtp_, NULL, -1, &convertLen);
+            if (rc == ex_expr::EXPR_ERROR)
+              {
+                *error = "local-lite delete source conversion failed";
+                return false;
+              }
+            if (deleteTdb().scanExpr_)
+              {
+                rc = deleteTdb().scanExpr_->eval(downEntry()->getAtp(),
+                                                 workAtp_);
+                if (rc == ex_expr::EXPR_ERROR)
+                  {
+                    *error = "local-lite delete predicate evaluation failed";
+                    return false;
+                  }
+                if (rc == ex_expr::EXPR_FALSE)
+                  continue;
+              }
+            sourceRows.push_back(rows[i]);
+          }
+      }
+
+    if (sourceRows.empty())
+      return true;
+    if (!txn.deleteRows(table_, sourceRows, error))
+      return false;
+    matches_ = static_cast<Lng32>(sourceRows.size());
+    return true;
+  }
+
+  bool sendError(const std::string &message)
+  {
+    if (qparent_.up->isFull())
+      return true;
+    ex_queue_entry *up = qparent_.up->getTailEntry();
+    up->copyAtp(downEntry());
+    if (!up->getDiagsArea())
+      {
+        ComDiagsArea *diags = ComDiagsArea::allocate(
+            getGlobals()->getDefaultHeap());
+        *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
+               << DgString0(message.c_str());
+        up->setDiagsArea(diags);
+      }
+    up->upState.status = ex_queue::Q_SQLERROR;
+    up->upState.downIndex = qparent_.down->getHeadIndex();
+    up->upState.parentIndex = downEntry()->downState.parentIndex;
+    up->upState.setMatchNo(matches_);
+    qparent_.up->insert();
+    return qparent_.up->isFull();
+  }
+
+  bool sendDone()
+  {
+    if (qparent_.up->isFull())
+      return true;
+    ex_queue_entry *up = qparent_.up->getTailEntry();
+    up->copyAtp(downEntry());
+    up->upState.status = ex_queue::Q_NO_DATA;
+    up->upState.downIndex = qparent_.down->getHeadIndex();
+    up->upState.parentIndex = downEntry()->downState.parentIndex;
+    up->upState.setMatchNo(deleteTdb().computeRowsAffected() ? matches_ : 0);
+    if (matches_ > 0 && deleteTdb().computeRowsAffected())
+      {
+        ExMasterStmtGlobals *g = getGlobals()->castToExExeStmtGlobals()
+          ->castToExMasterStmtGlobals();
+        if (g)
+          g->setRowsAffected(g->getRowsAffected() + matches_);
+      }
+    qparent_.up->insert();
+    qparent_.down->removeHead();
+    return false;
+  }
+
+  ex_queue_pair qparent_;
+  sql_buffer_pool *pool_;
+  atp_struct *workAtp_;
+  char *asciiRow_;
+  char *convertRow_;
+  Lng32 matches_;
+  LocalLiteRocksDBStore store_;
+  LocalLiteTableDef table_;
+};
+
 class LocalLiteHbaseUpdateTcb : public ex_tcb
 {
 public:
@@ -1241,6 +1575,7 @@ public:
       asciiRow_(NULL),
       convertRow_(NULL),
       updateRow_(NULL),
+      mergeInsertRow_(NULL),
       matches_(0)
   {
     Space *space = globals->getSpace();
@@ -1259,6 +1594,9 @@ public:
           pool_->get_free_tuple(workAtp_->getTupp(tdb.convertTuppIndex_), 0);
         if (tdb.updateTuppIndex_ > 0)
           pool_->get_free_tuple(workAtp_->getTupp(tdb.updateTuppIndex_), 0);
+        if (tdb.mergeInsertTuppIndex_ > 0)
+          pool_->get_free_tuple(
+              workAtp_->getTupp(tdb.mergeInsertTuppIndex_), 0);
       }
     if (tdb.asciiRowLen_ > 0)
       asciiRow_ = new(heap) char[tdb.asciiRowLen_];
@@ -1266,6 +1604,8 @@ public:
       convertRow_ = new(heap) char[tdb.convertRowLen_];
     if (tdb.updateRowLen_ > 0)
       updateRow_ = new(heap) char[tdb.updateRowLen_];
+    if (tdb.mergeInsertRowLen_ > 0)
+      mergeInsertRow_ = new(heap) char[tdb.mergeInsertRowLen_];
 
     if (tdb.scanExpr_)
       tdb.scanExpr_->fixup(0, getExpressionMode(), this, space, heap,
@@ -1276,6 +1616,15 @@ public:
     if (tdb.updateExpr_)
       tdb.updateExpr_->fixup(0, getExpressionMode(), this, space, heap,
                              FALSE, globals);
+    if (tdb.mergeInsertExpr_)
+      tdb.mergeInsertExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                                  FALSE, globals);
+    if (tdb.mergeUpdScanExpr_)
+      tdb.mergeUpdScanExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                                   FALSE, globals);
+    if (tdb.insConstraintExpr_)
+      tdb.insConstraintExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                                    FALSE, globals);
     if (tdb.updConstraintExpr_)
       tdb.updConstraintExpr_->fixup(0, getExpressionMode(), this, space, heap,
                                     FALSE, globals);
@@ -1290,9 +1639,11 @@ public:
     NADELETEBASICARRAY(asciiRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(convertRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(updateRow_, getGlobals()->getDefaultHeap());
+    NADELETEBASICARRAY(mergeInsertRow_, getGlobals()->getDefaultHeap());
     asciiRow_ = NULL;
     convertRow_ = NULL;
     updateRow_ = NULL;
+    mergeInsertRow_ = NULL;
     if (workAtp_)
       {
         deallocateAtp(workAtp_, getGlobals()->getSpace());
@@ -1446,8 +1797,12 @@ private:
 
   bool evaluateAndUpdate(std::string *error)
   {
-    if (!workAtp_ || !asciiRow_ || !convertRow_ || !updateRow_ ||
-        !updateTdb().convertExpr_ || !updateTdb().updateExpr_)
+    const bool isMerge =
+      updateTdb().getAccessType() == ComTdbHbaseAccess::MERGE_;
+    if (!workAtp_ || !asciiRow_ || !convertRow_ ||
+        !updateTdb().convertExpr_ ||
+        (updateTdb().updateExpr_ && !updateRow_) ||
+        (!isMerge && (!updateRow_ || !updateTdb().updateExpr_)))
       {
         *error = "local-lite update missing executor row buffers";
         return false;
@@ -1457,14 +1812,16 @@ private:
 
     ExpTupleDesc *asciiTd = updateTdb().workCriDesc_->getTupleDescriptor(
         updateTdb().asciiTuppIndex_);
-    ExpTupleDesc *updatedTd = updateTdb().workCriDesc_->getTupleDescriptor(
-        updateTdb().updateTuppIndex_);
+    ExpTupleDesc *updatedTd = updateTdb().updateExpr_ ?
+      updateTdb().workCriDesc_->getTupleDescriptor(
+          updateTdb().updateTuppIndex_) : NULL;
     std::vector<size_t> asciiIndexes;
     std::vector<size_t> updatedIndexes;
     if (!sourceIndexes(asciiTd, updateTdb().listOfFetchedColNames(),
                        &asciiIndexes, error) ||
-        !sourceIndexes(updatedTd, updateTdb().listOfUpdatedColNames(),
-                       &updatedIndexes, error))
+        (updatedTd &&
+         !sourceIndexes(updatedTd, updateTdb().listOfUpdatedColNames(),
+                        &updatedIndexes, error)))
       return false;
 
     ExExeStmtGlobals *statementGlobals =
@@ -1480,7 +1837,11 @@ private:
       }
     std::vector<LocalLiteRow> sourceRows;
     LocalLiteRow sourceRow;
-    if (localLiteTakeScanRow(localLiteScanRowKey(
+    if (isMerge)
+      localLiteForgetScanRows(localLiteScanRowKey(
+          updateTdb().getTableName(), statementGlobals));
+    if (!isMerge &&
+        localLiteTakeScanRow(localLiteScanRowKey(
             updateTdb().getTableName(), statementGlobals), &sourceRow))
       sourceRows.push_back(sourceRow);
     else
@@ -1525,8 +1886,18 @@ private:
             sourceRows.push_back(rows[i]);
           }
         if (sourceRows.empty())
-          return true;
+          return isMerge ? evaluateMergeInsert(&txn, error) : true;
       }
+
+    if (isMerge && sourceRows.size() > 1)
+      {
+        *error = "local-lite MERGE source matched more than one target row";
+        return false;
+      }
+
+    // A matched MERGE with no UPDATE action must not take the INSERT action.
+    if (isMerge && !updateTdb().updateExpr_)
+      return true;
 
     std::vector<LocalLiteRowMutation> mutations;
     for (size_t sourceIndex = 0;
@@ -1551,6 +1922,19 @@ private:
           {
             *error = "local-lite update source conversion failed";
             return false;
+          }
+
+        if (isMerge && updateTdb().mergeUpdScanExpr_)
+          {
+            rc = updateTdb().mergeUpdScanExpr_->eval(
+                downEntry()->getAtp(), workAtp_);
+            if (rc == ex_expr::EXPR_ERROR)
+              {
+                *error = "local-lite MERGE update predicate evaluation failed";
+                return false;
+              }
+            if (rc == ex_expr::EXPR_FALSE)
+              continue;
           }
 
         workAtp_->getTupp(updateTdb().updateTuppIndex_)
@@ -1599,6 +1983,63 @@ private:
     if (!txn.updateRows(table_, mutations, error))
       return false;
     matches_ = static_cast<Lng32>(mutations.size());
+    return true;
+  }
+
+  bool evaluateMergeInsert(LocalLiteTxn *txn, std::string *error)
+  {
+    if (!updateTdb().mergeInsertExpr_)
+      return true;
+    if (!txn || !mergeInsertRow_ || updateTdb().mergeInsertRowLen_ == 0)
+      {
+        *error = "local-lite MERGE missing insert row buffer";
+        return false;
+      }
+
+    ExpTupleDesc *insertTd = updateTdb().workCriDesc_->getTupleDescriptor(
+        updateTdb().mergeInsertTuppIndex_);
+    if (!insertTd)
+      {
+        *error = "local-lite MERGE missing insert tuple descriptor";
+        return false;
+      }
+
+    str_pad(mergeInsertRow_, updateTdb().mergeInsertRowLen_, '\0');
+    workAtp_->getTupp(updateTdb().mergeInsertTuppIndex_)
+      .setDataPointer(mergeInsertRow_);
+    ULng32 rowLen = updateTdb().mergeInsertRowLen_;
+    ex_expr::exp_return_type rc = updateTdb().mergeInsertExpr_->eval(
+        downEntry()->getAtp(), workAtp_, NULL, -1, &rowLen);
+    if (rc == ex_expr::EXPR_ERROR)
+      {
+        *error = "local-lite MERGE insert expression evaluation failed";
+        return false;
+      }
+    if (rowLen == 0)
+      rowLen = updateTdb().mergeInsertRowLen_;
+
+    if (updateTdb().insConstraintExpr_)
+      {
+        rc = updateTdb().insConstraintExpr_->eval(downEntry()->getAtp(),
+                                                   workAtp_);
+        if (rc == ex_expr::EXPR_ERROR)
+          {
+            *error = "local-lite MERGE insert constraint evaluation failed";
+            return false;
+          }
+        if (rc == ex_expr::EXPR_FALSE)
+          return true;
+      }
+
+    std::string encodedRow;
+    if (!LocalLiteNormalizeBinaryRow(table_, insertTd, mergeInsertRow_,
+                                     static_cast<size_t>(rowLen),
+                                     &encodedRow, error))
+      return false;
+    uint64_t rowId = 0;
+    if (!txn->insertRow(table_, encodedRow, &rowId, error))
+      return false;
+    matches_ = 1;
     return true;
   }
 
@@ -1652,6 +2093,7 @@ private:
   char *asciiRow_;
   char *convertRow_;
   char *updateRow_;
+  char *mergeInsertRow_;
   Lng32 matches_;
   LocalLiteRocksDBStore store_;
   LocalLiteTableDef table_;
@@ -1672,7 +2114,8 @@ ex_tcb *ExHbaseAccessTdb::build(ex_globals *globals)
       return tcb;
     }
 
-  if (getAccessType() == ComTdbHbaseAccess::INSERT_)
+  if (getAccessType() == ComTdbHbaseAccess::INSERT_ ||
+      getAccessType() == ComTdbHbaseAccess::UPSERT_)
     {
       LocalLiteHbaseInsertTcb *tcb =
         new(globals->getSpace()) LocalLiteHbaseInsertTcb(*this, globals);
@@ -1684,6 +2127,22 @@ ex_tcb *ExHbaseAccessTdb::build(ex_globals *globals)
     {
       LocalLiteHbaseUpdateTcb *tcb =
         new(globals->getSpace()) LocalLiteHbaseUpdateTcb(*this, globals);
+      tcb->registerSubtasks();
+      return tcb;
+    }
+
+  if (getAccessType() == ComTdbHbaseAccess::MERGE_)
+    {
+      LocalLiteHbaseUpdateTcb *tcb =
+        new(globals->getSpace()) LocalLiteHbaseUpdateTcb(*this, globals);
+      tcb->registerSubtasks();
+      return tcb;
+    }
+
+  if (getAccessType() == ComTdbHbaseAccess::DELETE_)
+    {
+      LocalLiteHbaseDeleteTcb *tcb =
+        new(globals->getSpace()) LocalLiteHbaseDeleteTcb(*this, globals);
       tcb->registerSubtasks();
       return tcb;
     }

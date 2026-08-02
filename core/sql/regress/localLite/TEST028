@@ -1,0 +1,105 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+CREATE TABLE LLREG028_UPSERT
+  (id INT PRIMARY KEY,
+   code VARCHAR(8),
+   label VARCHAR(20),
+   UNIQUE(code));
+
+INSERT INTO LLREG028_UPSERT VALUES (1, 'A', 'original');
+
+UPSERT INTO LLREG028_UPSERT VALUES (1, 'A', 'updated');
+UPSERT INTO LLREG028_UPSERT VALUES (2, 'B', 'inserted');
+
+UPSERT INTO LLREG028_UPSERT VALUES
+  (1, 'A', 'multi-update'),
+  (3, 'C', 'multi-insert');
+
+SELECT id, code, label
+  FROM LLREG028_UPSERT
+ ORDER BY id;
+
+BEGIN WORK;
+
+UPSERT INTO LLREG028_UPSERT VALUES (1, 'Z', 'txn-update');
+UPSERT INTO LLREG028_UPSERT VALUES (4, 'D', 'txn-insert');
+
+SELECT id, code, label
+  FROM LLREG028_UPSERT
+ ORDER BY id;
+
+ROLLBACK WORK;
+
+SELECT id, code, label
+  FROM LLREG028_UPSERT
+ ORDER BY id;
+
+BEGIN WORK;
+
+DELETE FROM LLREG028_UPSERT WHERE id = 1;
+UPSERT INTO LLREG028_UPSERT VALUES (1, 'A', 'replacement');
+UPSERT INTO LLREG028_UPSERT VALUES (5, 'E', 'first-value');
+UPSERT INTO LLREG028_UPSERT VALUES (5, 'E', 'second-value');
+
+COMMIT WORK;
+
+SELECT id, code, label
+  FROM LLREG028_UPSERT
+ ORDER BY id;
+
+BEGIN WORK;
+
+UPSERT INTO LLREG028_UPSERT VALUES (1, 'R', 'unique-changed');
+UPSERT INTO LLREG028_UPSERT VALUES (6, 'A', 'unique-reused');
+
+COMMIT WORK;
+
+SELECT id, code, label
+  FROM LLREG028_UPSERT
+ ORDER BY id;
+
+-- A late UNIQUE conflict must roll back the earlier update in the same UPSERT.
+UPSERT INTO LLREG028_UPSERT VALUES
+  (1, 'X', 'must-roll-back'),
+  (8, 'B', 'duplicate-unique');
+
+SELECT id, code, label
+  FROM LLREG028_UPSERT
+ WHERE id IN (1, 8)
+ ORDER BY id;
+
+CREATE TABLE LLREG028_SOURCE
+  (id INT PRIMARY KEY,
+   code VARCHAR(8),
+   label VARCHAR(20));
+
+INSERT INTO LLREG028_SOURCE VALUES
+  (2, 'B', 'select-update'),
+  (7, 'G', 'select-insert');
+
+UPSERT INTO LLREG028_UPSERT
+  SELECT id, code, label FROM LLREG028_SOURCE;
+
+SELECT id, code, label
+  FROM LLREG028_UPSERT
+ WHERE id IN (2, 7)
+ ORDER BY id;
+
+DROP TABLE LLREG028_SOURCE;
+DROP TABLE LLREG028_UPSERT;
+exit;

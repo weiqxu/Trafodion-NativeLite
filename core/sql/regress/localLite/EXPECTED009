@@ -31,13 +31,15 @@
 >>UPDATE LLREG009_BASE SET label = 'changed' WHERE id = 1;
 --- 1 row(s) updated.
 >>DELETE FROM LLREG009_BASE WHERE id = 1;
-*** ERROR[local-lite] DELETE and MERGE are not supported in local-lite
->>MERGE INTO LLREG009_BASE USING LLREG009_BASE AS source_rows
+--- 1 row(s) deleted.
+>>MERGE INTO LLREG009_BASE USING (SELECT * FROM LLREG009_BASE) AS source_rows
 +>  ON LLREG009_BASE.id = source_rows.id
 +>  WHEN MATCHED THEN UPDATE SET label = 'changed';
-*** ERROR[local-lite] DELETE and MERGE are not supported in local-lite
+--- 0 row(s) updated.
 >>UPSERT INTO LLREG009_BASE VALUES (2, 'upserted');
-*** ERROR[local-lite] UPSERT is not supported in local-lite v1; use INSERT
+--- 1 row(s) inserted.
+>>UPSERT USING LOAD INTO LLREG009_BASE VALUES (3, 'bulk-upserted');
+*** ERROR[local-lite] UPSERT USING LOAD is not supported for local-lite RocksDB tables; use UPSERT
 >>CREATE INDEX LLREG009_IX ON LLREG009_BASE(id);
 *** ERROR[local-lite] CREATE INDEX is not supported in local-lite
 >>CREATE VIEW LLREG009_VIEW AS SELECT * FROM LLREG009_BASE;
@@ -59,7 +61,7 @@
 +>  ORDER BY id;
 ID           LABEL
 -----------  --------------------
-          1  changed
+          2  upserted
 --- 1 row(s) selected.
 >>DROP TABLE LLREG009_BASE;
 --- SQL operation complete.

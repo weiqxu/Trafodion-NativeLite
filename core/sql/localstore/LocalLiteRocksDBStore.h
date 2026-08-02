@@ -83,6 +83,9 @@ public:
   bool updateRows(const LocalLiteTableDef &table,
                   const std::vector<LocalLiteRowMutation> &mutations,
                   std::string *error);
+  bool deleteRows(const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRow> &rows,
+                  std::string *error);
   bool getRowByKey(const LocalLiteTableDef &table,
                    const std::string &storageKey,
                    LocalLiteRow *row,
@@ -125,8 +128,15 @@ public:
                  const std::string &encodedRow,
                  uint64_t *rowId,
                  std::string *error);
+  bool upsertRow(const LocalLiteTableDef &table,
+                 const std::string &encodedRow,
+                 uint64_t *rowId,
+                 std::string *error);
   bool updateRows(const LocalLiteTableDef &table,
                   const std::vector<LocalLiteRowMutation> &mutations,
+                  std::string *error);
+  bool deleteRows(const LocalLiteTableDef &table,
+                  const std::vector<LocalLiteRow> &rows,
                   std::string *error);
   bool scanRows(const LocalLiteTableDef &table,
                 std::vector<LocalLiteRow> *rows,

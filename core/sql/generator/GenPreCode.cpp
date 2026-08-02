@@ -5769,6 +5769,14 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
       GenExit();
     }
 
+#ifdef TRAF_LOCAL_LITE
+  // Native HBase MERGE evaluates a generated row-id to find the target row.
+  // Local-lite stores a different canonical RocksDB key, so retain the full
+  // ON-key predicate for evaluation against the current source and target.
+  if (isMerge() && getSearchKey())
+    executorPred() += getSearchKey()->getFullKeyPredicates();
+#endif
+
   if (!processConstHBaseKeys(
            generator,
            this,
@@ -5850,8 +5858,15 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
   if ((isMerge()) &&
       (mergeInsertRecExpr().entries() > 0))
     {
+#ifdef TRAF_LOCAL_LITE
+      // The RocksDB executor evaluates the retained ON predicate and rejects
+      // more than one target match at runtime. The native uniqueness proof is
+      // tied to HBase search-key generation and is not authoritative here.
+      if (FALSE)
+#else
       if ((listOfUpdSubsetRows_.entries() > 0) ||
 	  (getSearchKey() && (NOT getSearchKey()->isUnique())))
+#endif
 	{
 	  *CmpCommon::diags() << DgSqlCode(-3241)
 			      << DgString0(" Non-unique ON clause not allowed with INSERT.");

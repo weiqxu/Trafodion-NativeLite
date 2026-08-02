@@ -111,6 +111,7 @@ class ComTdbHbaseAccess : public ComTdb
   friend class LocalLiteHbaseScanTcb;
   friend class LocalLiteHbaseInsertTcb;
   friend class LocalLiteHbaseUpdateTcb;
+  friend class LocalLiteHbaseDeleteTcb;
 #endif
 
 public:

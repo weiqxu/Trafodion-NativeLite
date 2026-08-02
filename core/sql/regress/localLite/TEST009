@@ -31,13 +31,14 @@ CREATE TABLE LLREG009_LOB (payload BLOB(100));
 DROP TABLE LLREG009_BASE CASCADE;
 DROP TABLE LLREG009_MISSING;
 
--- SQLCI rejects unsupported statements before they reach service-stack paths.
+-- Supported DML remains usable alongside SQLCI-rejected statement classes.
 UPDATE LLREG009_BASE SET label = 'changed' WHERE id = 1;
 DELETE FROM LLREG009_BASE WHERE id = 1;
-MERGE INTO LLREG009_BASE USING LLREG009_BASE AS source_rows
+MERGE INTO LLREG009_BASE USING (SELECT * FROM LLREG009_BASE) AS source_rows
   ON LLREG009_BASE.id = source_rows.id
   WHEN MATCHED THEN UPDATE SET label = 'changed';
 UPSERT INTO LLREG009_BASE VALUES (2, 'upserted');
+UPSERT USING LOAD INTO LLREG009_BASE VALUES (3, 'bulk-upserted');
 CREATE INDEX LLREG009_IX ON LLREG009_BASE(id);
 CREATE VIEW LLREG009_VIEW AS SELECT * FROM LLREG009_BASE;
 CREATE SEQUENCE LLREG009_SEQ;
@@ -47,7 +48,7 @@ CREATE EXTERNAL TABLE LLREG009_EXT (id INT);
 ALTER TABLE LLREG009_BASE ADD COLUMN extra_col INT;
 TRUNCATE TABLE LLREG009_BASE;
 
--- All failed statements must leave the base table and session usable.
+-- Supported and rejected statements must leave the session usable.
 SELECT id, label
   FROM LLREG009_BASE
   ORDER BY id;
