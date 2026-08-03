@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct LocalLiteColumnDef
@@ -311,6 +312,21 @@ public:
                     bool *owner,
                     std::string *error);
   bool bumpAuthorizationGeneration(std::string *error);
+  // Generic catalog records used by the RocksDB-only local-lite UDR runtime.
+  // Keys are namespaced by the caller (for example, "udr|"), so the UDR
+  // layer can evolve its metadata without exposing the RocksDB handle.
+  bool loadCatalogRecord(const std::string &key,
+                         std::string *value,
+                         bool *found,
+                         std::string *error);
+  bool storeCatalogRecord(const std::string &key,
+                          const std::string &value,
+                          std::string *error);
+  bool deleteCatalogRecord(const std::string &key,
+                          std::string *error);
+  bool scanCatalogRecords(const std::string &prefix,
+                          std::vector< std::pair<std::string, std::string> > *records,
+                          std::string *error);
   bool listTriggers(const std::string &subjectCatalog,
                     const std::string &subjectSchema,
                     const std::string &subjectTable,

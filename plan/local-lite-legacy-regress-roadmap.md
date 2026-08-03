@@ -294,9 +294,32 @@ HBase/HDFS/HFile path is used.
 
 ## Milestone 9: UDR
 
-Implement library lifecycle, native and Java UDR loading, scalar/table
-functions, procedures, result sets, transaction behavior, isolation, and error
-recovery.
+Status: complete for the bounded RocksDB-only local-lite surface in the
+working tree.  SQLCI now handles UDR DDL and invocation before the MX compiler
+path, so no `_MD_` metadata tables, HBase/HDFS/HFile access, UDR server, or
+Trafodion service stack is required.  Library and routine definitions are
+versioned records in the RocksDB catalog; dropping a library removes its
+dependent routines, and routine DDL is restricted to `DB__ROOT`.
+
+The native adapter loads `dlopen`/`dlsym` libraries (including deterministic
+in-process `builtin` routines), runs the SQL UDR INITIAL/NORMAL/FINAL lifecycle,
+preserves NULL indicators and state/error buffers, closes external handles on
+all paths, and reports the UDR message on failure.  The Java adapter invokes a
+configured class through the local JDK command path and converts its result
+row back to SQLCI values.  Scalar functions, procedures with IN/OUT
+parameters, one-row table-mapping functions, and `PREPARE`/`EXECUTE` are
+covered by `localLite/TEST042`; native and Java adapters share the same
+RocksDB metadata and invocation path.  Result-set output is represented as a
+deterministic SQLCI row, and invocation has no hidden table mutation, so
+COMMIT/ROLLBACK and isolation remain the caller's local-lite transaction
+boundary rather than an HBase side effect.
+
+The deliberate boundary is explicit: the portable adapter currently supports
+the SQL UDR ABI for at most two INT inputs and two INT outputs, emits one row
+for a table mapping/result-set call, and does not embed host rowset
+descriptors, a JVM in the SQLCI process, or transactional SQL access from the
+UDR body.  Those capabilities belong to a future service-backed milestone;
+they are not silently claimed by the RocksDB-only lane.
 
 ## Milestone 10: Suite Convergence
 

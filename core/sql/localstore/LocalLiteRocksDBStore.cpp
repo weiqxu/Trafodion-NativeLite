@@ -4760,6 +4760,60 @@ bool LocalLiteRocksDBStore::bumpAuthorizationGeneration(std::string *error)
                            error);
 }
 
+bool LocalLiteRocksDBStore::loadCatalogRecord(
+    const std::string &key, std::string *value, bool *found, std::string *error)
+{
+  if (!value || !found || !open(error))
+    return false;
+  return readCatalogValue(key, value, found, error);
+}
+
+bool LocalLiteRocksDBStore::storeCatalogRecord(
+    const std::string &key, const std::string &value, std::string *error)
+{
+  if (!open(error))
+    return false;
+  return writeCatalogValue(key, value, error);
+}
+
+bool LocalLiteRocksDBStore::deleteCatalogRecord(
+    const std::string &key, std::string *error)
+{
+  if (!open(error))
+    return false;
+  return deleteCatalogValue(key, error);
+}
+
+bool LocalLiteRocksDBStore::scanCatalogRecords(
+    const std::string &prefix,
+    std::vector< std::pair<std::string, std::string> > *records,
+    std::string *error)
+{
+  if (!records || !open(error))
+    return false;
+  records->clear();
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek(it, prefix.data(), prefix.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0, valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      if (keyLen < prefix.size() ||
+          memcmp(rawKey, prefix.data(), prefix.size()) != 0)
+        break;
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      records->push_back(std::make_pair(std::string(rawKey, keyLen),
+                                        std::string(rawValue, valueLen)));
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  return checkRocksError(err, "scan local-lite catalog records", error);
+}
+
 bool LocalLiteRocksDBStore::dropSchema(const std::string &catalog,
                                        const std::string &schema,
                                        bool ifExists,

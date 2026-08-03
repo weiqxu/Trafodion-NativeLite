@@ -64,6 +64,7 @@
 #include "sqlcmd.h"
 #ifdef TRAF_LOCAL_LITE
 #include "LocalLiteSqlTable.h"
+#include "LocalLiteUdr.h"
 #endif
 #include "sql_id.h"
 #include "ComSqlId.h"
@@ -3148,6 +3149,13 @@ short Prepare::process(SqlciEnv * sqlci_env)
   PrepStmt * prep_stmt;
 
 #ifdef TRAF_LOCAL_LITE
+  short localLiteUdrRetcode = 0;
+  if (LocalLiteUdr_prepare(get_sql_stmt(), this_stmt_name, sqlci_env,
+                           &localLiteUdrRetcode))
+    return localLiteUdrRetcode;
+#endif
+
+#ifdef TRAF_LOCAL_LITE
   short localLiteAuthRetcode = 0;
   if (!LocalLiteSqlTable_checkAuthorization(get_sql_stmt(), sqlci_env,
                                             &localLiteAuthRetcode))
@@ -3478,6 +3486,13 @@ short Execute::process(SqlciEnv * sqlci_env)
   Lng32 retcode;
   HandleCLIErrorInit();
   PrepStmt * prep_stmt;
+
+#ifdef TRAF_LOCAL_LITE
+  short localLiteUdrRetcode = 0;
+  if (LocalLiteUdr_executePrepared(this_stmt_name, sqlci_env,
+                                   &localLiteUdrRetcode))
+    return localLiteUdrRetcode;
+#endif
 
   if (!(prep_stmt = sqlci_env->get_prep_stmts()->get(this_stmt_name)))
     {

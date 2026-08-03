@@ -43,7 +43,7 @@ CPPSRC := Define.cpp \
 	sqlclicmd.cpp
 
 ifeq ($(TRAF_LOCAL_LITE),1)
-CPPSRC += LocalLiteSqlTable.cpp
+CPPSRC += LocalLiteSqlTable.cpp LocalLiteUdr.cpp
 endif
 
 YINC := tdm_sqlmxmsg_intl

@@ -7,6 +7,7 @@
 #ifdef TRAF_LOCAL_LITE
 
 #include "LocalLiteSqlTable.h"
+#include "LocalLiteUdr.h"
 #include "LocalLiteRocksDBStore.h"
 
 #include "SqlciEnv.h"
@@ -509,6 +510,12 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
           reportError(sqlciEnv, authorizationError);
       return true;
     }
+
+  // UDR DDL and invocation use the RocksDB-only local runtime.  This must be
+  // checked before the normal compiler path, which expects MX metadata tables
+  // and a separate UDR server process.
+  if (LocalLiteUdr_process(sql.c_str(), sqlciEnv, retcode))
+    return true;
 
   if (startsWithWord(sql, "SHOWDDL") || startsWithWord(sql, "SHOWSTATS"))
     {
