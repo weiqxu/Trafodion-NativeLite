@@ -234,9 +234,22 @@ SHOWDDL/SHOWSTATS and all optimizer/explain behavior remains RocksDB-native.
 
 ## Milestone 6: Character Sets And Data Types
 
-Extend row encoding, expressions, predicates, keys, and assignment for
-UTF8/UCS2 and required translations/collations, then INTERVAL, BOOLEAN,
-BINARY/VARBINARY, LONG VARCHAR, and the deliberately selected LOB boundary.
+Status: complete for the RocksDB-only local-lite surface in the working tree.
+The catalog now preserves UTF8/UCS2 character metadata and byte capacity,
+retains BINARY/VARBINARY instead of normalizing them to character strings, and
+maps BOOLEAN, INTERVAL, and LONG VARCHAR into optimizer descriptors.  The
+canonical RocksDB row codec stores and projects these types, handles NULL and
+bounded multibyte values, and includes BOOLEAN/INTERVAL/BINARY/VARBINARY in
+secondary-key encoding.  Native coverage is in `localLite/TEST039`; together
+with the existing suite the full local-lite lane passes 39/39.  The test also
+exercises UTF8/UCS2 values, interval projection, binary storage, a composite
+RocksDB index, BOOLEAN predicates, assignment, and index lifecycle.
+
+The deliberate boundary remains explicit: BLOB/CLOB/ARRAY and HBase/HDFS/LOB
+backing are rejected with the existing local-lite diagnostic; non-default
+collations and character translations outside ISO88591/UTF8/UCS2 are not
+claimed by this milestone.  All supported data is persisted in RocksDB tables;
+no HBase client or HFile path is used.
 
 ## Milestone 7: Advanced Executor Coverage
 

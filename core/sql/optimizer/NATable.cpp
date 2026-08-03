@@ -86,6 +86,7 @@
 
 #ifdef TRAF_LOCAL_LITE
 #include "BigNumHelper.h"
+#include "IntervalType.h"
 #include "LocalLiteRocksDBStore.h"
 #include <ctype.h>
 #include <stdlib.h>
@@ -2972,7 +2973,9 @@ static bool localLiteMapType(const std::string &typeText,
                              Lng32 *scale,
                              rec_datetime_field *dtStart,
                              rec_datetime_field *dtEnd,
-                             Int16 *dtFractPrec)
+                             Int16 *dtFractPrec,
+                             SQLCHARSET_CODE *charset,
+                             Int16 *intervalLeadingPrec)
 {
   std::string type = localLiteUpper(typeText);
   *precision = 0;
@@ -2980,6 +2983,13 @@ static bool localLiteMapType(const std::string &typeText,
   *dtStart = REC_DATE_UNKNOWN;
   *dtEnd = REC_DATE_UNKNOWN;
   *dtFractPrec = 0;
+  *charset = SQLCHARSETCODE_ISO88591;
+  *intervalLeadingPrec = 0;
+
+  if (type.find("CHARACTER SET UTF8") != std::string::npos)
+    *charset = SQLCHARSETCODE_UTF8;
+  else if (type.find("CHARACTER SET UCS2") != std::string::npos)
+    *charset = SQLCHARSETCODE_UCS2;
 
   if (localLiteStartsWithWord(type, "TINYINT"))
     {
@@ -3075,18 +3085,98 @@ static bool localLiteMapType(const std::string &typeText,
   if (localLiteStartsWithWord(type, "VARCHAR") ||
       localLiteStartsWithWord(type, "CHARACTER VARYING"))
     {
-      *datatype = REC_BYTE_V_ASCII;
-      *length = localLiteTypeArg(type, 1);
-      *precision = *length;
+      Lng32 chars = localLiteTypeArg(type, 1);
+      *datatype = *charset == SQLCHARSETCODE_UCS2
+          ? REC_BYTE_V_DOUBLE : REC_BYTE_V_ASCII;
+      *length = chars * (*charset == SQLCHARSETCODE_UTF8 ? 4 :
+                         (*charset == SQLCHARSETCODE_UCS2 ? 2 : 1));
+      *precision = chars;
       return true;
     }
   if (localLiteStartsWithWord(type, "CHAR") ||
       localLiteStartsWithWord(type, "CHARACTER"))
     {
-      *datatype = REC_BYTE_F_ASCII;
-      *length = localLiteTypeArg(type, 1);
+      Lng32 chars = localLiteTypeArg(type, 1);
+      *datatype = *charset == SQLCHARSETCODE_UCS2
+          ? REC_BYTE_F_DOUBLE : REC_BYTE_F_ASCII;
+      *length = chars * (*charset == SQLCHARSETCODE_UTF8 ? 4 :
+                         (*charset == SQLCHARSETCODE_UCS2 ? 2 : 1));
+      *precision = chars;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "LONG VARCHAR"))
+    {
+      *datatype = REC_BYTE_V_ASCII_LONG;
+      *length = localLiteTypeArg(type, 2000);
       *precision = *length;
       return true;
+    }
+  if (localLiteStartsWithWord(type, "BINARY"))
+    {
+      *datatype = REC_BINARY_STRING;
+      *length = localLiteTypeArg(type, 1);
+      *precision = *length;
+      *charset = SQLCHARSETCODE_ISO88591;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "VARBINARY"))
+    {
+      *datatype = REC_VARBINARY_STRING;
+      *length = localLiteTypeArg(type, 1);
+      *precision = *length;
+      *charset = SQLCHARSETCODE_ISO88591;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "BOOLEAN"))
+    {
+      *datatype = REC_BOOLEAN;
+      *length = 1;
+      return true;
+    }
+  if (localLiteStartsWithWord(type, "INTERVAL"))
+    {
+      struct IntervalPart { const char *word; rec_datetime_field field; };
+      static const IntervalPart parts[] = {
+        {"YEAR", REC_DATE_YEAR}, {"MONTH", REC_DATE_MONTH},
+        {"DAY", REC_DATE_DAY}, {"HOUR", REC_DATE_HOUR},
+        {"MINUTE", REC_DATE_MINUTE}, {"SECOND", REC_DATE_SECOND}
+      };
+      size_t startPos = std::string::npos;
+      size_t endPos = type.find(" TO ");
+      for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++)
+        {
+          size_t p = type.find(std::string(" ") + parts[i].word);
+          if (p != std::string::npos &&
+              (startPos == std::string::npos || p < startPos))
+            {
+              startPos = p;
+              *dtStart = parts[i].field;
+            }
+        }
+      if (startPos == std::string::npos)
+        return false;
+      *dtEnd = *dtStart;
+      if (endPos != std::string::npos)
+        for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++)
+          if (type.find(parts[i].word, endPos) != std::string::npos)
+            { *dtEnd = parts[i].field; break; }
+
+      size_t lp = type.find('(', startPos);
+      if (lp != std::string::npos)
+        *intervalLeadingPrec = static_cast<Int16>(strtol(type.c_str() + lp + 1, NULL, 10));
+      if (*intervalLeadingPrec == 0)
+        *intervalLeadingPrec = 2;
+      if (*dtEnd == REC_DATE_SECOND)
+        {
+          size_t second = type.find("SECOND", endPos == std::string::npos ? 0 : endPos);
+          size_t fp = second == std::string::npos ? std::string::npos : type.find('(', second);
+          if (fp != std::string::npos)
+            *dtFractPrec = static_cast<Int16>(strtol(type.c_str() + fp + 1, NULL, 10));
+        }
+      *datatype = REC_MIN_INTERVAL;
+      *length = IntervalType::getStorageSize(*dtStart, *intervalLeadingPrec,
+                                              *dtEnd, *dtFractPrec);
+      return *length > 0;
     }
   if (localLiteStartsWithWord(type, "DATE"))
     {
@@ -3270,9 +3360,11 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       rec_datetime_field dtStart = REC_DATE_UNKNOWN;
       rec_datetime_field dtEnd = REC_DATE_UNKNOWN;
       Int16 dtFractPrec = 0;
+      SQLCHARSET_CODE charset = SQLCHARSETCODE_ISO88591;
+      Int16 intervalLeadingPrec = 0;
       if (!localLiteMapType(table.columns[i].type, &datatype, &length,
                             &precision, &scale, &dtStart, &dtEnd,
-                            &dtFractPrec))
+                            &dtFractPrec, &charset, &intervalLeadingPrec))
         {
           *error = "unsupported local-lite column type in catalog: " +
                    table.columns[i].type;
@@ -3298,15 +3390,16 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           length,
           offset,
           nullableForOptimizer,
-          SQLCHARSETCODE_ISO88591,
+          charset,
           heap);
       columnDesc->columnsDesc()->precision = precision;
       columnDesc->columnsDesc()->scale = scale;
       columnDesc->columnsDesc()->datetimestart = dtStart;
       columnDesc->columnsDesc()->datetimeend = dtEnd;
       columnDesc->columnsDesc()->datetimefractprec = dtFractPrec;
-      columnDesc->columnsDesc()->character_set = CharInfo::ISO88591;
-      columnDesc->columnsDesc()->encoding_charset = CharInfo::ISO88591;
+      columnDesc->columnsDesc()->intervalleadingprec = intervalLeadingPrec;
+      columnDesc->columnsDesc()->character_set = static_cast<CharInfo::CharSet>(charset);
+      columnDesc->columnsDesc()->encoding_charset = static_cast<CharInfo::CharSet>(charset);
       columnDesc->columnsDesc()->collation_sequence = CharInfo::DefaultCollation;
       columnDesc->columnsDesc()->setDefaultClass(
           static_cast<ComColumnDefaultClass>(table.columns[i].defaultClass));

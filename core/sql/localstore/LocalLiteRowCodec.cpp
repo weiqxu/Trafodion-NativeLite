@@ -10,6 +10,7 @@
 
 #include "BigNumHelper.h"
 #include "DatetimeType.h"
+#include "IntervalType.h"
 #include "LocalLiteRocksDBStore.h"
 #include "Platform.h"
 #include "NABoolean.h"
@@ -34,8 +35,12 @@ enum LocalLiteCodecType
   LL_TYPE_FLOAT64,
   LL_TYPE_NUMERIC,
   LL_TYPE_DATETIME,
+  LL_TYPE_INTERVAL,
+  LL_TYPE_BOOLEAN,
   LL_TYPE_CHAR,
-  LL_TYPE_VARCHAR
+  LL_TYPE_VARCHAR,
+  LL_TYPE_BINARY,
+  LL_TYPE_VARBINARY
 };
 
 struct LocalLiteStoredColumn
@@ -44,6 +49,8 @@ struct LocalLiteStoredColumn
   size_t length;
   size_t precision;
   size_t scale;
+  rec_datetime_field intervalStart;
+  rec_datetime_field intervalEnd;
   bool decimalStorage;
   bool unsignedNumeric;
   bool nullable;
@@ -101,6 +108,38 @@ static size_t secondTypeArg(const std::string &type, size_t defaultValue)
   return value >= 0 ? static_cast<size_t>(value) : defaultValue;
 }
 
+static bool isVariableType(LocalLiteCodecType type)
+{
+  return type == LL_TYPE_VARCHAR || type == LL_TYPE_VARBINARY;
+}
+
+static size_t characterByteWidth(const std::string &type)
+{
+  std::string u = upper(type);
+  if (u.find("CHARACTER SET UTF8") != std::string::npos)
+    return 4;
+  if (u.find("CHARACTER SET UCS2") != std::string::npos)
+    return 2;
+  return 1;
+}
+
+static size_t boundedCharacterLength(const std::string &value,
+                                     size_t maxBytes,
+                                     size_t byteWidth)
+{
+  size_t len = value.size() < maxBytes ? value.size() : maxBytes;
+  if (byteWidth == 2)
+    len -= len % 2;
+  else if (byteWidth == 4)
+    {
+      // Do not split a UTF-8 continuation sequence at the storage boundary.
+      while (len > 0 &&
+             (static_cast<unsigned char>(value[len - 1]) & 0xc0) == 0x80)
+        --len;
+    }
+  return len;
+}
+
 static size_t numericStorageSize(size_t precision)
 {
   if (precision <= 2)
@@ -125,11 +164,15 @@ static bool mapType(const std::string &typeText,
                     size_t *precisionOut,
                     size_t *scale,
                     bool *decimalStorage,
-                    bool *unsignedNumeric)
+                    bool *unsignedNumeric,
+                    rec_datetime_field *intervalStart,
+                    rec_datetime_field *intervalEnd)
 {
   *scale = 0;
   *precisionOut = 0;
   *decimalStorage = false;
+  *intervalStart = REC_DATE_DAY;
+  *intervalEnd = REC_DATE_SECOND;
   std::string typeName = upper(typeText);
   *unsignedNumeric = typeName.find("UNSIGNED") != std::string::npos;
   if (startsWithWord(typeName, "TINYINT"))
@@ -238,11 +281,65 @@ static bool mapType(const std::string &typeText,
       *scale = typeArg(typeName, 6);
       return true;
     }
+  if (startsWithWord(typeName, "BOOLEAN"))
+    {
+      *type = LL_TYPE_BOOLEAN;
+      *length = 1;
+      *precisionOut = 1;
+      return true;
+    }
+  if (startsWithWord(typeName, "INTERVAL"))
+    {
+      // Interval storage is fixed by its qualifier.  The catalog descriptor
+      // carries the exact qualifier; the codec only needs its binary width.
+      size_t leading = typeArg(typeName, 2);
+      size_t fraction = typeName.find("SECOND") != std::string::npos
+          ? secondTypeArg(typeName, 6) : 0;
+      rec_datetime_field start = typeName.find("YEAR") != std::string::npos
+          ? REC_DATE_YEAR : (typeName.find("MONTH") != std::string::npos
+              ? REC_DATE_MONTH : (typeName.find("DAY") != std::string::npos
+                  ? REC_DATE_DAY : (typeName.find("HOUR") != std::string::npos
+                      ? REC_DATE_HOUR : REC_DATE_MINUTE)));
+      rec_datetime_field end = typeName.find("SECOND") != std::string::npos
+          ? REC_DATE_SECOND : (typeName.find("MINUTE") != std::string::npos
+              ? REC_DATE_MINUTE : (typeName.find("HOUR") != std::string::npos
+                  ? REC_DATE_HOUR : start));
+      *type = LL_TYPE_INTERVAL;
+      *intervalStart = start;
+      *intervalEnd = end;
+      *length = static_cast<size_t>(IntervalType::getStorageSize(
+          start, static_cast<UInt32>(leading), end,
+          static_cast<UInt32>(fraction)));
+      *precisionOut = leading;
+      *scale = fraction;
+      return *length > 0;
+    }
+  if (startsWithWord(typeName, "BINARY"))
+    {
+      *type = LL_TYPE_BINARY;
+      *length = typeArg(typeName, 1);
+      *precisionOut = *length;
+      return true;
+    }
+  if (startsWithWord(typeName, "VARBINARY"))
+    {
+      *type = LL_TYPE_VARBINARY;
+      *length = typeArg(typeName, 1);
+      *precisionOut = *length;
+      return true;
+    }
+  if (startsWithWord(typeName, "LONG VARCHAR"))
+    {
+      *type = LL_TYPE_VARCHAR;
+      *length = typeArg(typeName, 2000);
+      *precisionOut = *length;
+      return true;
+    }
   if (startsWithWord(typeName, "VARCHAR") ||
       startsWithWord(typeName, "CHARACTER VARYING"))
     {
       *type = LL_TYPE_VARCHAR;
-      *length = typeArg(typeName, 1);
+      *length = typeArg(typeName, 1) * characterByteWidth(typeName);
       *precisionOut = *length;
       return true;
     }
@@ -250,7 +347,7 @@ static bool mapType(const std::string &typeText,
       startsWithWord(typeName, "CHARACTER"))
     {
       *type = LL_TYPE_CHAR;
-      *length = typeArg(typeName, 1);
+      *length = typeArg(typeName, 1) * characterByteWidth(typeName);
       *precisionOut = *length;
       return true;
     }
@@ -270,8 +367,11 @@ static size_t typeAlignment(LocalLiteCodecType type)
   switch (type)
     {
     case LL_TYPE_INT8:
+    case LL_TYPE_BOOLEAN:
     case LL_TYPE_CHAR:
     case LL_TYPE_VARCHAR:
+    case LL_TYPE_BINARY:
+    case LL_TYPE_VARBINARY:
       return 1;
     case LL_TYPE_INT16:
       return 2;
@@ -302,7 +402,8 @@ static bool computeLayout(const LocalLiteTableDef &table,
       LocalLiteStoredColumn &col = (*columns)[i];
       if (!mapType(table.columns[i].type, &col.type, &col.length,
                    &col.precision, &col.scale, &col.decimalStorage,
-                   &col.unsignedNumeric))
+                   &col.unsignedNumeric, &col.intervalStart,
+                   &col.intervalEnd))
         {
           setError(error, "unsupported local-lite binary row column type: " +
                   table.columns[i].type);
@@ -316,7 +417,7 @@ static bool computeLayout(const LocalLiteTableDef &table,
       col.offset = 0;
       if (col.nullable)
         nullableCount++;
-      if (col.type == LL_TYPE_VARCHAR)
+      if (isVariableType(col.type))
         variableCount++;
     }
 
@@ -324,7 +425,7 @@ static bool computeLayout(const LocalLiteTableDef &table,
   size_t voaOffset = hdrSize;
   for (size_t i = 0; i < columns->size(); i++)
     {
-      if ((*columns)[i].type == LL_TYPE_VARCHAR)
+      if (isVariableType((*columns)[i].type))
         {
           (*columns)[i].voaOffset = voaOffset;
           voaOffset += ExpAlignedFormat::OFFSET_SIZE;
@@ -342,7 +443,7 @@ static bool computeLayout(const LocalLiteTableDef &table,
   size_t firstFixedAlign = 1;
   for (size_t i = 0; i < columns->size(); i++)
     {
-      if ((*columns)[i].type != LL_TYPE_VARCHAR)
+      if (!isVariableType((*columns)[i].type))
         {
           firstFixedAlign = typeAlignment((*columns)[i].type);
           break;
@@ -360,7 +461,7 @@ static bool computeLayout(const LocalLiteTableDef &table,
           col.nullIndOffset = bitmapOffset;
           col.nullBitIndex = nullBit++;
         }
-      if (col.type == LL_TYPE_VARCHAR)
+      if (isVariableType(col.type))
         continue;
       fixedOffset = alignTo(fixedOffset, typeAlignment(col.type));
       col.offset = fixedOffset;
@@ -371,7 +472,7 @@ static bool computeLayout(const LocalLiteTableDef &table,
   for (size_t i = 0; i < columns->size(); i++)
     {
       LocalLiteStoredColumn &col = (*columns)[i];
-      if (col.type != LL_TYPE_VARCHAR)
+      if (!isVariableType(col.type))
         continue;
       col.vcLenIndOffset = varOffset;
       col.offset = varOffset + ExpAlignedFormat::VARIABLE_LEN_SIZE;
@@ -708,21 +809,65 @@ static bool writeValue(char *row,
           }
         return true;
       }
+    case LL_TYPE_BOOLEAN:
+      {
+        std::string u = upper(value);
+        Int8 v = (u == "TRUE" || u == "1") ? 1 :
+                 ((u == "FALSE" || u == "0") ? 0 : -1);
+        if (v < 0)
+          {
+            setError(error, "invalid local-lite BOOLEAN literal");
+            return false;
+          }
+        str_cpy_all(target, reinterpret_cast<char *>(&v), sizeof(v));
+        return true;
+      }
+    case LL_TYPE_INTERVAL:
+      {
+        IntervalValue interval(value.c_str(), col.intervalStart,
+                                static_cast<UInt32>(col.precision),
+                                col.intervalEnd,
+                                static_cast<UInt32>(col.scale));
+        if (!interval.isValid() || interval.getValueLen() > col.length)
+          {
+            setError(error, "invalid local-lite interval literal");
+            return false;
+          }
+        memcpy(target, interval.getValue(), interval.getValueLen());
+        return true;
+      }
     case LL_TYPE_CHAR:
       {
         str_pad(target, col.length, ' ');
-        size_t len = value.size() > col.length ? col.length : value.size();
+        size_t width = col.precision ? col.length / col.precision : 1;
+        size_t len = boundedCharacterLength(value, col.length, width);
         if (len > 0)
           str_cpy_all(target, value.data(), len);
         return true;
       }
     case LL_TYPE_VARCHAR:
       {
-        size_t len = value.size() > col.length ? col.length : value.size();
+        size_t width = col.precision ? col.length / col.precision : 1;
+        size_t len = boundedCharacterLength(value, col.length, width);
         ExpAlignedFormat::setVarLength(row + col.vcLenIndOffset,
                                        static_cast<UInt32>(len));
         if (len > 0)
           str_cpy_all(target, value.data(), len);
+        return true;
+      }
+    case LL_TYPE_BINARY:
+      {
+        str_pad(target, col.length, '\0');
+        size_t len = value.size() < col.length ? value.size() : col.length;
+        if (len) str_cpy_all(target, value.data(), len);
+        return true;
+      }
+    case LL_TYPE_VARBINARY:
+      {
+        size_t len = value.size() < col.length ? value.size() : col.length;
+        ExpAlignedFormat::setVarLength(row + col.vcLenIndOffset,
+                                       static_cast<UInt32>(len));
+        if (len) str_cpy_all(target, value.data(), len);
         return true;
       }
     }
@@ -757,7 +902,7 @@ bool LocalLiteEncodeBinaryRow(const LocalLiteTableDef &table,
   for (size_t i = 0; i < columns.size(); i++)
     {
       const LocalLiteStoredColumn &col = columns[i];
-      if (col.type != LL_TYPE_VARCHAR && col.offset < firstFixed)
+      if (!isVariableType(col.type) && col.offset < firstFixed)
         firstFixed = col.offset;
       if (col.nullable)
         bitmapOffset = col.nullIndOffset;
@@ -772,7 +917,7 @@ bool LocalLiteEncodeBinaryRow(const LocalLiteTableDef &table,
 
   for (size_t i = 0; i < columns.size(); i++)
     {
-      if (columns[i].type == LL_TYPE_VARCHAR)
+      if (isVariableType(columns[i].type))
         ExpTupleDesc::setVoaValue(&row[0], columns[i].voaOffset,
                                   columns[i].vcLenIndOffset,
                                   ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
@@ -830,7 +975,7 @@ static bool initializeCanonicalRow(const std::vector<LocalLiteStoredColumn> &col
   for (size_t i = 0; i < columns.size(); i++)
     {
       const LocalLiteStoredColumn &col = columns[i];
-      if (col.type != LL_TYPE_VARCHAR && col.offset < firstFixed)
+      if (!isVariableType(col.type) && col.offset < firstFixed)
         firstFixed = col.offset;
       if (col.nullable)
         bitmapOffset = col.nullIndOffset;
@@ -845,7 +990,7 @@ static bool initializeCanonicalRow(const std::vector<LocalLiteStoredColumn> &col
 
   for (size_t i = 0; i < columns.size(); i++)
     {
-      if (columns[i].type == LL_TYPE_VARCHAR)
+      if (isVariableType(columns[i].type))
         ExpTupleDesc::setVoaValue(row, columns[i].voaOffset,
                                   columns[i].vcLenIndOffset,
                                   ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
@@ -943,6 +1088,9 @@ static bool copyAttrToCanonical(const char *srcRow,
     case LL_TYPE_FLOAT64:
     case LL_TYPE_DATETIME:
     case LL_TYPE_NUMERIC:
+    case LL_TYPE_INTERVAL:
+    case LL_TYPE_BOOLEAN:
+    case LL_TYPE_BINARY:
       {
         size_t len = srcLen < destCol.length ? srcLen : destCol.length;
         str_cpy_all(destRow + destCol.offset, src, len);
@@ -957,6 +1105,7 @@ static bool copyAttrToCanonical(const char *srcRow,
         return true;
       }
     case LL_TYPE_VARCHAR:
+    case LL_TYPE_VARBINARY:
       {
         size_t len = srcLen < destCol.length ? srcLen : destCol.length;
         ExpAlignedFormat::setVarLength(destRow + destCol.vcLenIndOffset,
@@ -1206,7 +1355,7 @@ bool LocalLiteRebuildBinaryRow(
         ExpTupleDesc::clearNullValue(&newRow[0] + dest.nullIndOffset,
                                      dest.nullBitIndex,
                                      ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
-      if (src.type == LL_TYPE_VARCHAR)
+      if (isVariableType(src.type))
         {
           UInt32 len = ExpAlignedFormat::getVarLength(
               const_cast<char *>(oldRow) + src.vcLenIndOffset);
@@ -1308,7 +1457,7 @@ bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
 
       const char *src = NULL;
       size_t len = 0;
-      if (col.type == LL_TYPE_VARCHAR)
+      if (isVariableType(col.type))
         {
           if (!hasRange(storedRow, col.vcLenIndOffset,
                         ExpAlignedFormat::VARIABLE_LEN_SIZE))
@@ -1452,7 +1601,7 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &table,
 
       const char *src = NULL;
       size_t len = 0;
-      if (col.type == LL_TYPE_VARCHAR)
+      if (isVariableType(col.type))
         {
           if (!hasRange(storedRow, col.vcLenIndOffset,
                         ExpAlignedFormat::VARIABLE_LEN_SIZE))
@@ -1582,7 +1731,7 @@ bool LocalLiteBuildConstraintKey(
         }
       const char *src = NULL;
       size_t len = 0;
-      if (col.type == LL_TYPE_VARCHAR)
+      if (isVariableType(col.type))
         {
           if (!hasRange(storedRow, col.vcLenIndOffset,
                         ExpAlignedFormat::VARIABLE_LEN_SIZE))
@@ -1663,7 +1812,7 @@ bool LocalLiteBuildSecondaryIndexPrefixFromTextFields(
       const LocalLiteStoredColumn &col = columns[sourceIndex];
       const char *src = NULL;
       size_t len = 0;
-      if (col.type == LL_TYPE_VARCHAR)
+      if (isVariableType(col.type))
         {
           len = ExpAlignedFormat::getVarLength(
               &row[0] + col.vcLenIndOffset);
@@ -1694,6 +1843,10 @@ static bool orderedIndexColumnSupported(const LocalLiteStoredColumn &column)
     case LL_TYPE_FLOAT64:
     case LL_TYPE_CHAR:
     case LL_TYPE_VARCHAR:
+    case LL_TYPE_BINARY:
+    case LL_TYPE_VARBINARY:
+    case LL_TYPE_BOOLEAN:
+    case LL_TYPE_INTERVAL:
     case LL_TYPE_DATETIME:
       return true;
     case LL_TYPE_NUMERIC:
@@ -1850,9 +2003,10 @@ static bool appendOrderedIndexComponent(
 
   std::string component;
   component.push_back('\1');
-  if (column.type == LL_TYPE_VARCHAR || column.type == LL_TYPE_CHAR)
+  if (isVariableType(column.type) || column.type == LL_TYPE_CHAR ||
+      column.type == LL_TYPE_BINARY)
     {
-      size_t len = column.type == LL_TYPE_VARCHAR
+      size_t len = isVariableType(column.type)
           ? ExpAlignedFormat::getVarLength(
                 const_cast<char *>(storedRow.data()) + column.vcLenIndOffset)
           : column.length;
@@ -2170,14 +2324,15 @@ static bool copyStoredToDest(const std::string &storedRow,
 
   if (dest->getVCIndicatorLength() > 0)
     {
-      if (source.type != LL_TYPE_VARCHAR && source.type != LL_TYPE_CHAR)
+      if (!isVariableType(source.type) && source.type != LL_TYPE_CHAR &&
+          source.type != LL_TYPE_BINARY)
         {
           setError(error, "local-lite binary projection type mismatch");
           return false;
         }
       size_t len = 0;
       const char *src = NULL;
-      if (source.type == LL_TYPE_VARCHAR)
+      if (isVariableType(source.type))
         {
           if (!hasRange(storedRow, source.vcLenIndOffset,
                         ExpAlignedFormat::VARIABLE_LEN_SIZE))
@@ -2219,7 +2374,7 @@ static bool copyStoredToDest(const std::string &storedRow,
     }
 
   char *target = destRow + dest->getOffset();
-  if (source.type != LL_TYPE_VARCHAR &&
+  if (!isVariableType(source.type) &&
       !hasRange(storedRow, source.offset, source.length))
     {
       setError(error, "truncated local-lite binary row payload");
@@ -2239,6 +2394,22 @@ static bool copyStoredToDest(const std::string &storedRow,
     case REC_FLOAT32:
     case REC_FLOAT64:
     case REC_DATETIME:
+    case REC_BOOLEAN:
+    case REC_INT_YEAR:
+    case REC_INT_MONTH:
+    case REC_INT_YEAR_MONTH:
+    case REC_INT_DAY:
+    case REC_INT_HOUR:
+    case REC_INT_DAY_HOUR:
+    case REC_INT_MINUTE:
+    case REC_INT_HOUR_MINUTE:
+    case REC_INT_DAY_MINUTE:
+    case REC_INT_SECOND:
+    case REC_INT_MINUTE_SECOND:
+    case REC_INT_HOUR_SECOND:
+    case REC_INT_DAY_SECOND:
+    case REC_BINARY_STRING:
+    case REC_VARBINARY_STRING:
     case REC_DECIMAL_UNSIGNED:
     case REC_DECIMAL_LSE:
     case REC_NUM_BIG_UNSIGNED:
@@ -2251,10 +2422,11 @@ static bool copyStoredToDest(const std::string &storedRow,
         return true;
       }
     case REC_BYTE_F_ASCII:
+    case REC_BYTE_F_DOUBLE:
       {
         str_pad(target, dest->getLength(), ' ');
         size_t len = 0;
-        if (source.type == LL_TYPE_VARCHAR)
+        if (isVariableType(source.type))
           {
             if (!hasRange(storedRow, source.vcLenIndOffset,
                           ExpAlignedFormat::VARIABLE_LEN_SIZE))

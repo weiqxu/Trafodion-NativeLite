@@ -169,6 +169,28 @@ static bool localLiteRejectUnsupportedColumnType(const std::string &type)
   return false;
 }
 
+// getMyTypeAsText() deliberately renders binary strings as their character
+// equivalents.  The local-lite catalog must retain the physical distinction,
+// otherwise the RocksDB row codec cannot reconstruct BINARY/VARBINARY.
+static std::string localLiteCanonicalColumnType(ElemDDLColDef *col,
+                                                const std::string &typeText)
+{
+  short fsType = col->getColumnDataType()->getFSDatatype();
+  NAString sqlType = col->getColumnDataType()->getTypeSQLname(TRUE);
+  std::string rendered(sqlType.data());
+  if (fsType == REC_BINARY_STRING || fsType == REC_VARBINARY_STRING ||
+      rendered.find("BINARY") != std::string::npos)
+    {
+      bool varying = fsType == REC_VARBINARY_STRING ||
+                     rendered.find("VARBINARY") != std::string::npos;
+      std::string type = varying ? "VARBINARY(" : "BINARY(";
+      type += std::to_string(col->getColumnDataType()->getNominalSize());
+      type += ")";
+      return type;
+    }
+  return typeText;
+}
+
 static uint64_t localLiteNewObjectUid()
 {
   uint64_t uid = static_cast<uint64_t>(time(NULL));
@@ -604,7 +626,7 @@ static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
   NAString typeText;
   def->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
   column.name = def->getColumnName().data();
-  column.type = typeText.data();
+  column.type = localLiteCanonicalColumnType(def, typeText.data());
   column.nullable = !def->isNotNullConstraintSpecified();
   column.added = true;
   if (localLiteRejectUnsupportedColumnType(column.type) ||
@@ -1285,7 +1307,7 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
         }
       NAString typeText;
       col->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
-      std::string type(typeText.data());
+      std::string type = localLiteCanonicalColumnType(col, typeText.data());
       if (localLiteRejectUnsupportedColumnType(type))
         {
           localLiteDDLDiag("unsupported local-lite column type: " + type);
