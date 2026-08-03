@@ -2,7 +2,7 @@
 suite	test	selector	classification	milestone	disposition	blocker	evidence
 charsets	TEST001	all	portable	M4	blocked	ALTER-CHECK-first;also-M6-UCS2-hex-assignment	core/sql/regress/charsets/TEST001:89
 charsets	TEST002	all	portable	M4	blocked	DEFAULT-CHECK-RI-VIEW-INDEX;also-M1-M6	core/sql/regress/charsets/TEST002:39
-charsets	TEST003	all	portable	M1	blocked	UPDATE-first-roadmap-dependency;also-M2-M5-M6	core/sql/regress/charsets/TEST003:54
+charsets	TEST003	all	portable	M10	runnable	none	core/sql/regress/charsets/TEST003:54
 charsets	TEST004	all	portable	M6	blocked	UCS2-CHAR-assignment-error-8690	core/sql/regress/charsets/TEST004:56
 charsets	TEST010	all	portable	M2	blocked	DELETE-and-UCS2-parameter-result-mismatch	core/sql/regress/charsets/TEST010:143
 charsets	TEST012	all	portable	M4	blocked	DEFAULT-column-first;also-M1-M2-M5-M6	core/sql/regress/charsets/TEST012:37
@@ -72,7 +72,7 @@ executor	TEST025	all	portable	M4	blocked	NO-DEFAULT-table-definition;also-M2-M5-
 executor	TEST050	all	portable	M4	blocked	DEFAULT-columns;also-M1-M5-diagnostic-catalog	core/sql/regress/executor/TEST050:50
 executor	TEST063	cleanup,crtab,seltab,negtests,derived,scalar_agg,rows_since,SCBUG_Q1,SCBUG_Q2,SCBUG_Q3,SCBUG_Q4,SCBUG_Q5,SCBUG_Q6,olapcrtab,olapdroptable	portable	M7	blocked	window-OLAP-and-ESP-error-2013;also-VIEW;30s-section-timeout	core/sql/regress/executor/TEST063:53
 executor	TEST063	olaptest	service-stack	M7	unsafe	external-COMPARE-and-shell-diff-pipeline	core/sql/regress/executor/TEST063:1966
-executor	TEST101	all	portable	M1	blocked	UPDATE-required-for-ROUND-null-scale-results	core/sql/regress/executor/TEST101:294
+executor	TEST101	all	portable	M10	runnable	none	core/sql/regress/executor/TEST101:294
 executor	TEST106	all	service-stack	M7	unsafe	cancel-tests-require-background-sqlci-processes-and-runtime-statistics	core/sql/regress/executor/TEST106:248
 executor	TEST107	all	service-stack	M7	unsafe	sqlci-post-session-segfault-139-after-large-sort-test	core/sql/regress/executor/TEST107:145
 executor	TEST122	test_drop_index,clnup	portable	M3	blocked	secondary-index-DDL-cache-invalidation-and-EXPLAIN	core/sql/regress/executor/TEST122:312

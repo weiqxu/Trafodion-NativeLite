@@ -1202,6 +1202,422 @@ static bool decodeTable(const std::string &encoded,
   return true;
 }
 
+static std::string localLiteMetadataPrefix(const char *table)
+{
+  return std::string("md|") + table + "|";
+}
+
+static std::string localLiteMetadataUid(uint64_t uid)
+{
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%020llu",
+           static_cast<unsigned long long>(uid));
+  return buf;
+}
+
+static std::string localLiteMetadataObjectKey(
+    const std::string &catalog, const std::string &schema,
+    const std::string &name, const char *objectType)
+{
+  return localLiteMetadataPrefix("OBJECTS") + localLiteHexKey(catalog) + "|" +
+         localLiteHexKey(schema) + "|" + localLiteHexKey(name) + "|" +
+         objectType;
+}
+
+static std::string localLiteMetadataTableKey(uint64_t uid)
+{
+  return localLiteMetadataPrefix("TABLES") + localLiteMetadataUid(uid);
+}
+
+static std::string localLiteMetadataColumnKey(uint64_t uid, size_t ordinal)
+{
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%020llu|%020lu",
+           static_cast<unsigned long long>(uid),
+           static_cast<unsigned long>(ordinal));
+  return localLiteMetadataPrefix("COLUMNS") + buf;
+}
+
+static std::string localLiteMetadataKeyKey(uint64_t uid,
+                                           const std::string &keyId,
+                                           size_t sequence)
+{
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%020llu|%s|%020lu",
+           static_cast<unsigned long long>(uid),
+           keyId.c_str(), static_cast<unsigned long>(sequence));
+  return localLiteMetadataPrefix("KEYS") + buf;
+}
+
+static void appendLocalLiteMetadataField(std::string &out,
+                                         const std::string &field)
+{
+  appendUint64(out, static_cast<uint64_t>(field.size()));
+  out.append(field);
+}
+
+static std::string encodeLocalLiteMetadataRow(
+    const std::vector<std::string> &fields)
+{
+  std::string out("LLMD1");
+  appendUint64(out, static_cast<uint64_t>(fields.size()));
+  for (size_t i = 0; i < fields.size(); i++)
+    appendLocalLiteMetadataField(out, fields[i]);
+  return out;
+}
+
+static void putLocalLiteMetadataRecord(
+    rocksdb_writebatch_t *batch, const std::string &key,
+    const std::vector<std::string> &fields)
+{
+  std::string value = encodeLocalLiteMetadataRow(fields);
+  rocksdb_writebatch_put(batch, key.data(), key.size(), value.data(),
+                         value.size());
+}
+
+static void deleteLocalLiteMetadataRecord(rocksdb_writebatch_t *batch,
+                                           const std::string &key)
+{
+  rocksdb_writebatch_delete(batch, key.data(), key.size());
+}
+
+static void addLocalLiteMetadataForTable(rocksdb_writebatch_t *batch,
+                                         const LocalLiteTableDef &table)
+{
+  const char *tableType = table.view ? "VIEW" : "TABLE";
+  putLocalLiteMetadataRecord(
+      batch,
+      localLiteMetadataObjectKey(table.catalog, table.schema, table.name,
+                                 tableType),
+      std::vector<std::string>{table.catalog, table.schema, table.name,
+                               tableType,
+                               localLiteMetadataUid(table.objectUid)});
+  putLocalLiteMetadataRecord(
+      batch, localLiteMetadataTableKey(table.objectUid),
+      std::vector<std::string>{localLiteMetadataUid(table.objectUid),
+                               table.view ? "1" : "0",
+                               std::to_string(table.columns.size()),
+                               std::to_string(table.primaryKeyColumns.size()),
+                               std::to_string(table.uniqueKeyColumns.size()),
+                               std::to_string(table.secondaryIndexes.size()),
+                               table.primaryKeyName});
+
+  for (size_t i = 0; i < table.columns.size(); i++)
+    {
+      const LocalLiteColumnDef &column = table.columns[i];
+      putLocalLiteMetadataRecord(
+          batch, localLiteMetadataColumnKey(table.objectUid, i),
+          std::vector<std::string>{localLiteMetadataUid(table.objectUid),
+                                   std::to_string(i), column.name, column.type,
+                                   column.nullable ? "1" : "0",
+                                   std::to_string(column.defaultClass),
+                                   column.defaultValue});
+    }
+
+  for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+    putLocalLiteMetadataRecord(
+        batch, localLiteMetadataKeyKey(table.objectUid, "P", i),
+        std::vector<std::string>{localLiteMetadataUid(table.objectUid), "P",
+                                 table.primaryKeyName, std::to_string(i),
+                                 std::to_string(table.primaryKeyColumns[i]),
+                                 "0"});
+  for (size_t key = 0; key < table.uniqueKeyColumns.size(); key++)
+    for (size_t i = 0; i < table.uniqueKeyColumns[key].size(); i++)
+      putLocalLiteMetadataRecord(
+          batch, localLiteMetadataKeyKey(table.objectUid,
+                                         "U" + std::to_string(key), i),
+          std::vector<std::string>{localLiteMetadataUid(table.objectUid),
+                                   "U", table.uniqueKeyNames[key],
+                                   std::to_string(i),
+                                   std::to_string(table.uniqueKeyColumns[key][i]),
+                                   "0"});
+  for (size_t index = 0; index < table.secondaryIndexes.size(); index++)
+    {
+      const LocalLiteIndexDef &idx = table.secondaryIndexes[index];
+      putLocalLiteMetadataRecord(
+          batch,
+          localLiteMetadataObjectKey(table.catalog, table.schema, idx.name,
+                                     "INDEX"),
+          std::vector<std::string>{table.catalog, table.schema, idx.name,
+                                   "INDEX",
+                                   localLiteMetadataUid(idx.objectUid)});
+      for (size_t i = 0; i < idx.keyColumns.size(); i++)
+        putLocalLiteMetadataRecord(
+            batch, localLiteMetadataKeyKey(table.objectUid,
+                                           "S" + localLiteHexKey(idx.name), i),
+            std::vector<std::string>{localLiteMetadataUid(table.objectUid),
+                                     "S", idx.name, std::to_string(i),
+                                     std::to_string(idx.keyColumns[i]),
+                                     (i < idx.descending.size() &&
+                                      idx.descending[i]) ? "1" : "0"});
+    }
+}
+
+static void deleteLocalLiteMetadataForTable(rocksdb_writebatch_t *batch,
+                                            const LocalLiteTableDef &table)
+{
+  deleteLocalLiteMetadataRecord(
+      batch, localLiteMetadataObjectKey(table.catalog, table.schema,
+                                        table.name,
+                                        table.view ? "VIEW" : "TABLE"));
+  deleteLocalLiteMetadataRecord(batch,
+                                localLiteMetadataTableKey(table.objectUid));
+  for (size_t i = 0; i < table.columns.size(); i++)
+    deleteLocalLiteMetadataRecord(
+        batch, localLiteMetadataColumnKey(table.objectUid, i));
+  for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+    deleteLocalLiteMetadataRecord(
+        batch, localLiteMetadataKeyKey(table.objectUid, "P", i));
+  for (size_t key = 0; key < table.uniqueKeyColumns.size(); key++)
+    for (size_t i = 0; i < table.uniqueKeyColumns[key].size(); i++)
+      deleteLocalLiteMetadataRecord(
+          batch, localLiteMetadataKeyKey(table.objectUid,
+                                         "U" + std::to_string(key), i));
+  for (size_t index = 0; index < table.secondaryIndexes.size(); index++)
+    {
+      const LocalLiteIndexDef &idx = table.secondaryIndexes[index];
+      deleteLocalLiteMetadataRecord(
+          batch, localLiteMetadataObjectKey(table.catalog, table.schema,
+                                            idx.name, "INDEX"));
+      for (size_t i = 0; i < idx.keyColumns.size(); i++)
+        deleteLocalLiteMetadataRecord(
+            batch, localLiteMetadataKeyKey(table.objectUid,
+                                           "S" + localLiteHexKey(idx.name), i));
+    }
+}
+
+static bool isLocalLiteMetadataTable(const std::string &catalog,
+                                     const std::string &schema,
+                                     const std::string &name)
+{
+  if (catalog != "TRAFODION" || schema != "_MD_")
+    return false;
+  return name == "OBJECTS" || name == "TABLES" || name == "COLUMNS" ||
+         name == "KEYS" || name == "INDEXES";
+}
+
+static void addLocalLiteMetadataColumn(LocalLiteTableDef *table,
+                                       const char *name,
+                                       const char *type)
+{
+  LocalLiteColumnDef column;
+  column.name = name;
+  column.type = type;
+  column.nullable = false;
+  table->columns.push_back(column);
+}
+
+static bool localLiteMetadataTableDefinition(const std::string &catalog,
+                                             const std::string &schema,
+                                             const std::string &name,
+                                             LocalLiteTableDef *table,
+                                             std::string *error)
+{
+  if (!table || !isLocalLiteMetadataTable(catalog, schema, name))
+    return false;
+  table->catalog = catalog;
+  table->schema = schema;
+  table->name = name;
+  table->objectUid = 1000000000000ULL;
+  if (name == "OBJECTS")
+    {
+      table->objectUid++;
+      addLocalLiteMetadataColumn(table, "CATALOG_NAME", "VARCHAR(256)");
+      addLocalLiteMetadataColumn(table, "SCHEMA_NAME", "VARCHAR(256)");
+      addLocalLiteMetadataColumn(table, "OBJECT_NAME", "VARCHAR(256)");
+      addLocalLiteMetadataColumn(table, "OBJECT_TYPE", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "OBJECT_UID", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "CREATE_TIME", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "REDEF_TIME", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "VALID_DEF", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "DROPPABLE", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "OBJECT_OWNER", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "SCHEMA_OWNER", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "FLAGS", "VARCHAR(32)");
+      table->primaryKeyColumns = {0, 1, 2, 3};
+    }
+  else if (name == "TABLES")
+    {
+      table->objectUid++;
+      addLocalLiteMetadataColumn(table, "TABLE_UID", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "ROW_FORMAT", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "IS_AUDITED", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "ROW_DATA_LENGTH", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "ROW_TOTAL_LENGTH", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "KEY_LENGTH", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "NUM_SALT_PARTNS", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "FLAGS", "VARCHAR(32)");
+      table->primaryKeyColumns = {0};
+    }
+  else if (name == "COLUMNS")
+    {
+      table->objectUid++;
+      const char *columns[][2] = {
+        {"OBJECT_UID", "VARCHAR(32)"}, {"COLUMN_NAME", "VARCHAR(256)"},
+        {"COLUMN_NUMBER", "VARCHAR(32)"}, {"COLUMN_CLASS", "VARCHAR(32)"},
+        {"FS_DATA_TYPE", "VARCHAR(32)"}, {"SQL_DATA_TYPE", "VARCHAR(32)"},
+        {"COLUMN_SIZE", "VARCHAR(32)"}, {"COLUMN_PRECISION", "VARCHAR(32)"},
+        {"COLUMN_SCALE", "VARCHAR(32)"}, {"DATETIME_START_FIELD", "VARCHAR(32)"},
+        {"DATETIME_END_FIELD", "VARCHAR(32)"}, {"IS_UPSHIFTED", "VARCHAR(32)"},
+        {"COLUMN_FLAGS", "VARCHAR(32)"}, {"NULLABLE", "VARCHAR(32)"},
+        {"CHARACTER_SET", "VARCHAR(40)"}, {"DEFAULT_CLASS", "VARCHAR(32)"},
+        {"DEFAULT_VALUE", "VARCHAR(1024)"},
+        {"COLUMN_HEADING", "VARCHAR(256)"},
+        {"HBASE_COL_FAMILY", "VARCHAR(40)"},
+        {"HBASE_COL_QUALIFIER", "VARCHAR(40)"},
+        {"DIRECTION", "VARCHAR(32)"}, {"IS_OPTIONAL", "VARCHAR(32)"},
+        {"FLAGS", "VARCHAR(32)"}
+      };
+      for (size_t i = 0; i < sizeof(columns) / sizeof(columns[0]); i++)
+        addLocalLiteMetadataColumn(table, columns[i][0], columns[i][1]);
+      table->primaryKeyColumns = {0, 1};
+    }
+  else if (name == "KEYS")
+    {
+      table->objectUid++;
+      addLocalLiteMetadataColumn(table, "OBJECT_UID", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "COLUMN_NAME", "VARCHAR(256)");
+      addLocalLiteMetadataColumn(table, "KEYSEQ_NUMBER", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "COLUMN_NUMBER", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "ORDERING", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "NONKEYCOL", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "FLAGS", "VARCHAR(32)");
+      table->primaryKeyColumns = {0, 2};
+    }
+  else
+    {
+      table->objectUid++;
+      addLocalLiteMetadataColumn(table, "BASE_TABLE_UID", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "KEYTAG", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "IS_UNIQUE", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "KEY_COLCOUNT", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "NONKEY_COLCOUNT", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "IS_EXPLICIT", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "INDEX_UID", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "FLAGS", "VARCHAR(32)");
+      table->primaryKeyColumns = {0, 6};
+    }
+  table->primaryKeyName = catalog + "." + schema + "." + name + "_PK";
+  // Metadata rows are exposed through a generated full-scan descriptor.  The
+  // physical RocksDB row key is the synthetic row id, so do not advertise the
+  // catalog key as an optimizer clustering key.
+  table->primaryKeyColumns.clear();
+  return true;
+}
+
+static bool appendLocalLiteMetadataRow(const LocalLiteTableDef &table,
+                                       const std::vector<std::string> &fields,
+                                       uint64_t rowId,
+                                       std::vector<LocalLiteRow> *rows,
+                                       std::string *error)
+{
+  LocalLiteRow row;
+  row.rowId = rowId;
+  if (!LocalLiteEncodeBinaryRow(table, fields, &row.value, error))
+    return false;
+  rows->push_back(row);
+  return true;
+}
+
+static std::string localLiteMetadataCharset(const std::string &type)
+{
+  if (type.find("UCS2") != std::string::npos) return "UCS2";
+  if (type.find("UTF8") != std::string::npos) return "UTF8";
+  return "ISO88591";
+}
+
+static bool localLiteBuildMetadataRows(
+    const LocalLiteTableDef &metadataTable,
+    const std::vector<LocalLiteTableDef> &tables,
+    std::vector<LocalLiteRow> *rows,
+    std::string *error)
+{
+  uint64_t rowId = 1;
+  rows->clear();
+  for (size_t t = 0; t < tables.size(); t++)
+    {
+      const LocalLiteTableDef &table = tables[t];
+      if (metadataTable.name == "OBJECTS")
+        {
+          const char *type = table.view ? "VI" : "BT";
+          if (!appendLocalLiteMetadataRow(
+                  metadataTable,
+                  {table.catalog, table.schema, table.name, type,
+                   std::to_string(table.objectUid), "0", "0", "Y", "Y",
+                   "0", "0", "0"}, rowId++, rows, error)) return false;
+          for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+            {
+              const LocalLiteIndexDef &index = table.secondaryIndexes[i];
+              if (!appendLocalLiteMetadataRow(
+                      metadataTable,
+                      {table.catalog, table.schema, index.name, "IX",
+                       std::to_string(index.objectUid), "0", "0", "Y", "Y",
+                       "0", "0", "0"}, rowId++, rows, error)) return false;
+            }
+        }
+      else if (metadataTable.name == "TABLES")
+        {
+          if (!appendLocalLiteMetadataRow(
+                  metadataTable,
+                  {std::to_string(table.objectUid), "AL", "Y", "0", "0",
+                   "0", "0", "0"}, rowId++, rows, error)) return false;
+        }
+      else if (metadataTable.name == "COLUMNS")
+        {
+          for (size_t i = 0; i < table.columns.size(); i++)
+            {
+              const LocalLiteColumnDef &column = table.columns[i];
+              std::string qualifier = std::to_string(i + 1);
+              std::vector<std::string> fields = {
+                std::to_string(table.objectUid), column.name,
+                std::to_string(i), "U", "0", column.type, "0", "0", "0",
+                "0", "0", "N", "0", column.nullable ? "1" : "0",
+                localLiteMetadataCharset(column.type),
+                std::to_string(column.defaultClass),
+                column.defaultValue.empty() ? " " : column.defaultValue, " ",
+                "#1", qualifier, "NA", "N", "0"};
+              if (!appendLocalLiteMetadataRow(metadataTable, fields, rowId++,
+                                              rows, error)) return false;
+            }
+        }
+      else if (metadataTable.name == "KEYS")
+        {
+          for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+            if (!appendLocalLiteMetadataRow(
+                    metadataTable,
+                    {std::to_string(table.objectUid),
+                     table.columns[table.primaryKeyColumns[i]].name,
+                     std::to_string(i + 1),
+                     std::to_string(table.primaryKeyColumns[i]), "0", "0", "0"},
+                    rowId++, rows, error)) return false;
+          for (size_t key = 0; key < table.uniqueKeyColumns.size(); key++)
+            for (size_t i = 0; i < table.uniqueKeyColumns[key].size(); i++)
+              if (!appendLocalLiteMetadataRow(
+                      metadataTable,
+                      {std::to_string(table.objectUid),
+                       table.columns[table.uniqueKeyColumns[key][i]].name,
+                       std::to_string(i + 1),
+                       std::to_string(table.uniqueKeyColumns[key][i]), "0", "0",
+                       "0"}, rowId++, rows, error)) return false;
+        }
+      else if (metadataTable.name == "INDEXES")
+        {
+          for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+            {
+              const LocalLiteIndexDef &index = table.secondaryIndexes[i];
+              if (!appendLocalLiteMetadataRow(
+                      metadataTable,
+                      {std::to_string(table.objectUid), std::to_string(i + 1),
+                       index.unique ? "1" : "0",
+                       std::to_string(index.keyColumns.size()), "0", "1",
+                       std::to_string(index.objectUid), "0"}, rowId++, rows,
+                      error)) return false;
+            }
+        }
+    }
+  return true;
+}
+
 static std::string encodeRowValue(const std::string &encodedRow)
 {
   std::string out;
@@ -2211,9 +2627,17 @@ public:
 
     std::string metadataKey = tableKey(loaded);
     std::string metadata = encodeTable(newTable);
+    rocksdb_writebatch_t *catalogBatch = rocksdb_writebatch_create();
+    rocksdb_writebatch_delete(catalogBatch, metadataKey.data(),
+                              metadataKey.size());
+    deleteLocalLiteMetadataForTable(catalogBatch, loaded);
+    rocksdb_writebatch_put(catalogBatch, metadataKey.data(),
+                           metadataKey.size(), metadata.data(),
+                           metadata.size());
+    addLocalLiteMetadataForTable(catalogBatch, newTable);
     err = NULL;
-    rocksdb_put(catalogDb_, writeOptions, metadataKey.data(),
-                metadataKey.size(), metadata.data(), metadata.size(), &err);
+    rocksdb_write(catalogDb_, writeOptions, catalogBatch, &err);
+    rocksdb_writebatch_destroy(catalogBatch);
     if (!checkRocksError(err, "write local-lite ALTER metadata", error))
       {
         char *rollbackErr = NULL;
@@ -3936,6 +4360,7 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   std::string uid = uidKey(copy.objectUid);
   rocksdb_writebatch_put(batch, key.data(), key.size(), encoded.data(), encoded.size());
   rocksdb_writebatch_put(batch, uid.data(), uid.size(), key.data(), key.size());
+  addLocalLiteMetadataForTable(batch, copy);
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
   err = NULL;
   rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
@@ -4814,6 +5239,20 @@ bool LocalLiteRocksDBStore::scanCatalogRecords(
   return checkRocksError(err, "scan local-lite catalog records", error);
 }
 
+bool LocalLiteRocksDBStore::scanMetadataRows(
+    const std::string &metadataTable,
+    std::vector< std::pair<std::string, std::string> > *records,
+    std::string *error)
+{
+  if (metadataTable.empty() || metadataTable.find('|') != std::string::npos)
+    {
+      setError(error, "invalid local-lite metadata table name");
+      return false;
+    }
+  return scanCatalogRecords(localLiteMetadataPrefix(metadataTable.c_str()),
+                            records, error);
+}
+
 bool LocalLiteRocksDBStore::dropSchema(const std::string &catalog,
                                        const std::string &schema,
                                        bool ifExists,
@@ -4962,6 +5401,7 @@ bool LocalLiteRocksDBStore::dropSchema(const std::string &catalog,
       rocksdb_writebatch_delete(batch, uid.data(), uid.size());
       rocksdb_writebatch_delete(batch, tableStatsKey.data(),
                                 tableStatsKey.size());
+      deleteLocalLiteMetadataForTable(batch, tables[i]);
       for (size_t x = 0; x < tables[i].secondaryIndexes.size(); x++)
         {
           std::string indexMetadata = indexKey(
@@ -5015,6 +5455,8 @@ bool LocalLiteRocksDBStore::dropSchema(const std::string &catalog,
           std::string value = encodeTable(updated);
           rocksdb_writebatch_put(batch, key.data(), key.size(), value.data(),
                                  value.size());
+          deleteLocalLiteMetadataForTable(batch, allTables[i]);
+          addLocalLiteMetadataForTable(batch, updated);
         }
     }
 
@@ -5088,6 +5530,7 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
   rocksdb_writebatch_delete(batch, key.data(), key.size());
   rocksdb_writebatch_delete(batch, uid.data(), uid.size());
   rocksdb_writebatch_delete(batch, tableStatsKey.data(), tableStatsKey.size());
+  deleteLocalLiteMetadataForTable(batch, table);
   for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
     {
       std::string idxKey = indexKey(catalog, schema,
@@ -5104,6 +5547,7 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
                                 transitionKey.size());
       rocksdb_writebatch_delete(batch, transitionUid.data(),
                                 transitionUid.size());
+      deleteLocalLiteMetadataForTable(batch, transition);
       for (size_t i = 0; i < transition.secondaryIndexes.size(); i++)
         {
           std::string idxKey = indexKey(
@@ -5211,6 +5655,12 @@ bool LocalLiteRocksDBStore::tableExists(const std::string &catalog,
   if (!open(error))
     return false;
 
+  if (isLocalLiteMetadataTable(catalog, schema, name))
+    {
+      *exists = true;
+      return true;
+    }
+
   std::string key = tableKey(catalog, schema, name);
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
   char *err = NULL;
@@ -5282,6 +5732,10 @@ bool LocalLiteRocksDBStore::loadTable(const std::string &catalog,
 {
   if (!open(error))
     return false;
+
+  if (isLocalLiteMetadataTable(catalog, schema, name))
+    return localLiteMetadataTableDefinition(catalog, schema, name, table,
+                                            error);
 
   std::string key = tableKey(catalog, schema, name);
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
@@ -5460,17 +5914,20 @@ bool LocalLiteRocksDBStore::createIndex(const LocalLiteTableDef &table,
   if (!checkRocksError(err, "backfill local-lite index", error))
     return false;
 
+  LocalLiteTableDef oldLoaded = loaded;
   loaded.secondaryIndexes.push_back(index);
   std::string tabKey = tableKey(loaded);
   std::string idxUid = uidKey(index.objectUid);
   std::string encoded = encodeTable(loaded);
   rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  deleteLocalLiteMetadataForTable(batch, oldLoaded);
   rocksdb_writebatch_put(batch, tabKey.data(), tabKey.size(),
                          encoded.data(), encoded.size());
   rocksdb_writebatch_put(batch, idxKey.data(), idxKey.size(),
                          tabKey.data(), tabKey.size());
   rocksdb_writebatch_put(batch, idxUid.data(), idxUid.size(),
                          idxKey.data(), idxKey.size());
+  addLocalLiteMetadataForTable(batch, loaded);
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
   err = NULL;
   rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
@@ -5563,15 +6020,18 @@ bool LocalLiteRocksDBStore::dropIndex(const std::string &catalog,
       return false;
     }
   LocalLiteIndexDef droppedIndex = table.secondaryIndexes[found];
+  LocalLiteTableDef oldTable = table;
   std::string idxUid = uidKey(droppedIndex.objectUid);
   table.secondaryIndexes.erase(table.secondaryIndexes.begin() + found);
 
   encodedTable = encodeTable(table);
   rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  deleteLocalLiteMetadataForTable(batch, oldTable);
   rocksdb_writebatch_put(batch, tabKey.data(), tabKey.size(),
                          encodedTable.data(), encodedTable.size());
   rocksdb_writebatch_delete(batch, idxKey.data(), idxKey.size());
   rocksdb_writebatch_delete(batch, idxUid.data(), idxUid.size());
+  addLocalLiteMetadataForTable(batch, table);
   rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
   err = NULL;
   rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
@@ -6207,6 +6667,14 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
 
   if (!open(error))
     return false;
+
+  if (isLocalLiteMetadataTable(table.catalog, table.schema, table.name))
+    {
+      std::vector<LocalLiteTableDef> tables;
+      if (!listTables("", "", &tables, error))
+        return false;
+      return localLiteBuildMetadataRows(table, tables, rows, error);
+    }
 
   const std::string path = tablePath(table);
   rocksdb_t *db = LocalLiteStorageManager::instance().openTable(path, false,

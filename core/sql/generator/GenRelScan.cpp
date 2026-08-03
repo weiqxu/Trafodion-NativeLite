@@ -2449,6 +2449,17 @@ short FileScan::genTableName(Generator * generator,
                     FALSE), 0);
         }
     }
+#ifdef TRAF_LOCAL_LITE
+  else if (naTable && naTable->objectUid().get_value() >= 1000000000000LL &&
+           naTable->objectUid().get_value() < 1000000000010LL)
+    {
+      // Synthetic _MD_ descriptors keep a simple physical index name for
+      // optimizer construction, but execution must receive the logical
+      // catalog.schema.object name used by the RocksDB metadata provider.
+      gendTablename = space->AllocateAndCopyToAlignedSpace(
+          GenGetQualifiedName(tableName, FALSE), 0);
+    }
+#endif
   else if (naFileSet)
     {
       if (tabNS.isNull())

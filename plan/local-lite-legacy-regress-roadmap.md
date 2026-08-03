@@ -323,6 +323,54 @@ they are not silently claimed by the RocksDB-only lane.
 
 ## Milestone 10: Suite Convergence
 
+Status: the bounded convergence gate is implemented, but the full legacy
+portable suite is not yet complete.  `scripts/test-local-lite-legacy-convergence.sh`
+now validates the manifest, runs every currently allowlisted portable entry,
+and reruns the native `TEST001-TEST042` lane.  The current allowlist is
+`charsets/TEST003`, `charsets/TEST316`, `core/TEST163`, and `executor/TEST101`,
+all passing; the native lane remains 42/42.  `charsets/TEST003` validates UCS2
+column storage, literal assignment, UPDATE/DELETE, supported translation, and
+the expected rejection of unsupported character-set and translation names.
+Its `EXPECTED003.LOCALLITE` records the local SQLCI diagnostic and DDL display
+contract without changing the legacy source files.  This prevents a legacy
+expected-file mismatch or a skipped entry from being reported as M10 success.
+
+The remaining legacy inventory is explicit rather than silently filtered: 59
+entries are still blocked by unsupported SQL/metadata or legacy output
+contracts, 50 are unsafe because they require shell/service-stack behavior,
+and 21 are excluded for HBase/Hive/physical-storage behavior.  In particular,
+`executor/TEST101` now reaches its UPDATE body and pins the local diagnostic/
+CQD rendering in its LocalLite EXPECTED; the remaining blocked charset entries still require
+unsupported character-set paths or later DDL/statistics work.  The catalog now
+persists RocksDB-native
+logical metadata rows under the `md|OBJECTS|`, `md|TABLES|`, `md|COLUMNS|`, and
+`md|KEYS|` prefixes and maintains them on table/index create, alter, and drop.
+The compiler now resolves the supported `_MD_` tables to synthetic descriptors,
+and the executor builds OBJECTS/TABLES/COLUMNS/KEYS/INDEXES rows directly from
+the RocksDB catalog.  The focused check is `make local-lite-metadata`; it
+validates table/index creation, metadata scans, and cleanup.  The compatibility
+descriptor exposes metadata scalar fields as text because the legacy metadata
+numeric/short-CHAR projection path is not available in the local executor.
+No HBase implementation will be added; remaining work must be implemented
+against RocksDB tables or retained as a concrete exclusion.
+
+### RocksDB metadata layout
+
+The local catalog uses ordered logical metadata keys without copying HBase
+cells.  User data remains in the existing per-object RocksDB databases;
+the catalog RocksDB stores ordered metadata keys:
+
+```text
+md|OBJECTS|<hex-catalog>|<hex-schema>|<hex-name>|<type>
+md|TABLES|<object-uid>
+md|COLUMNS|<object-uid>|<ordinal>
+md|KEYS|<object-uid>|<key-id>|<sequence>
+```
+
+Values use the length-delimited `LLMD1` format.  The public
+`LocalLiteRocksDBStore::scanMetadataRows` API exposes a metadata table as an
+ordered key/value range for the upcoming SQLCI/compiler `_MD_` resolver.
+
 Run and converge the portable sections in this order:
 
 1. `charsets`

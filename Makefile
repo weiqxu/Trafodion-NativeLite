@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress local-lite-legacy-audit
+.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-m10
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 
 all:
@@ -36,9 +36,17 @@ local-lite-regress:
 	@echo "Running local-lite SQL regressions"
 	core/sql/regress/localLite/runregr $(LOCAL_LITE_REGR_TESTS)
 
+local-lite-metadata:
+	@echo "Running local-lite metadata SQL check"
+	scripts/test-local-lite-metadata.sh
+
 local-lite-legacy-audit:
 	@echo "Auditing local-lite legacy regression inventory"
 	scripts/audit-local-lite-legacy-regress.sh --report
+
+local-lite-m10:
+	@echo "Running bounded RocksDB-only legacy convergence gate"
+	scripts/test-local-lite-legacy-convergence.sh
 
 package: 
 	@echo "Packaging Trafodion components"

@@ -3725,10 +3725,18 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   TrafDesc *firstConstraintDesc = NULL;
   TrafDesc *lastConstraintDesc = NULL;
   std::vector<LocalLiteTableDef> allTables;
-  if (!store.listTables("", "", &allTables, error))
+  if ((table.objectUid < 1000000000000ULL ||
+       table.objectUid >= 1000000000010ULL) &&
+      !store.listTables("", "", &allTables, error))
     return NULL;
 
-  if (!table.primaryKeyColumns.empty())
+  // Synthetic _MD_ descriptors only need key columns for scan planning.  Do
+  // not materialize a catalog constraint for them: the legacy constraint
+  // builder derives a physical *_PK name, which would route compilation back
+  // to the unavailable catalog index table.
+  if (!table.primaryKeyColumns.empty() &&
+      (table.objectUid < 1000000000000ULL ||
+       table.objectUid >= 1000000000010ULL))
     {
       std::string constraintName = table.primaryKeyName.empty()
           ? localLiteConstraintName(table, "_PK") : table.primaryKeyName;
@@ -6061,11 +6069,19 @@ NABoolean NATable::fetchObjectUIDForNativeTable(const CorrName& corrName,
 
    if ((corrName.isHbase()) || (corrName.isSeabase()))
      {
-       setIsHbaseTable(TRUE); 
+       setIsHbaseTable(TRUE);
        setIsSeabaseTable(corrName.isSeabase());
        setIsHbaseCellTable(corrName.isHbaseCell());
        setIsHbaseRowTable(corrName.isHbaseRow());
+#ifdef TRAF_LOCAL_LITE
+       setIsSeabaseMDTable(corrName.isSeabaseMD() &&
+                           (table_desc->tableDesc()->objectUID <
+                            1000000000000LL ||
+                            table_desc->tableDesc()->objectUID >=
+                            1000000000010LL));
+#else
        setIsSeabaseMDTable(corrName.isSeabaseMD());
+#endif
      }
 
    // Check if the synonym name translation to reference object has been done.
@@ -9319,6 +9335,27 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
 	}
       else if (corrName.isSeabaseMD())
 	{
+#ifdef TRAF_LOCAL_LITE
+          bool localLiteFound = false;
+          std::string localLiteError;
+          tableDesc = localLiteCreateTableDescFromCatalog(
+              corrName, naTableHeap, &localLiteFound, &localLiteError);
+          if (!localLiteError.empty())
+            {
+              *CmpCommon::diags()
+                << DgSqlCode(-3242)
+                << DgString0((char *)localLiteError.c_str());
+              bindWA->setErrStatus();
+              return NULL;
+            }
+          if (localLiteFound)
+            {
+              isSeabase = TRUE;
+              isSeabaseMD = FALSE;
+            }
+          else
+            {
+#endif
 	  if (corrName.isSpecialTable() && corrName.getSpecialType() == ExtendedQualName::INDEX_TABLE)
 	    {
 	      tableDesc = 
@@ -9348,6 +9385,9 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
 
 	  isSeabase = TRUE;
 	  isSeabaseMD = TRUE;
+#ifdef TRAF_LOCAL_LITE
+            }
+#endif
 	}
       else if (! inTableDescStruct)
         {

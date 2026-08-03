@@ -327,6 +327,14 @@ public:
   bool scanCatalogRecords(const std::string &prefix,
                           std::vector< std::pair<std::string, std::string> > *records,
                           std::string *error);
+  // Logical metadata rows persisted in the local catalog.  The
+  // returned key/value pairs are ordered by RocksDB key and use the stable
+  // "md|<table>|..." key space; callers can expose them as _MD_ scans
+  // without depending on HBase.
+  bool scanMetadataRows(
+      const std::string &metadataTable,
+      std::vector< std::pair<std::string, std::string> > *records,
+      std::string *error);
   bool listTriggers(const std::string &subjectCatalog,
                     const std::string &subjectSchema,
                     const std::string &subjectTable,

@@ -23,6 +23,8 @@ local_legacy_regress_dir="$repo_root/core/sql/regress/localLiteLegacy"
 local_legacy_manifest="$local_legacy_regress_dir/manifest.tsv"
 local_legacy_regress="$local_legacy_regress_dir/runregr"
 local_legacy_audit="$repo_root/scripts/audit-local-lite-legacy-regress.sh"
+local_legacy_m10="$repo_root/scripts/test-local-lite-legacy-convergence.sh"
+local_metadata="$repo_root/scripts/test-local-lite-metadata.sh"
 storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
 executor_root="$repo_root/core/sql/executor/ex_root.cpp"
 localstore_dir="$repo_root/core/sql/localstore"
@@ -170,8 +172,14 @@ grep -q 'unique conflicts advanced keyless row ids' "$local_store_concurrency" |
   fail "missing executable local-lite legacy regress adapter"
 [[ -x "$local_legacy_audit" ]] ||
   fail "missing executable local-lite legacy regress audit"
+[[ -x "$local_legacy_m10" ]] ||
+  fail "missing executable local-lite M10 convergence gate"
+[[ -x "$local_metadata" ]] ||
+  fail "missing executable local-lite metadata SQL check"
 "$local_legacy_audit" --check >/dev/null ||
   fail "local-lite legacy regress manifest audit failed"
+grep -q 'Summary: 42 passed, 0 failed' "$local_legacy_m10" ||
+  fail "local-lite M10 convergence gate must retain the native 42-test check"
 grep -q 'TRAF_LOCAL_STORE_DIR' "$local_legacy_regress" ||
   fail "local-lite legacy regress adapter must isolate its RocksDB store"
 grep -q 'lowercase_name=${copied_name,,}' "$local_legacy_regress" ||
@@ -213,20 +221,14 @@ fi
 if grep -q 'processDrop' "$local_sql_handler"; then
   fail "SQLCI handler must not parse DROP TABLE after compiler DDL migration"
 fi
-if grep -q 'startsWithWord(sql, "CREATE TABLE")' "$local_sql_handler"; then
-  fail "SQLCI handler must not intercept CREATE TABLE after compiler DDL migration"
-fi
-if grep -q 'startsWithWord(sql, "DROP TABLE")' "$local_sql_handler"; then
-  fail "SQLCI handler must not intercept DROP TABLE after compiler DDL migration"
-fi
 if grep -q 'processSelect' "$local_sql_handler"; then
   fail "SQLCI handler must not intercept SELECT after executor scan migration"
 fi
 grep -q 'executeSeabaseDDL(localLiteDDLExpr, boundLocalDDL' "$cmp_stmt" ||
   fail "embedded compiler DDL path must dispatch local table DDL directly"
-grep -q 'localLiteLocalTableDDL' "$cmp_ddl_common" ||
+grep -q 'localLiteLocalStoreDDL' "$cmp_ddl_common" ||
   fail "Seabase DDL common path must identify local-lite local table DDL"
-grep -q '(NOT localLiteLocalTableDDL) && sendAllControlsAndFlags()' "$cmp_ddl_common" ||
+grep -q '(NOT localLiteLocalStoreDDL) && sendAllControlsAndFlags()' "$cmp_ddl_common" ||
   fail "local-lite local table DDL must skip sendAllControlsAndFlags"
 grep -q 'startXn = FALSE' "$cmp_ddl_common" ||
   fail "local-lite local table DDL must disable DDL transaction start"

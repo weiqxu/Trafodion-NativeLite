@@ -298,7 +298,7 @@ while non-key predicates use full scan fallback. The same smoke also checks
 EXPLAIN output for primary-key and UNIQUE-key equality subset scans, key column
 metadata, single-probe access, and residual executor predicates.
 
-Move closer to the original Trafodion HBase/TiKV-style key model.
+Move closer to the original Trafodion HBase-style key model.
 
 Tasks:
 

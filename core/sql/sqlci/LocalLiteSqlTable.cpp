@@ -377,7 +377,8 @@ static bool localLiteAuthorizeSql(const std::string &sql,
   uint32_t required = 0;
   std::string operation;
   size_t position = 0;
-  if (startsWithWord(sql, "SELECT") || startsWithWord(sql, "SHOWDDL") ||
+  if (startsWithWord(sql, "SELECT") || startsWithWord(sql, "INVOKE") ||
+      startsWithWord(sql, "SHOWDDL") ||
       startsWithWord(sql, "SHOWSTATS") || startsWithWord(sql, "UPDATE STATISTICS"))
     { required = LOCAL_LITE_PRIV_SELECT; operation = "SELECT"; }
   else if (startsWithWord(sql, "INSERT"))
@@ -405,9 +406,14 @@ static bool localLiteAuthorizeSql(const std::string &sql,
 
   if (operation == "SELECT")
     {
-      size_t fromPos = 0;
-      if (!localLiteFindKeyword(sql, "FROM", 0, &fromPos)) return false;
-      position = fromPos + strlen("FROM");
+      if (startsWithWord(sql, "INVOKE"))
+        position = strlen("INVOKE");
+      else
+        {
+          size_t fromPos = 0;
+          if (!localLiteFindKeyword(sql, "FROM", 0, &fromPos)) return false;
+          position = fromPos + strlen("FROM");
+        }
     }
   else if (startsWithWord(sql, "INSERT")) position = upper(sql).find("INTO") + 4;
   else if (startsWithWord(sql, "UPDATE")) position = strlen("UPDATE");
@@ -539,6 +545,23 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
             *retcode = reportError(sqlciEnv, error);
           else
             { writeLocalLiteStats(sqlciEnv, table, stats); *retcode = 0; }
+        }
+      return true;
+    }
+  if (startsWithWord(sql, "INVOKE"))
+    {
+      std::string rest = trim(sql.substr(strlen("INVOKE")));
+      std::string catalog, schema, object, error;
+      LocalLiteRocksDBStore store;
+      LocalLiteTableDef table;
+      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+          !store.loadTable(catalog, schema, object, &table, &error))
+        *retcode = reportError(sqlciEnv, error.empty()
+            ? "local-lite table does not exist" : error);
+      else
+        {
+          writeLocalLiteDDL(sqlciEnv, table);
+          *retcode = 0;
         }
       return true;
     }
