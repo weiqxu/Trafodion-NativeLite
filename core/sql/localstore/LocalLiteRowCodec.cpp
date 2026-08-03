@@ -1020,6 +1020,44 @@ bool LocalLiteNormalizeBinaryRow(const LocalLiteTableDef &table,
   return true;
 }
 
+bool LocalLiteBinaryRowIsNull(const LocalLiteTableDef &table,
+                              const std::string &encoded,
+                              size_t columnIndex,
+                              bool *isNull,
+                              std::string *error)
+{
+  if (!isNull || columnIndex >= table.columns.size() ||
+      encoded.size() < sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1 ||
+      encoded.compare(0, sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1,
+                      LOCAL_LITE_BINARY_ROW_MAGIC) != 0)
+    {
+      setError(error, "invalid local-lite binary row");
+      return false;
+    }
+
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t rowLen = 0;
+  if (!computeLayout(table, &columns, &rowLen, error))
+    return false;
+  const char *row = encoded.data() + sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1;
+  size_t available = encoded.size() - (sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1);
+  const LocalLiteStoredColumn &column = columns[columnIndex];
+  if (!column.nullable)
+    {
+      *isNull = false;
+      return true;
+    }
+  if (!hasRange(available, column.nullIndOffset, 1))
+    {
+      setError(error, "truncated local-lite binary row null bitmap");
+      return false;
+    }
+  *isNull = ExpTupleDesc::isNullValue(
+      const_cast<char *>(row) + column.nullIndOffset,
+      column.nullBitIndex, ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
+  return true;
+}
+
 bool LocalLiteApplyBinaryUpdate(
     const LocalLiteTableDef &table,
     const std::string &original,

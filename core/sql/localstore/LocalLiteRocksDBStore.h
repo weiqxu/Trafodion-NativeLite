@@ -97,6 +97,26 @@ struct LocalLiteRowMutation
   std::string after;
 };
 
+struct LocalLiteColumnStatsDef
+{
+  LocalLiteColumnStatsDef()
+    : rowCount(0), nullCount(0), distinctCount(0) {}
+
+  std::string columnName;
+  uint64_t rowCount;
+  uint64_t nullCount;
+  uint64_t distinctCount;
+};
+
+struct LocalLiteTableStatsDef
+{
+  LocalLiteTableStatsDef() : rowCount(0), analyzedAt(0) {}
+
+  uint64_t rowCount;
+  uint64_t analyzedAt;
+  std::vector<LocalLiteColumnStatsDef> columns;
+};
+
 struct LocalLiteSequenceDef
 {
   LocalLiteSequenceDef()
@@ -256,6 +276,17 @@ public:
                   std::string *error);
   bool validateReferentialIntegrity(const LocalLiteTableDef &table,
                                     std::string *error);
+  bool collectTableStats(const LocalLiteTableDef &table,
+                         LocalLiteTableStatsDef *stats,
+                         std::string *error);
+  bool loadTableStats(const std::string &catalog,
+                      const std::string &schema,
+                      const std::string &name,
+                      LocalLiteTableStatsDef *stats,
+                      bool *found,
+                      std::string *error);
+  bool invalidateTableStats(const LocalLiteTableDef &table,
+                            std::string *error);
 
   bool insertRow(const LocalLiteTableDef &table,
                  const std::string &encodedRow,

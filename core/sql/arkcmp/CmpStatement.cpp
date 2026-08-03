@@ -765,7 +765,16 @@ CmpStatement::process (const CmpMessageDDL& statement)
     }
 
   ReturnStatus status = CmpStatement_SUCCESS;
-  if (statement.getCmpCompileInfo()->isHbaseDDL())
+  NABoolean localLiteStatsDDL = FALSE;
+#ifdef TRAF_LOCAL_LITE
+  if (statement.data())
+    {
+      const char *p = statement.data();
+      while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+      localLiteStatsDDL = (strncasecmp(p, "UPDATE STATISTICS", 17) == 0);
+    }
+#endif
+  if (statement.getCmpCompileInfo()->isHbaseDDL() || localLiteStatsDDL)
     {
       CmpMain::ReturnStatus rs = CmpMain::SUCCESS;
       
@@ -806,10 +815,22 @@ CmpStatement::process (const CmpMessageDDL& statement)
           localLiteDDLNode = localLiteDDLExpr->getDDLNode();
         }
       if (localLiteDDLNode &&
-          localLiteDDLNode->castToStmtDDLNode() &&
-          (localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLCreateTable() ||
-           localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLDropTable()))
+          (((localLiteDDLNode->castToStmtDDLNode() != NULL) &&
+            (localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLCreateTable() ||
+             localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLDropTable())) ||
+           (localLiteDDLExpr && localLiteDDLExpr->isUstat())))
         {
+#ifdef TRAF_LOCAL_LITE
+          if (localLiteDDLExpr && localLiteDDLExpr->isUstat())
+            {
+              short localLiteStatsRC = CmpUpdateLocalLiteStatsText(statement.data());
+              if (localLiteStatsRC <= 0)
+                {
+                  Set_SqlParser_Flags(0);
+                  return CmpStatement_SUCCESS;
+                }
+            }
+#endif
           ExprNode *boundLocalDDL =
             localLiteDDLNode->castToStmtDDLNode()->bindNode(&bindWA);
           CMPASSERT(boundLocalDDL);
@@ -1097,6 +1118,18 @@ CmpStatement::process (const CmpMessageDescribe& statement)
   userStr[len]='\0';
 
   sqlTextStr_ = userStr;
+
+#ifdef TRAF_LOCAL_LITE
+  // SHOWDDL/SHOWSTATS normally bind through the Seabase catalog before
+  // CmpDescribe is called.  local-lite has no _MD_ catalog, so handle its
+  // RocksDB metadata directly and keep the normal path for other objects.
+  if (CmpDescribeLocalLiteText(statement.data(), reply_->data(),
+                               reply_->size(), reply_->outHeap()) == 0)
+    {
+      sqlTextStr_ = NULL;
+      return CmpStatement_SUCCESS;
+    }
+#endif
 
   Lng32 inputCS;
   Lng32 defaultCS;

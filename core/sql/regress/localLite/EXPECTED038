@@ -1,0 +1,48 @@
+>>CREATE TABLE LLREG038_T
++>  (id INT NOT NULL PRIMARY KEY, v VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LLREG038_T VALUES (1, 'one'), (2, NULL), (3, 'three');
+--- 3 row(s) inserted.
+>>SHOWDDL LLREG038_T;
+CREATE TABLE "TRAFODION"."SEABASE"."LLREG038_T"
+(
+  "ID" INT NOT NULL,
+  "V" VARCHAR(20) CHARACTER SET ISO88591 COLLATE DEFAULT
+  PRIMARY KEY ("ID")
+)
+;
+>>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
+Table: TRAFODION.SEABASE.LLREG038_T
+Rows: 3
+Column ID: rows=3 nulls=0 uec=0
+Column V: rows=3 nulls=1 uec=0
+>>UPDATE STATISTICS FOR TABLE LLREG038_T ON EVERY COLUMN;
+>>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
+Table: TRAFODION.SEABASE.LLREG038_T
+Rows: 3
+Column ID: rows=3 nulls=0 uec=0
+Column V: rows=3 nulls=1 uec=0
+>>INSERT INTO LLREG038_T VALUES (4, 'four');
+--- 1 row(s) inserted.
+>>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
+Table: TRAFODION.SEABASE.LLREG038_T
+Rows: 4
+Column ID: rows=4 nulls=0 uec=0
+Column V: rows=4 nulls=1 uec=0
+>>UPDATE LLREG038_T SET v = NULL WHERE id = 4;
+--- 1 row(s) updated.
+>>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
+Table: TRAFODION.SEABASE.LLREG038_T
+Rows: 4
+Column ID: rows=4 nulls=0 uec=0
+Column V: rows=4 nulls=2 uec=0
+>>DELETE FROM LLREG038_T WHERE id = 2;
+--- 1 row(s) deleted.
+>>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
+Table: TRAFODION.SEABASE.LLREG038_T
+Rows: 3
+Column ID: rows=3 nulls=0 uec=0
+Column V: rows=3 nulls=1 uec=0
+>>DROP TABLE LLREG038_T;
+--- SQL operation complete.
+>>exit;

@@ -85,6 +85,12 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &table,
                              bool *hasKey,
                              std::string *error);
 
+bool LocalLiteBinaryRowIsNull(const LocalLiteTableDef &table,
+                              const std::string &encoded,
+                              size_t columnIndex,
+                              bool *isNull,
+                              std::string *error);
+
 // Build an ordinal-independent key for comparing RI columns across tables.
 // A NULL component returns hasKey=false, implementing MATCH SIMPLE.
 bool LocalLiteBuildConstraintKey(const LocalLiteTableDef &table,

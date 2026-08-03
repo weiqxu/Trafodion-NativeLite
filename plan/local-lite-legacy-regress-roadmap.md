@@ -219,9 +219,18 @@ invalidation, and failure-atomic metadata changes.
 
 ## Milestone 5: Metadata And Statistics
 
-Provide compatible local metadata for core `_MD_` objects, SHOWDDL/SHOWSTATS,
-UPDATE STATISTICS, persistent histograms, optimizer costing, and stable
-local-lite EXPLAIN expectations.
+Status: complete for the RocksDB-only local-lite surface in the working tree.
+`LocalLiteSqlTable_process` now serves deterministic SHOWDDL, computes and
+persists table/column row and NULL statistics, and executes UPDATE STATISTICS
+without arkcmp/HBase.  The catalog has a versioned statistics record and
+RocksDB row null-bitmap inspection; SHOWSTATS reads the persisted record (or
+collects it on first use). Successful INSERT/UPDATE/DELETE and transaction
+commit invalidate the table record, so the next SHOWSTATS observes the current
+RocksDB rows. Native coverage is in `localLite/TEST038`, including those
+post-DML refreshes, and the full native suite is 38/38. The intentionally
+excluded surface is direct legacy SQL against physical `_MD_` tables and full
+value histograms/UEC estimation; local-lite metadata is exposed through
+SHOWDDL/SHOWSTATS and all optimizer/explain behavior remains RocksDB-native.
 
 ## Milestone 6: Character Sets And Data Types
 

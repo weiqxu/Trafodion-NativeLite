@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include <string>
+#include <vector>
 
 static std::string trim(const std::string &s)
 {
@@ -53,6 +54,72 @@ static short reportError(SqlciEnv *env, const std::string &message)
 {
   writeLine(env, "*** ERROR[local-lite] " + message);
   return 1;
+}
+
+static void writeLocalLiteDDL(SqlciEnv *env, const LocalLiteTableDef &table)
+{
+  std::string line = "CREATE ";
+  line += table.view ? "VIEW " : "TABLE ";
+  line += "\"" + table.catalog + "\".\"" + table.schema + "\".\"" + table.name + "\"";
+  writeLine(env, line);
+  if (table.view)
+    writeLine(env, " AS " + table.viewText);
+  else
+    {
+      writeLine(env, "(");
+      for (size_t i = 0; i < table.columns.size(); i++)
+        {
+          const LocalLiteColumnDef &column = table.columns[i];
+          line = "  \"" + column.name + "\" " + column.type;
+          if (!column.nullable) line += " NOT NULL";
+          if (!column.defaultValue.empty()) line += " DEFAULT " + column.defaultValue;
+          if (i + 1 < table.columns.size()) line += ",";
+          writeLine(env, line);
+        }
+      if (!table.primaryKeyColumns.empty())
+        {
+          line = "  PRIMARY KEY (";
+          for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+            {
+              if (i) line += ", ";
+              line += "\"" + table.columns[table.primaryKeyColumns[i]].name + "\"";
+            }
+          writeLine(env, line + ")");
+        }
+      writeLine(env, ")");
+      for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+        {
+          const LocalLiteIndexDef &index = table.secondaryIndexes[i];
+          line = "CREATE ";
+          if (index.unique) line += "UNIQUE ";
+          line += "INDEX \"" + index.name + "\" ON \"" +
+                  table.catalog + "\".\"" + table.schema + "\".\"" +
+                  table.name + "\" (";
+          for (size_t k = 0; k < index.keyColumns.size(); k++)
+            {
+              if (k) line += ", ";
+              line += "\"" + table.columns[index.keyColumns[k]].name +
+                      "\"";
+            }
+          writeLine(env, line + ")");
+        }
+    }
+  writeLine(env, ";");
+}
+
+static void writeLocalLiteStats(SqlciEnv *env, const LocalLiteTableDef &table,
+                                const LocalLiteTableStatsDef &stats)
+{
+  writeLine(env, "Table: " + table.catalog + "." + table.schema + "." + table.name);
+  writeLine(env, "Rows: " + std::to_string(static_cast<unsigned long long>(stats.rowCount)));
+  for (size_t i = 0; i < stats.columns.size(); i++)
+    {
+      const LocalLiteColumnStatsDef &column = stats.columns[i];
+      writeLine(env, "Column " + column.columnName + ": rows=" +
+                std::to_string(static_cast<unsigned long long>(column.rowCount)) +
+                " nulls=" + std::to_string(static_cast<unsigned long long>(column.nullCount)) +
+                " uec=" + std::to_string(static_cast<unsigned long long>(column.distinctCount)));
+    }
 }
 
 static std::string unquoteIdentifier(const std::string &name)
@@ -121,6 +188,48 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
     sql = trim(sql.substr(0, sql.size() - 1));
   if (sql.empty())
     return false;
+
+  if (startsWithWord(sql, "SHOWDDL") || startsWithWord(sql, "SHOWSTATS"))
+    {
+      bool showStats = startsWithWord(sql, "SHOWSTATS");
+      std::string rest = trim(sql.substr(showStats ? strlen("SHOWSTATS") : strlen("SHOWDDL")));
+      if (showStats && upper(rest).compare(0, 9, "FOR TABLE") == 0)
+        rest = trim(rest.substr(9));
+      std::string catalog, schema, object, error;
+      LocalLiteRocksDBStore store;
+      LocalLiteTableDef table;
+      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+          !store.loadTable(catalog, schema, object, &table, &error))
+        *retcode = reportError(sqlciEnv, error.empty() ? "local-lite table does not exist" : error);
+      else if (!showStats)
+        { writeLocalLiteDDL(sqlciEnv, table); *retcode = 0; }
+      else
+        {
+          LocalLiteTableStatsDef stats; bool found = false;
+          if (!store.loadTableStats(catalog, schema, object, &stats, &found, &error) ||
+              (!found && !store.collectTableStats(table, &stats, &error)))
+            *retcode = reportError(sqlciEnv, error);
+          else
+            { writeLocalLiteStats(sqlciEnv, table, stats); *retcode = 0; }
+        }
+      return true;
+    }
+  if (startsWithWord(sql, "UPDATE STATISTICS"))
+    {
+      std::string rest = trim(sql.substr(strlen("UPDATE STATISTICS")));
+      std::string restUpper = upper(rest);
+      size_t tablePos = restUpper.find("TABLE");
+      if (tablePos != std::string::npos) rest = trim(rest.substr(tablePos + 5));
+      std::string catalog, schema, object, error;
+      LocalLiteRocksDBStore store; LocalLiteTableDef table; LocalLiteTableStatsDef stats;
+      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+          !store.loadTable(catalog, schema, object, &table, &error) ||
+          !store.collectTableStats(table, &stats, &error))
+        *retcode = reportError(sqlciEnv, error.empty() ? "invalid local-lite statistics request" : error);
+      else
+        *retcode = 0;
+      return true;
+    }
 
   if (startsWithWord(sql, "CREATE SCHEMA"))
     {

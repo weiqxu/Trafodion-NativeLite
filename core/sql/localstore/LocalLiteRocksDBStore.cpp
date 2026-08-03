@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 
 #include <functional>
 #include <map>
@@ -226,6 +227,94 @@ static std::string triggerKey(const std::string &catalog,
 static std::string tableKey(const LocalLiteTableDef &table)
 {
   return tableKey(table.catalog, table.schema, table.name);
+}
+
+static std::string statsKey(const std::string &catalog,
+                            const std::string &schema,
+                            const std::string &name)
+{
+  return "stats|" + catalog + "|" + schema + "|" + name;
+}
+
+static std::string encodeStats(const LocalLiteTableStatsDef &stats)
+{
+  std::string out("LLST1\n");
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%llu\n",
+           static_cast<unsigned long long>(stats.rowCount));
+  out += buf;
+  snprintf(buf, sizeof(buf), "%llu\n",
+           static_cast<unsigned long long>(stats.analyzedAt));
+  out += buf;
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(stats.columns.size()));
+  out += buf;
+  for (size_t i = 0; i < stats.columns.size(); i++)
+    {
+      const LocalLiteColumnStatsDef &column = stats.columns[i];
+      out += column.columnName + "\n";
+      snprintf(buf, sizeof(buf), "%llu\n",
+               static_cast<unsigned long long>(column.rowCount));
+      out += buf;
+      snprintf(buf, sizeof(buf), "%llu\n",
+               static_cast<unsigned long long>(column.nullCount));
+      out += buf;
+      snprintf(buf, sizeof(buf), "%llu\n",
+               static_cast<unsigned long long>(column.distinctCount));
+      out += buf;
+    }
+  return out;
+}
+
+static bool readStatsLine(const std::string &encoded, size_t *offset,
+                          std::string *line)
+{
+  if (!offset || !line || *offset > encoded.size())
+    return false;
+  size_t end = encoded.find('\n', *offset);
+  if (end == std::string::npos)
+    return false;
+  line->assign(encoded, *offset, end - *offset);
+  *offset = end + 1;
+  return true;
+}
+
+static bool decodeStats(const std::string &encoded,
+                        LocalLiteTableStatsDef *stats,
+                        std::string *error)
+{
+  if (!stats || encoded.compare(0, 6, "LLST1\n") != 0)
+    {
+      setError(error, "invalid local-lite statistics metadata");
+      return false;
+    }
+  size_t offset = 6;
+  std::string line;
+  if (!readStatsLine(encoded, &offset, &line)) return false;
+  stats->rowCount = strtoull(line.c_str(), NULL, 10);
+  if (!readStatsLine(encoded, &offset, &line)) return false;
+  stats->analyzedAt = strtoull(line.c_str(), NULL, 10);
+  if (!readStatsLine(encoded, &offset, &line)) return false;
+  size_t count = static_cast<size_t>(strtoul(line.c_str(), NULL, 10));
+  stats->columns.clear();
+  for (size_t i = 0; i < count; i++)
+    {
+      LocalLiteColumnStatsDef column;
+      if (!readStatsLine(encoded, &offset, &column.columnName) ||
+          !readStatsLine(encoded, &offset, &line)) return false;
+      column.rowCount = strtoull(line.c_str(), NULL, 10);
+      if (!readStatsLine(encoded, &offset, &line)) return false;
+      column.nullCount = strtoull(line.c_str(), NULL, 10);
+      if (!readStatsLine(encoded, &offset, &line)) return false;
+      column.distinctCount = strtoull(line.c_str(), NULL, 10);
+      stats->columns.push_back(column);
+    }
+  if (offset != encoded.size())
+    {
+      setError(error, "trailing local-lite statistics metadata");
+      return false;
+    }
+  return true;
 }
 
 static std::string indexKey(const std::string &catalog,
@@ -3036,6 +3125,11 @@ public:
             transactionStore_.close();
             return false;
           }
+        if (!transactionStore_.invalidateTableStats(t->second.table, error))
+          {
+            transactionStore_.close();
+            return false;
+          }
         committedTables++;
       }
     transactionStore_.close();
@@ -4344,8 +4438,13 @@ bool LocalLiteRocksDBStore::dropSchema(const std::string &catalog,
     {
       std::string key = tableKey(tables[i]);
       std::string uid = uidKey(tables[i].objectUid);
+      std::string tableStatsKey = statsKey(tables[i].catalog,
+                                           tables[i].schema,
+                                           tables[i].name);
       rocksdb_writebatch_delete(batch, key.data(), key.size());
       rocksdb_writebatch_delete(batch, uid.data(), uid.size());
+      rocksdb_writebatch_delete(batch, tableStatsKey.data(),
+                                tableStatsKey.size());
       for (size_t x = 0; x < tables[i].secondaryIndexes.size(); x++)
         {
           std::string indexMetadata = indexKey(
@@ -4468,8 +4567,10 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
   rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
   std::string key = tableKey(catalog, schema, name);
   std::string uid = uidKey(table.objectUid);
+  std::string tableStatsKey = statsKey(catalog, schema, name);
   rocksdb_writebatch_delete(batch, key.data(), key.size());
   rocksdb_writebatch_delete(batch, uid.data(), uid.size());
+  rocksdb_writebatch_delete(batch, tableStatsKey.data(), tableStatsKey.size());
   for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
     {
       std::string idxKey = indexKey(catalog, schema,
@@ -5178,8 +5279,10 @@ bool LocalLiteRocksDBStore::insertRow(const LocalLiteTableDef &table,
   if (!validateLocalLiteChildRI(this, table, rows, error))
     return false;
 
-  return LocalLiteStorageManager::instance().insertRow(table, encodedRow,
-                                                       rowId, error);
+  if (!LocalLiteStorageManager::instance().insertRow(table, encodedRow,
+                                                     rowId, error))
+    return false;
+  return invalidateTableStats(table, error);
 }
 
 bool LocalLiteRocksDBStore::updateRows(
@@ -5199,8 +5302,10 @@ bool LocalLiteRocksDBStore::updateRows(
   if (!validateLocalLiteChildRI(this, table, newRows, error) ||
       !validateLocalLiteParentRI(this, table, oldRows, newRows, error))
     return false;
-  return LocalLiteStorageManager::instance().updateRows(table, mutations,
-                                                        error);
+  if (!LocalLiteStorageManager::instance().updateRows(table, mutations,
+                                                       error))
+    return false;
+  return invalidateTableStats(table, error);
 }
 
 bool LocalLiteRocksDBStore::deleteRows(
@@ -5216,7 +5321,95 @@ bool LocalLiteRocksDBStore::deleteRows(
   std::vector<std::string> noNewRows;
   if (!validateLocalLiteParentRI(this, table, oldRows, noNewRows, error))
     return false;
-  return LocalLiteStorageManager::instance().deleteRows(table, rows, error);
+  if (!LocalLiteStorageManager::instance().deleteRows(table, rows, error))
+    return false;
+  return invalidateTableStats(table, error);
+}
+
+bool LocalLiteRocksDBStore::collectTableStats(
+    const LocalLiteTableDef &table, LocalLiteTableStatsDef *stats,
+    std::string *error)
+{
+  if (!stats || !open(error))
+    return false;
+  std::vector<LocalLiteRow> rows;
+  if (!scanRows(table, &rows, error))
+    return false;
+
+  LocalLiteTableStatsDef collected;
+  collected.rowCount = rows.size();
+  collected.analyzedAt = static_cast<uint64_t>(time(NULL));
+  collected.columns.resize(table.columns.size());
+  for (size_t i = 0; i < table.columns.size(); i++)
+    {
+      collected.columns[i].columnName = table.columns[i].name;
+      collected.columns[i].rowCount = rows.size();
+      collected.columns[i].distinctCount = 0;
+    }
+  for (size_t r = 0; r < rows.size(); r++)
+    for (size_t c = 0; c < table.columns.size(); c++)
+      {
+        bool isNull = false;
+        if (!LocalLiteBinaryRowIsNull(table, rows[r].value, c, &isNull,
+                                      error))
+          return false;
+        if (isNull)
+          collected.columns[c].nullCount++;
+      }
+
+  const std::string key = statsKey(table.catalog, table.schema, table.name);
+  const std::string encoded = encodeStats(collected);
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+              key.data(), key.size(), encoded.data(), encoded.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  if (!checkRocksError(err, "write local-lite table statistics", error))
+    return false;
+  *stats = collected;
+  return true;
+}
+
+bool LocalLiteRocksDBStore::loadTableStats(
+    const std::string &catalog, const std::string &schema,
+    const std::string &name, LocalLiteTableStatsDef *stats, bool *found,
+    std::string *error)
+{
+  if (!stats || !found || !open(error))
+    return false;
+  *found = false;
+  const std::string key = statsKey(catalog, schema, name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                            readOptions, key.data(), key.size(), &valueLen,
+                            &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite table statistics", error))
+    return false;
+  if (!value)
+    return true;
+  std::string encoded(value, valueLen);
+  rocksdb_free(value);
+  if (!decodeStats(encoded, stats, error))
+    return false;
+  *found = true;
+  return true;
+}
+
+bool LocalLiteRocksDBStore::invalidateTableStats(
+    const LocalLiteTableDef &table, std::string *error)
+{
+  if (!open(error))
+    return false;
+  const std::string key = statsKey(table.catalog, table.schema, table.name);
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_delete(LocalLiteStorageManager::instance().catalogDb(),
+                 writeOptions, key.data(), key.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "invalidate local-lite table statistics", error);
 }
 
 bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,

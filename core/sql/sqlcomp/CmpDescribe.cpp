@@ -97,6 +97,10 @@
 #include "ExExeUtilCli.h"
 #include "TrafDDLdesc.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#endif
+
 #define CM_SIM_NAME_LEN 32
 
 
@@ -193,6 +197,254 @@ bool CmpDescribeIsAuthorized(
    SQLOperation operation = SQLOperation::UNKNOWN,
    PrivMgrUserPrivs *privs = NULL,
    ComObjectType objectType = COM_UNKNOWN_OBJECT);
+
+#ifdef TRAF_LOCAL_LITE
+static bool CmpDescribeLocalLiteTable(const CorrName &dtName,
+                                      bool showStats,
+                                      Space &space)
+{
+  const QualifiedName &qn = dtName.getQualifiedNameObj();
+  std::string catalog = qn.getCatalogName().data();
+  std::string schema = qn.getUnqualifiedSchemaNameAsAnsiString().data();
+  std::string name = qn.getObjectName().data();
+  if (catalog.empty())
+    catalog = ActiveSchemaDB()->getDefaults().getValue(SEABASE_CATALOG);
+  if (schema.empty())
+    schema = "SEABASE";
+  if (name.empty())
+    return false;
+
+  LocalLiteRocksDBStore store;
+  std::string error;
+  bool exists = false;
+  if (!store.tableExists(catalog, schema, name, &exists, &error))
+    return false;
+  if (!exists)
+    {
+      std::vector<LocalLiteTableDef> tables;
+      if (!store.listTables("", "", &tables, &error))
+        return false;
+      for (size_t i = 0; i < tables.size(); i++)
+        if (tables[i].name == name ||
+            strcasecmp(tables[i].name.c_str(), name.c_str()) == 0)
+          {
+            catalog = tables[i].catalog;
+            schema = tables[i].schema;
+            exists = true;
+            break;
+          }
+    }
+  if (!exists)
+    return false;
+  LocalLiteTableDef table;
+  if (!store.loadTable(catalog, schema, name, &table, &error))
+    return false;
+
+  if (!showStats)
+    {
+      std::string line = "CREATE ";
+      line += table.view ? "VIEW " : "TABLE ";
+      line += "\"" + table.catalog + "\".\"" + table.schema +
+              "\".\"" + table.name + "\"";
+      outputLine(space, line.c_str(), 0);
+      if (table.view)
+        {
+          outputLine(space, " AS ", 0);
+          outputLine(space, table.viewText.c_str(), 2);
+        }
+      else
+        {
+          outputLine(space, "(", 0);
+          for (size_t i = 0; i < table.columns.size(); i++)
+            {
+              const LocalLiteColumnDef &column = table.columns[i];
+              line = "  \"" + column.name + "\" " + column.type;
+              if (!column.nullable) line += " NOT NULL";
+              if (!column.defaultValue.empty())
+                line += " DEFAULT " + column.defaultValue;
+              if (i + 1 < table.columns.size()) line += ",";
+              outputLine(space, line.c_str(), 0);
+            }
+          if (!table.primaryKeyColumns.empty())
+            {
+              line = "  PRIMARY KEY (";
+              for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+                {
+                  if (i) line += ", ";
+                  line += "\"" + table.columns[table.primaryKeyColumns[i]].name +
+                          "\"";
+                }
+              line += ")";
+              outputLine(space, line.c_str(), 0);
+            }
+          outputLine(space, ")", 0);
+          for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+            {
+              const LocalLiteIndexDef &index = table.secondaryIndexes[i];
+              line = "CREATE ";
+              if (index.unique) line += "UNIQUE ";
+              line += "INDEX \"" + index.name + "\" ON \"" +
+                      table.catalog + "\".\"" + table.schema + "\".\"" +
+                      table.name + "\" (";
+              for (size_t k = 0; k < index.keyColumns.size(); k++)
+                {
+                  if (k) line += ", ";
+                  line += "\"" + table.columns[index.keyColumns[k]].name +
+                          "\"";
+                }
+              line += ")";
+              outputLine(space, line.c_str(), 0);
+            }
+        }
+      outputLine(space, ";", 0);
+      return true;
+    }
+
+  LocalLiteTableStatsDef stats;
+  bool found = false;
+  if (!store.loadTableStats(catalog, schema, name, &stats, &found, &error))
+    return false;
+  if (!found && !store.collectTableStats(table, &stats, &error))
+    return false;
+  std::string line = "Table: " + table.catalog + "." + table.schema + "." +
+                     table.name;
+  outputLine(space, line.c_str(), 0);
+  line = "Rows: " + std::to_string(static_cast<unsigned long long>(stats.rowCount));
+  outputLine(space, line.c_str(), 0);
+  for (size_t i = 0; i < stats.columns.size(); i++)
+    {
+      const LocalLiteColumnStatsDef &column = stats.columns[i];
+      line = "Column " + column.columnName + ": rows=" +
+             std::to_string(static_cast<unsigned long long>(column.rowCount)) +
+             " nulls=" +
+             std::to_string(static_cast<unsigned long long>(column.nullCount)) +
+             " uec=" +
+             std::to_string(static_cast<unsigned long long>(column.distinctCount));
+      outputLine(space, line.c_str(), 0);
+    }
+  return true;
+}
+
+short CmpDescribeLocalLiteText(const char *query,
+                               char *&outbuf,
+                               ULng32 &outbuflen,
+                               CollHeap *heap)
+{
+  outbuf = NULL;
+  outbuflen = 0;
+  if (!query)
+    return 1;
+  std::string text(query);
+  while (!text.empty() && isspace(static_cast<unsigned char>(text[0])))
+    text.erase(0, 1);
+  while (!text.empty() && (text[text.size() - 1] == ';' ||
+                           isspace(static_cast<unsigned char>(text[text.size() - 1]))))
+    text.erase(text.size() - 1);
+  std::string upperText = text;
+  for (size_t i = 0; i < upperText.size(); i++)
+    upperText[i] = static_cast<char>(toupper(static_cast<unsigned char>(upperText[i])));
+  bool showStats = false;
+  size_t start = 0;
+  if (upperText.compare(0, 7, "SHOWDDL") == 0)
+    start = 7;
+  else if (upperText.compare(0, 9, "SHOWSTATS") == 0)
+    {
+      showStats = true;
+      start = upperText.find("TABLE");
+      if (start == std::string::npos)
+        return 1;
+      start += 5;
+    }
+  else
+    return 1;
+  while (start < text.size() && isspace(static_cast<unsigned char>(text[start])))
+    start++;
+  size_t end = start;
+  bool quoted = false;
+  while (end < text.size())
+    {
+      if (text[end] == '"') quoted = !quoted;
+      if (!quoted && isspace(static_cast<unsigned char>(text[end]))) break;
+      end++;
+    }
+  if (end == start)
+    return 1;
+  std::string qualified = text.substr(start, end - start);
+  std::vector<std::string> parts;
+  std::string current;
+  quoted = false;
+  for (size_t i = 0; i < qualified.size(); i++)
+    {
+      char c = qualified[i];
+      if (c == '"') quoted = !quoted;
+      if (c == '.' && !quoted)
+        {
+          parts.push_back(current);
+          current.clear();
+        }
+      else
+        current += c;
+    }
+  parts.push_back(current);
+  for (size_t i = 0; i < parts.size(); i++)
+    {
+      if (parts[i].size() >= 2 && parts[i][0] == '"' &&
+          parts[i][parts[i].size() - 1] == '"')
+        parts[i] = parts[i].substr(1, parts[i].size() - 2);
+    }
+  std::string catalog = parts.size() >= 3 ? parts[parts.size() - 3] : "TRAFODION";
+  std::string schema = parts.size() >= 2 ? parts[parts.size() - 2] : "SEABASE";
+  std::string name = parts.back();
+  CorrName corr(name.c_str(), STMTHEAP, schema.c_str(), catalog.c_str());
+  Space space;
+  if (!CmpDescribeLocalLiteTable(corr, showStats, space))
+    return 1;
+  outbuflen = space.getAllocatedSpaceSize();
+  outbuf = new (heap) char[outbuflen];
+  space.makeContiguous(outbuf, outbuflen);
+  return 0;
+}
+
+short CmpUpdateLocalLiteStatsText(const char *query)
+{
+  if (!query) return 1;
+  std::string text(query);
+  while (!text.empty() && isspace(static_cast<unsigned char>(text[0]))) text.erase(0, 1);
+  std::string upperText = text;
+  for (size_t i = 0; i < upperText.size(); i++)
+    upperText[i] = static_cast<char>(toupper(static_cast<unsigned char>(upperText[i])));
+  if (upperText.compare(0, 17, "UPDATE STATISTICS") != 0) return 1;
+  size_t tablePos = upperText.find("TABLE", 17);
+  if (tablePos == std::string::npos) return 1;
+  size_t start = tablePos + 5;
+  while (start < text.size() && isspace(static_cast<unsigned char>(text[start]))) start++;
+  size_t end = start; bool quoted = false;
+  while (end < text.size())
+    { if (text[end] == '"') quoted = !quoted; if (!quoted && isspace(static_cast<unsigned char>(text[end]))) break; end++; }
+  if (end == start) return 1;
+  std::string qualified = text.substr(start, end - start);
+  std::vector<std::string> parts; std::string current; quoted = false;
+  for (size_t i = 0; i < qualified.size(); i++)
+    { char c = qualified[i]; if (c == '"') quoted = !quoted; if (c == '.' && !quoted) { parts.push_back(current); current.clear(); } else current += c; }
+  parts.push_back(current);
+  for (size_t i = 0; i < parts.size(); i++)
+    if (parts[i].size() >= 2 && parts[i][0] == '"' && parts[i][parts[i].size() - 1] == '"')
+      parts[i] = parts[i].substr(1, parts[i].size() - 2);
+  std::string catalog = parts.size() >= 3 ? parts[parts.size() - 3] : "TRAFODION";
+  std::string schema = parts.size() >= 2 ? parts[parts.size() - 2] : "SEABASE";
+  std::string name = parts.back();
+  LocalLiteRocksDBStore store; std::string error; bool exists = false;
+  if (!store.tableExists(catalog, schema, name, &exists, &error)) return -1;
+  if (!exists)
+    { std::vector<LocalLiteTableDef> tables; if (!store.listTables("", "", &tables, &error)) return -1;
+      for (size_t i = 0; i < tables.size(); i++) if (strcasecmp(tables[i].name.c_str(), name.c_str()) == 0)
+        { catalog = tables[i].catalog; schema = tables[i].schema; exists = true; break; } }
+  if (!exists) return 1;
+  LocalLiteTableDef table; LocalLiteTableStatsDef stats;
+  if (!store.loadTable(catalog, schema, name, &table, &error) || !store.collectTableStats(table, &stats, &error)) return -1;
+  return 0;
+}
+#endif
 
 // The real Ark catalog manager returns all object names as three-part
 // identifiers, properly delimited where necessary.
@@ -573,6 +825,22 @@ short CmpDescribe(const char *query, const RelExpr *queryExpr,
   CMPASSERT(queryExpr->getOperatorType() == REL_ROOT);
   Describe *d = (Describe *)(queryExpr->child(0)->castToRelExpr());
   CMPASSERT(d->getOperatorType() == REL_DESCRIBE);   
+
+#ifdef TRAF_LOCAL_LITE
+  if (d->getFormat() == Describe::SHOWDDL_ ||
+      d->getFormat() == Describe::SHOWSTATS_)
+    {
+      if (CmpDescribeLocalLiteTable(
+              d->getDescribedTableName(),
+              d->getFormat() == Describe::SHOWSTATS_, space))
+        {
+          outbuflen = space.getAllocatedSpaceSize();
+          outbuf = new (heap) char[outbuflen];
+          space.makeContiguous(outbuf, outbuflen);
+          goto finally;
+        }
+    }
+#endif
 
   if (d->getIsSchema())
     {
