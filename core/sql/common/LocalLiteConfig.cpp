@@ -126,6 +126,20 @@ int LocalLiteConfig_init()
         return -1;
     }
 
+    // Keep executor spill/scratch files inside the isolated local-lite store
+    // when the regression runner provides one.  This prevents sort/hash
+    // overflow files from leaking into a shared Trafodion installation and
+    // gives cancellation/teardown a deterministic private scratch root.
+    const char *storeDir = getenv("TRAF_LOCAL_STORE_DIR");
+    std::string scratchDir = (storeDir && storeDir[0])
+        ? std::string(storeDir) + "/scratch"
+        : trafVar + "/local-lite-scratch";
+    if (storeDir && storeDir[0] && ensure_dir(storeDir) != 0)
+        return -1;
+    if (ensure_dir(scratchDir.c_str()) != 0)
+        return -1;
+    setenv("SQ_SQL_SCRATCH_DIR", scratchDir.c_str(), 1);
+
     return 0;
 }
 

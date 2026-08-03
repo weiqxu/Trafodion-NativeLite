@@ -1018,6 +1018,13 @@ private:
     if (qparent_.up->isFull())
       return true;
 
+    // A cancelled GET_N request must not leave fetched row handles behind.
+    // Positioned DML consumes these handles, so retaining them after a
+    // cancellation could associate a later statement with a stale cursor row.
+    if (downEntry()->downState.request == ex_queue::GET_NOMORE)
+      localLiteForgetScanRows(localLiteScanRowKey(
+          scanTdb().getTableName(), getGlobals()->castToExExeStmtGlobals()));
+
     ex_queue_entry *up = qparent_.up->getTailEntry();
     up->copyAtp(downEntry());
     up->upState.status = ex_queue::Q_NO_DATA;
@@ -1398,6 +1405,8 @@ public:
 
   void freeResources()
   {
+    localLiteForgetScanRows(localLiteScanRowKey(
+        deleteTdb().getTableName(), getGlobals()->castToExExeStmtGlobals()));
     NADELETEBASICARRAY(asciiRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(convertRow_, getGlobals()->getDefaultHeap());
     asciiRow_ = NULL;
@@ -1829,6 +1838,8 @@ public:
 
   void freeResources()
   {
+    localLiteForgetScanRows(localLiteScanRowKey(
+        updateTdb().getTableName(), getGlobals()->castToExExeStmtGlobals()));
     NADELETEBASICARRAY(asciiRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(convertRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(updateRow_, getGlobals()->getDefaultHeap());

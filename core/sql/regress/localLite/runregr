@@ -150,6 +150,7 @@ for requested in "${requested_tests[@]}"; do
     store_dir=$(mktemp -d "$run_dir/store-$test_number.XXXXXX") || exit 2
     env \
       LC_ALL=C \
+      SQLCI_CURSOR=1 \
       TRAF_HOME="$traf_home" \
       TRAF_LOCAL_LITE=1 \
       TRAF_LOCAL_STORE_DIR="$store_dir" \

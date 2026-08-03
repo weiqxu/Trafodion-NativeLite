@@ -1,0 +1,56 @@
+>>CREATE TABLE LLREG040_T
++>  (id INT NOT NULL PRIMARY KEY, grp INT, v INT);
+--- SQL operation complete.
+>>INSERT INTO LLREG040_T VALUES
++>  (1, 1, 10), (2, 1, 20), (3, 2, 30);
+--- 3 row(s) inserted.
+>>DECLARE C040 CURSOR FOR
++>  SELECT id, grp, v FROM LLREG040_T FOR UPDATE OF v;
+--- SQL operation complete.
+>>OPEN C040;
+--- SQL operation complete.
+>>FETCH C040;
+ID           GRP          V
+-----------  -----------  -----------
+          1            1           10
+--- 1 row(s) selected.
+>>UPDATE LLREG040_T SET v = v + 1 WHERE CURRENT OF C040;
+--- 1 row(s) updated.
+>>FETCH C040;
+ID           GRP          V
+-----------  -----------  -----------
+          2            1           20
+--- 1 row(s) selected.
+>>DELETE FROM LLREG040_T WHERE CURRENT OF C040;
+--- 1 row(s) deleted.
+>>CLOSE C040;
+--- SQL operation complete.
+>>SELECT id, grp, v,
++>       ROW_NUMBER() OVER (PARTITION BY grp ORDER BY id) AS rn,
++>       RANK() OVER (PARTITION BY grp ORDER BY id) AS rnk,
++>       DENSE_RANK() OVER (PARTITION BY grp ORDER BY id) AS drnk,
++>       LAG(v) OVER (PARTITION BY grp ORDER BY id) AS prev_v,
++>       LEAD(v) OVER (PARTITION BY grp ORDER BY id) AS next_v,
++>       SUM(v) OVER (PARTITION BY grp ORDER BY id ROWS UNBOUNDED PRECEDING)
++>         AS running
++>  FROM LLREG040_T;
+ID           GRP          V            RN                    RNK                   DRNK                  PREV_V       NEXT_V       RUNNING
+-----------  -----------  -----------  --------------------  --------------------  --------------------  -----------  -----------  --------------------
+          1            1           11                     1                     1                     1            ?            ?                    11
+          3            2           30                     1                     1                     1            ?            ?                    30
+--- 2 row(s) selected.
+>>SELECT id, v FROM LLREG040_T ORDER BY id;
+ID           V
+-----------  -----------
+          1           11
+          3           30
+--- 2 row(s) selected.
+>>SELECT grp, SUM(v) AS total FROM LLREG040_T GROUP BY grp ORDER BY grp;
+GRP          TOTAL
+-----------  --------------------
+          1                    11
+          2                    30
+--- 2 row(s) selected.
+>>DROP TABLE LLREG040_T;
+--- SQL operation complete.
+>>exit;

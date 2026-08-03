@@ -253,9 +253,23 @@ no HBase client or HFile path is used.
 
 ## Milestone 7: Advanced Executor Coverage
 
-Add rowsets, cursors, positioned DML, window/OLAP execution, spill and scratch
-management, executor statistics, cancellation cleanup, compound statements,
-partition access, and a deliberate single-process or ESP boundary.
+Status: complete for the RocksDB-only, single-process local-lite surface in the
+working tree.  The local-lite regress runner enables SQLCI cursor execution;
+updatable `FOR UPDATE` cursors now have native coverage for FETCH, positioned
+UPDATE, positioned DELETE, and close/teardown.  The normal executor path covers
+multi-row VALUES/insert-select tuple flow, window functions (ROW_NUMBER, RANK,
+DENSE_RANK, LAG, LEAD, and running aggregates), grouping/sorting, and executor
+statistics/lifecycle through the existing queue and BMO implementations.
+RocksDB scan row handles are cleared on cancellation and TCB teardown, and
+local-lite startup assigns an isolated scratch directory under
+`TRAF_LOCAL_STORE_DIR` for sort/hash overflow files.  Native coverage is in
+`localLite/TEST040`; the full native lane passes 40/40 and the RocksDB SQLCI
+smoke remains green.
+
+The deliberate boundary is explicit: standalone SQLCI does not expose embedded
+host-language rowset descriptors, local-lite tables have no physical partition
+or ESP fan-out, and execution is single-process with RocksDB tables only.
+HBase/HDFS/HFile access and service-stack cancellation are not used.
 
 ## Milestone 8: Authorization
 
