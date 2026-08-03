@@ -3147,6 +3147,13 @@ short Prepare::process(SqlciEnv * sqlci_env)
   HandleCLIErrorInit();
   PrepStmt * prep_stmt;
 
+#ifdef TRAF_LOCAL_LITE
+  short localLiteAuthRetcode = 0;
+  if (!LocalLiteSqlTable_checkAuthorization(get_sql_stmt(), sqlci_env,
+                                            &localLiteAuthRetcode))
+    return localLiteAuthRetcode;
+#endif
+
   if (prep_stmt = sqlci_env->get_prep_stmts()->get(this_stmt_name))
     {
       // prepared statement exists. Deallocate it.
@@ -3478,6 +3485,13 @@ short Execute::process(SqlciEnv * sqlci_env)
 			     << DgString0(this_stmt_name);
       return 0;
     }
+
+#ifdef TRAF_LOCAL_LITE
+  short localLiteAuthRetcode = 0;
+  if (!LocalLiteSqlTable_checkAuthorization(prep_stmt->getStr(), sqlci_env,
+                                            &localLiteAuthRetcode))
+    return localLiteAuthRetcode;
+#endif
 
   sqlci_env->getStats()->startStats(prep_stmt);
   sqlci_env->getStats()->startExeStats();

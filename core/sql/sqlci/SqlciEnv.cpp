@@ -71,6 +71,9 @@
 #include "str.h"
 #include "BaseTypes.h"
 #include "ComSchemaName.h"
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteSqlTable.h"
+#endif
 
 #include "DefaultConstants.h"
 #include "ComRtUtils.h"
@@ -533,6 +536,14 @@ static void SqlciEnv_prologue_to_run(SqlciEnv *sqlciEnv)
 #ifdef TRAF_LOCAL_LITE
   if (NOT sqlciEnv->noBanner())
     sqlciEnv->welcomeMessage();
+
+  short localLiteIdentityRetcode = 0;
+  if (!LocalLiteSqlTable_setCurrentUser(sqlciEnv,
+                                        &localLiteIdentityRetcode))
+    {
+      sqlciEnv->setDoneWithPrologue(TRUE);
+      return;
+    }
 
   // SQLCI's Formatter expects datetime and interval values in their internal
   // representation. The regular prologue enables that CLI contract below,
@@ -1260,7 +1271,12 @@ ChangeUser::ChangeUser(char * argument_, Lng32 argLen_)
 short ChangeUser::process (SqlciEnv * sqlci_env)
 {
   sqlci_env->setUserNameFromCommandLine(get_argument());
+#ifdef TRAF_LOCAL_LITE
+  short localLiteRetcode = 0;
+  LocalLiteSqlTable_setCurrentUser(sqlci_env, &localLiteRetcode);
+#else
   sqlci_env->setUserIdentityInCLI();
+#endif
   return 0;
 }
 

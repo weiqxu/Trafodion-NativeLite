@@ -273,8 +273,24 @@ HBase/HDFS/HFile access and service-stack cancellation are not used.
 
 ## Milestone 8: Authorization
 
-Implement users, roles, ownership, GRANT/REVOKE, privilege metadata lifecycle,
-definer/invoker rights, multi-identity SQLCI execution, and plan invalidation.
+Status: complete for the RocksDB-only local-lite surface in the working tree.
+The catalog now persists users, roles, role membership, table ownership,
+table-level SELECT/INSERT/UPDATE/DELETE/REFERENCES/USAGE privileges, grant
+changes, and an authorization generation counter.  SQLCI `-u` and
+`SET SESSION AUTHORIZATION` resolve identities from that catalog and publish
+the effective/session identity to `CURRENT_USER`, `SESSION_USER`, and `USER`.
+Role membership is transitive, owners and `DB__ROOT` retain administrative
+control, and GRANT/REVOKE changes are checked before compilation and again at
+prepared-statement execution so a cached plan cannot bypass a revoke.  Views
+use their persisted owner as the local-lite definer boundary; switching the
+session identity provides the invoker boundary.  Native coverage is in
+`localLite/TEST041`, and the full local-lite lane passes 41/41.
+
+The deliberate boundary is explicit: this milestone has no LDAP/password
+authentication, external security service, column-level privilege metadata,
+or UDR definer-rights implementation (UDR is M9).  Authorization metadata,
+table data, and all ownership checks are RocksDB catalog operations only; no
+HBase/HDFS/HFile path is used.
 
 ## Milestone 9: UDR
 

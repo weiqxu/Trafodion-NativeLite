@@ -161,6 +161,29 @@ struct LocalLiteTriggerDef
   std::string sqlText;
 };
 
+// Authorization metadata is intentionally kept in the same RocksDB catalog
+// as table definitions.  Local-lite has no external security service, so the
+// catalog is the source of truth for identities, role membership, ownership,
+// and object privileges.
+struct LocalLiteAuthIdentity
+{
+  LocalLiteAuthIdentity() : id(0), role(false) {}
+  std::string name;
+  uint64_t id;
+  bool role;
+};
+
+enum LocalLitePrivilege
+{
+  LOCAL_LITE_PRIV_SELECT    = 1 << 0,
+  LOCAL_LITE_PRIV_INSERT    = 1 << 1,
+  LOCAL_LITE_PRIV_UPDATE    = 1 << 2,
+  LOCAL_LITE_PRIV_DELETE    = 1 << 3,
+  LOCAL_LITE_PRIV_REFERENCES = 1 << 4,
+  LOCAL_LITE_PRIV_USAGE     = 1 << 5,
+  LOCAL_LITE_PRIV_ALL       = 0x3f
+};
+
 class LocalLiteTxnState;
 
 class LocalLiteRocksDBStore
@@ -237,6 +260,57 @@ public:
                    const std::string &name,
                    bool ifExists,
                    std::string *error);
+
+  bool loadAuthIdentity(const std::string &name,
+                        LocalLiteAuthIdentity *identity,
+                        bool *found,
+                        std::string *error);
+  bool createAuthIdentity(const std::string &name,
+                          bool role,
+                          bool ifNotExists,
+                          std::string *error);
+  bool dropAuthIdentity(const std::string &name,
+                        bool role,
+                        bool ifExists,
+                        std::string *error);
+  bool grantRole(const std::string &role,
+                 const std::string &grantee,
+                 bool adminOption,
+                 std::string *error);
+  bool revokeRole(const std::string &role,
+                  const std::string &grantee,
+                  std::string *error);
+  bool grantPrivilege(const std::string &catalog,
+                      const std::string &schema,
+                      const std::string &object,
+                      uint32_t privilegeMask,
+                      const std::string &grantee,
+                      bool grantOption,
+                      std::string *error);
+  bool revokePrivilege(const std::string &catalog,
+                       const std::string &schema,
+                       const std::string &object,
+                       uint32_t privilegeMask,
+                       const std::string &grantee,
+                       std::string *error);
+  bool hasPrivilege(const std::string &catalog,
+                    const std::string &schema,
+                    const std::string &object,
+                    const std::string &user,
+                    uint32_t privilegeMask,
+                    std::string *error);
+  bool setTableOwner(const std::string &catalog,
+                     const std::string &schema,
+                     const std::string &object,
+                     const std::string &owner,
+                     std::string *error);
+  bool isTableOwner(const std::string &catalog,
+                    const std::string &schema,
+                    const std::string &object,
+                    const std::string &user,
+                    bool *owner,
+                    std::string *error);
+  bool bumpAuthorizationGeneration(std::string *error);
   bool listTriggers(const std::string &subjectCatalog,
                     const std::string &subjectSchema,
                     const std::string &subjectTable,

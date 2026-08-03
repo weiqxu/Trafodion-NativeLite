@@ -10,12 +10,14 @@
 #include "LocalLiteRocksDBStore.h"
 
 #include "SqlciEnv.h"
+#include "SQLCLIdev.h"
 
 #include <ctype.h>
 #include <string.h>
 
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 static std::string trim(const std::string &s)
 {
@@ -178,6 +180,315 @@ static bool parseObjectName(const std::string &text,
   return !catalog->empty() && !schema->empty() && !object->empty();
 }
 
+static std::string localLiteCurrentUser(SqlciEnv *env)
+{
+  if (!env || env->getUserNameFromCommandLine().length() == 0)
+    return "DB__ROOT";
+  return upper(env->getUserNameFromCommandLine().data());
+}
+
+static std::string localLiteNextToken(const std::string &text, size_t *offset)
+{
+  if (!offset) return std::string();
+  while (*offset < text.size() &&
+         isspace(static_cast<unsigned char>(text[*offset]))) (*offset)++;
+  size_t begin = *offset;
+  while (*offset < text.size() &&
+         !isspace(static_cast<unsigned char>(text[*offset])) &&
+         text[*offset] != ',' && text[*offset] != ';' && text[*offset] != ')')
+    (*offset)++;
+  return text.substr(begin, *offset - begin);
+}
+
+static std::string localLiteStripIdentifier(const std::string &token)
+{
+  std::string value = trim(token);
+  while (!value.empty() && (value[value.size() - 1] == ';' ||
+                            value[value.size() - 1] == ','))
+    value.resize(value.size() - 1);
+  return unquoteIdentifier(value);
+}
+
+static bool localLiteFindKeyword(const std::string &sql,
+                                 const char *keyword,
+                                 size_t start,
+                                 size_t *position)
+{
+  std::string text = upper(sql);
+  std::string word(keyword);
+  size_t found = text.find(word, start);
+  while (found != std::string::npos)
+    {
+      bool left = found == 0 || isspace(static_cast<unsigned char>(text[found - 1]));
+      bool right = found + word.size() >= text.size() ||
+                   isspace(static_cast<unsigned char>(text[found + word.size()])) ||
+                   text[found + word.size()] == ';';
+      if (left && right)
+        {
+          if (position) *position = found;
+          return true;
+        }
+      found = text.find(word, found + 1);
+    }
+  return false;
+}
+
+static uint32_t localLitePrivilegeMask(const std::string &text)
+{
+  std::string value = upper(text);
+  uint32_t mask = 0;
+  if (value.find("ALL") != std::string::npos) return LOCAL_LITE_PRIV_ALL;
+  if (value.find("SELECT") != std::string::npos) mask |= LOCAL_LITE_PRIV_SELECT;
+  if (value.find("INSERT") != std::string::npos) mask |= LOCAL_LITE_PRIV_INSERT;
+  if (value.find("UPDATE") != std::string::npos) mask |= LOCAL_LITE_PRIV_UPDATE;
+  if (value.find("DELETE") != std::string::npos) mask |= LOCAL_LITE_PRIV_DELETE;
+  if (value.find("REFERENCES") != std::string::npos) mask |= LOCAL_LITE_PRIV_REFERENCES;
+  if (value.find("USAGE") != std::string::npos) mask |= LOCAL_LITE_PRIV_USAGE;
+  return mask;
+}
+
+static bool localLiteIsRoot(const std::string &user)
+{
+  return user == "DB__ROOT";
+}
+
+static bool localLiteObjectPrivilege(LocalLiteRocksDBStore *store,
+                                     const std::string &catalog,
+                                     const std::string &schema,
+                                     const std::string &object,
+                                     const std::string &user,
+                                     uint32_t mask,
+                                     std::string *error)
+{
+  if (localLiteIsRoot(user)) return true;
+  bool allowed = store->hasPrivilege(catalog, schema, object, user, mask, error);
+  if (!allowed && error && error->empty())
+    *error = "authorization denied for " + object;
+  return allowed;
+}
+
+static bool localLiteParseObjectAfter(const std::string &sql,
+                                      size_t position,
+                                      std::string *catalog,
+                                      std::string *schema,
+                                      std::string *object)
+{
+  size_t offset = position;
+  std::string token = localLiteNextToken(sql, &offset);
+  if (token.empty() || upper(token) == "IF")
+    {
+      if (upper(token) == "IF")
+        {
+          localLiteNextToken(sql, &offset); // NOT
+          localLiteNextToken(sql, &offset); // EXISTS
+          token = localLiteNextToken(sql, &offset);
+        }
+    }
+  token = localLiteStripIdentifier(token);
+  return !token.empty() && token[0] != '(' &&
+         parseObjectName(token, catalog, schema, object);
+}
+
+static bool localLiteAuthorizeSql(const std::string &sql,
+                                  SqlciEnv *env,
+                                  std::string *error)
+{
+  std::string user = localLiteCurrentUser(env);
+  LocalLiteRocksDBStore store;
+
+  // Authorization DDL is implemented entirely in the RocksDB catalog.  The
+  // normal compiler path has no service-stack privilege metadata to update.
+  if (startsWithWord(sql, "CREATE USER") || startsWithWord(sql, "CREATE ROLE"))
+    {
+      if (!localLiteIsRoot(user)) { *error = "only DB__ROOT may create authorization identities"; return true; }
+      bool role = startsWithWord(sql, "CREATE ROLE");
+      size_t offset = role ? strlen("CREATE ROLE") : strlen("CREATE USER");
+      std::string rest = trim(sql.substr(offset));
+      bool ifNotExists = upper(rest).compare(0, 13, "IF NOT EXISTS") == 0;
+      if (ifNotExists) rest = trim(rest.substr(13));
+      size_t nameOffset = 0;
+      std::string name = localLiteStripIdentifier(localLiteNextToken(rest, &nameOffset));
+      if (name.empty()) { *error = "invalid local-lite authorization identity"; return true; }
+      if (!store.createAuthIdentity(name, role, ifNotExists, error)) return true;
+      return true;
+    }
+  if (startsWithWord(sql, "DROP USER") || startsWithWord(sql, "DROP ROLE"))
+    {
+      if (!localLiteIsRoot(user)) { *error = "only DB__ROOT may drop authorization identities"; return true; }
+      bool role = startsWithWord(sql, "DROP ROLE");
+      std::string rest = trim(sql.substr(role ? strlen("DROP ROLE") : strlen("DROP USER")));
+      bool ifExists = upper(rest).compare(0, 9, "IF EXISTS") == 0;
+      if (ifExists) rest = trim(rest.substr(9));
+      size_t zero = 0;
+      std::string name = localLiteStripIdentifier(localLiteNextToken(rest, &zero));
+      if (name.empty()) { *error = "invalid local-lite authorization identity"; return true; }
+      store.dropAuthIdentity(name, role, ifExists, error);
+      return true;
+    }
+  if (startsWithWord(sql, "SET SESSION AUTHORIZATION"))
+    {
+      std::string name = localLiteStripIdentifier(trim(sql.substr(strlen("SET SESSION AUTHORIZATION"))));
+      if (name.empty()) { *error = "invalid local-lite session authorization"; return true; }
+      env->setUserNameFromCommandLine(name.c_str());
+      short rc = 0;
+      if (!LocalLiteSqlTable_setCurrentUser(env, &rc))
+        *error = "unknown local-lite authorization identity: " + name;
+      return true;
+    }
+  if (startsWithWord(sql, "GRANT") || startsWithWord(sql, "REVOKE"))
+    {
+      bool grant = startsWithWord(sql, "GRANT");
+      std::string rest = trim(sql.substr(grant ? strlen("GRANT") : strlen("REVOKE")));
+      std::string restUpper = upper(rest);
+      size_t onPos = restUpper.find(" ON ");
+      if (onPos == std::string::npos)
+        {
+          size_t toPos = restUpper.find(grant ? " TO " : " FROM ");
+          if (toPos == std::string::npos) { *error = "invalid local-lite role grant"; return true; }
+          std::string role = localLiteStripIdentifier(trim(rest.substr(0, toPos)));
+          if (upper(role).compare(0, 5, "ROLE ") == 0)
+            role = localLiteStripIdentifier(trim(role.substr(5)));
+          std::string grantee = localLiteStripIdentifier(trim(rest.substr(toPos + (grant ? 4 : 6))));
+          if (!localLiteIsRoot(user)) { *error = "only DB__ROOT may grant roles"; return true; }
+          if (grant) store.grantRole(role, grantee, restUpper.find("ADMIN OPTION") != std::string::npos, error);
+          else store.revokeRole(role, grantee, error);
+          return true;
+        }
+      std::string privilegeText = trim(rest.substr(0, onPos));
+      size_t toPos = upper(rest).find(grant ? " TO " : " FROM ", onPos + 4);
+      if (toPos == std::string::npos) { *error = "invalid local-lite object privilege"; return true; }
+      std::string objectText = trim(rest.substr(onPos + 4, toPos - onPos - 4));
+      std::string grantee = localLiteStripIdentifier(trim(rest.substr(toPos + (grant ? 4 : 6))));
+      std::string catalog, schema, object;
+      if (!parseObjectName(objectText, &catalog, &schema, &object)) { *error = "invalid local-lite privilege object"; return true; }
+      uint32_t mask = localLitePrivilegeMask(privilegeText);
+      if (mask == 0) { *error = "invalid local-lite privilege list"; return true; }
+      bool owner = false;
+      if (!store.isTableOwner(catalog, schema, object, user, &owner, error)) return true;
+      if (!localLiteIsRoot(user) && !owner) { *error = "only the object owner may change local-lite privileges"; return true; }
+      if (grant) store.grantPrivilege(catalog, schema, object, mask, grantee,
+                                      restUpper.find("WITH GRANT OPTION") != std::string::npos, error);
+      else store.revokePrivilege(catalog, schema, object, mask, grantee, error);
+      return true;
+    }
+
+  std::string catalog, schema, object;
+  uint32_t required = 0;
+  std::string operation;
+  size_t position = 0;
+  if (startsWithWord(sql, "SELECT") || startsWithWord(sql, "SHOWDDL") ||
+      startsWithWord(sql, "SHOWSTATS") || startsWithWord(sql, "UPDATE STATISTICS"))
+    { required = LOCAL_LITE_PRIV_SELECT; operation = "SELECT"; }
+  else if (startsWithWord(sql, "INSERT"))
+    { required = LOCAL_LITE_PRIV_INSERT; operation = "INSERT"; }
+  else if (startsWithWord(sql, "UPDATE"))
+    { required = LOCAL_LITE_PRIV_UPDATE; operation = "UPDATE"; }
+  else if (startsWithWord(sql, "DELETE"))
+    { required = LOCAL_LITE_PRIV_DELETE; operation = "DELETE"; }
+  else if (startsWithWord(sql, "DROP TABLE") || startsWithWord(sql, "ALTER TABLE") ||
+           startsWithWord(sql, "TRUNCATE TABLE"))
+    { required = LOCAL_LITE_PRIV_ALL; operation = "DDL"; }
+  else if (startsWithWord(sql, "CREATE INDEX") || startsWithWord(sql, "DROP INDEX"))
+    { required = LOCAL_LITE_PRIV_ALL; operation = "DDL"; }
+  else if (startsWithWord(sql, "CREATE VIEW") || startsWithWord(sql, "CREATE TRIGGER"))
+    { required = LOCAL_LITE_PRIV_ALL; operation = "DDL"; }
+  else if (startsWithWord(sql, "CREATE TABLE"))
+    return false; // an authenticated user owns newly created tables
+  else if (startsWithWord(sql, "CREATE SCHEMA") || startsWithWord(sql, "DROP SCHEMA"))
+    {
+      if (!localLiteIsRoot(user)) *error = "only DB__ROOT may change local-lite schemas";
+      return true;
+    }
+  else
+    return false;
+
+  if (operation == "SELECT")
+    {
+      size_t fromPos = 0;
+      if (!localLiteFindKeyword(sql, "FROM", 0, &fromPos)) return false;
+      position = fromPos + strlen("FROM");
+    }
+  else if (startsWithWord(sql, "INSERT")) position = upper(sql).find("INTO") + 4;
+  else if (startsWithWord(sql, "UPDATE")) position = strlen("UPDATE");
+  else if (startsWithWord(sql, "DELETE")) position = upper(sql).find("FROM") + 4;
+  else if (startsWithWord(sql, "DROP TABLE") || startsWithWord(sql, "ALTER TABLE") ||
+           startsWithWord(sql, "TRUNCATE TABLE")) position = upper(sql).find("TABLE") + 5;
+  else if (startsWithWord(sql, "CREATE INDEX"))
+    {
+      size_t onPos = 0;
+      if (!localLiteFindKeyword(sql, "ON", 0, &onPos)) return false;
+      position = onPos + 2;
+    }
+  else if (startsWithWord(sql, "DROP INDEX"))
+    {
+      if (!localLiteIsRoot(user))
+        {
+          *error = "only DB__ROOT may drop local-lite indexes";
+          return true;
+        }
+      // Root is allowed to continue through the normal local-lite DDL path.
+      return false;
+    }
+  else if (startsWithWord(sql, "CREATE VIEW") || startsWithWord(sql, "CREATE TRIGGER"))
+    position = upper(sql).find(startsWithWord(sql, "CREATE VIEW") ? "VIEW" : "TRIGGER") +
+              (startsWithWord(sql, "CREATE VIEW") ? 4 : 7);
+
+  if (!localLiteParseObjectAfter(sql, position, &catalog, &schema, &object)) return false;
+  bool exists = false;
+  if (!store.tableExists(catalog, schema, object, &exists, error)) return true;
+  if (!exists && operation != "DDL") return false;
+  if (!localLiteObjectPrivilege(&store, catalog, schema, object, user, required, error))
+    {
+      if (error && error->empty()) *error = "authorization denied for " + operation +
+          " on " + catalog + "." + schema + "." + object;
+      return true;
+    }
+  return false;
+}
+
+bool LocalLiteSqlTable_setCurrentUser(SqlciEnv *sqlciEnv, short *retcode)
+{
+  if (!sqlciEnv || !retcode) return false;
+  std::string user = localLiteCurrentUser(sqlciEnv);
+  LocalLiteRocksDBStore store;
+  LocalLiteAuthIdentity identity;
+  bool found = false;
+  std::string error;
+  if (!store.loadAuthIdentity(user, &identity, &found, &error) || !found || identity.role)
+    {
+      *retcode = reportError(sqlciEnv, error.empty() ?
+          "unknown local-lite authorization identity: " + user : error);
+      return false;
+    }
+  setenv("TRAF_LOCAL_LITE_USER", user.c_str(), 1);
+  Lng32 rc = SQL_EXEC_SetSessionAttr_Internal(SESSION_DATABASE_USER,
+                                              static_cast<Lng32>(identity.id),
+                                              const_cast<char *>(user.c_str()));
+  if (rc != 0)
+    {
+      *retcode = reportError(sqlciEnv, "unable to set local-lite session identity: " + user);
+      return false;
+    }
+  *retcode = 0;
+  return true;
+}
+
+bool LocalLiteSqlTable_checkAuthorization(const char *sqlText,
+                                          SqlciEnv *sqlciEnv,
+                                          short *retcode)
+{
+  if (!sqlText || !sqlciEnv || !retcode) return false;
+  std::string error;
+  localLiteAuthorizeSql(trim(sqlText), sqlciEnv, &error);
+  if (!error.empty())
+    {
+      *retcode = reportError(sqlciEnv, error);
+      return false;
+    }
+  *retcode = 0;
+  return true;
+}
+
 bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *retcode)
 {
   if (!sqlText || !sqlciEnv || !retcode)
@@ -188,6 +499,16 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
     sql = trim(sql.substr(0, sql.size() - 1));
   if (sql.empty())
     return false;
+
+  std::string authorizationError;
+  bool authorizationHandled = localLiteAuthorizeSql(
+      sql, sqlciEnv, &authorizationError);
+  if (authorizationHandled)
+    {
+      *retcode = authorizationError.empty() ? 0 :
+          reportError(sqlciEnv, authorizationError);
+      return true;
+    }
 
   if (startsWithWord(sql, "SHOWDDL") || startsWithWord(sql, "SHOWSTATS"))
     {

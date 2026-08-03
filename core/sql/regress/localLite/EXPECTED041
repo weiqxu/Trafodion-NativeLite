@@ -1,0 +1,67 @@
+>>CREATE USER LLREG041_BOB;
+>>CREATE ROLE LLREG041_ROLE;
+>>CREATE TABLE LLREG041_T (id INT PRIMARY KEY, v INT);
+--- SQL operation complete.
+>>INSERT INTO LLREG041_T VALUES (1, 10);
+--- 1 row(s) inserted.
+>>GRANT SELECT, INSERT ON LLREG041_T TO LLREG041_ROLE;
+>>GRANT LLREG041_ROLE TO LLREG041_BOB;
+>>SET SESSION AUTHORIZATION LLREG041_BOB;
+>>VALUES (CURRENT_USER, SESSION_USER, USER);
+(EXPR)                                                                                                                             (EXPR)                                                                                                                             (EXPR)
+---------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------
+LLREG041_BOB                                                                                                                       LLREG041_BOB                                                                                                                       LLREG041_BOB
+--- 1 row(s) selected.
+>>SELECT id, v FROM LLREG041_T;
+ID           V
+-----------  -----------
+          1           10
+--- 1 row(s) selected.
+>>INSERT INTO LLREG041_T VALUES (2, 20);
+--- 1 row(s) inserted.
+>>PREPARE LLREG041_P FROM SELECT id FROM LLREG041_T ORDER BY id;
+--- SQL command prepared.
+>>EXECUTE LLREG041_P;
+ID
+-----------
+          1
+          2
+--- 2 row(s) selected.
+>>SET SESSION AUTHORIZATION DB__ROOT;
+>>CREATE USER LLREG041_OWNER;
+>>CREATE USER LLREG041_OTHER;
+>>SET SESSION AUTHORIZATION LLREG041_OWNER;
+>>CREATE TABLE LLREG041_OWNED (id INT);
+--- SQL operation complete.
+>>INSERT INTO LLREG041_OWNED VALUES (7);
+--- 1 row(s) inserted.
+>>SET SESSION AUTHORIZATION LLREG041_OTHER;
+>>SELECT id FROM LLREG041_OWNED;
+*** ERROR[local-lite] authorization denied for LLREG041_OWNED
+>>DROP TABLE LLREG041_OWNED;
+*** ERROR[local-lite] authorization denied for LLREG041_OWNED
+>>SET SESSION AUTHORIZATION LLREG041_OWNER;
+>>GRANT SELECT ON LLREG041_OWNED TO LLREG041_OTHER;
+>>SET SESSION AUTHORIZATION LLREG041_OTHER;
+>>SELECT id FROM LLREG041_OWNED;
+ID
+-----------
+          7
+--- 1 row(s) selected.
+>>SET SESSION AUTHORIZATION DB__ROOT;
+>>REVOKE SELECT ON LLREG041_T FROM LLREG041_ROLE;
+>>SET SESSION AUTHORIZATION LLREG041_BOB;
+>>SELECT id FROM LLREG041_T ORDER BY id;
+*** ERROR[local-lite] authorization denied for LLREG041_T
+>>EXECUTE LLREG041_P;
+*** ERROR[local-lite] authorization denied for LLREG041_T
+>>SET SESSION AUTHORIZATION DB__ROOT;
+>>DROP TABLE LLREG041_T;
+--- SQL operation complete.
+>>DROP TABLE LLREG041_OWNED;
+--- SQL operation complete.
+>>DROP ROLE LLREG041_ROLE;
+>>DROP USER LLREG041_BOB;
+>>DROP USER LLREG041_OWNER;
+>>DROP USER LLREG041_OTHER;
+>>exit;

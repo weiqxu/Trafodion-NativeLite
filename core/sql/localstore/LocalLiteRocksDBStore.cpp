@@ -224,6 +224,55 @@ static std::string triggerKey(const std::string &catalog,
   return "trigger|" + catalog + "|" + schema + "|" + name;
 }
 
+static const char *LOCAL_LITE_ROOT_NAME = "DB__ROOT";
+static const uint64_t LOCAL_LITE_ROOT_ID = 33333;
+
+static std::string authKey(const std::string &name)
+{
+  return "auth|" + name;
+}
+
+static std::string authIdKey(uint64_t id)
+{
+  char buf[64];
+  snprintf(buf, sizeof(buf), "authid|%020llu",
+           static_cast<unsigned long long>(id));
+  return buf;
+}
+
+static std::string roleKey(const std::string &role,
+                           const std::string &grantee)
+{
+  return "role|" + role + "|" + grantee;
+}
+
+static std::string privilegeKey(const std::string &catalog,
+                                const std::string &schema,
+                                const std::string &object,
+                                const std::string &grantee)
+{
+  return "priv|" + catalog + "|" + schema + "|" + object + "|" + grantee;
+}
+
+static std::string ownerKey(const std::string &catalog,
+                            const std::string &schema,
+                            const std::string &object)
+{
+  return "owner|" + catalog + "|" + schema + "|" + object;
+}
+
+static std::string authorizationGenerationKey()
+{
+  return "auth-generation";
+}
+
+static std::string encodeAuthIdentity(const LocalLiteAuthIdentity &identity)
+{
+  return std::string("LLA1\n") +
+         std::to_string(static_cast<unsigned long long>(identity.id)) + "\n" +
+         (identity.role ? "ROLE\n" : "USER\n");
+}
+
 static std::string tableKey(const LocalLiteTableDef &table)
 {
   return tableKey(table.catalog, table.schema, table.name);
@@ -3026,6 +3075,74 @@ private:
   pthread_mutex_t mutex_;
 };
 
+static bool readCatalogValue(const std::string &key,
+                             std::string *value,
+                             bool *found,
+                             std::string *error)
+{
+  if (!value || !found)
+    return false;
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *rawValue = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                               readOptions, key.data(), key.size(),
+                               &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite authorization metadata", error))
+    return false;
+  *found = rawValue != NULL;
+  if (rawValue)
+    {
+      value->assign(rawValue, valueLen);
+      rocksdb_free(rawValue);
+    }
+  else
+    value->clear();
+  return true;
+}
+
+static bool writeCatalogValue(const std::string &key,
+                              const std::string &value,
+                              std::string *error)
+{
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+              key.data(), key.size(), value.data(), value.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "write local-lite authorization metadata", error);
+}
+
+static bool deleteCatalogValue(const std::string &key, std::string *error)
+{
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_delete(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+                 key.data(), key.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "delete local-lite authorization metadata", error);
+}
+
+static bool ensureRootAuthMetadata(std::string *error)
+{
+  std::string value;
+  bool found = false;
+  if (!readCatalogValue(authKey(LOCAL_LITE_ROOT_NAME), &value, &found, error))
+    return false;
+  if (!found)
+    {
+      LocalLiteAuthIdentity root;
+      root.name = LOCAL_LITE_ROOT_NAME;
+      root.id = LOCAL_LITE_ROOT_ID;
+      root.role = false;
+      if (!writeCatalogValue(authKey(root.name), encodeAuthIdentity(root), error) ||
+          !writeCatalogValue(authIdKey(root.id), root.name, error))
+        return false;
+    }
+  return true;
+}
+
 static bool validateLocalLiteChildRI(
     LocalLiteRocksDBStore *store, const LocalLiteTableDef &table,
     const std::vector<std::string> &rows, std::string *error);
@@ -3827,6 +3944,10 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   rocksdb_writebatch_destroy(batch);
   if (!checkRocksError(err, "write local-lite table metadata", error))
     return false;
+  const char *currentUser = getenv("TRAF_LOCAL_LITE_USER");
+  if (currentUser && currentUser[0] &&
+      !setTableOwner(copy.catalog, copy.schema, copy.name, currentUser, error))
+    return false;
   return true;
 }
 
@@ -4297,6 +4418,348 @@ bool LocalLiteRocksDBStore::dropTrigger(
   return true;
 }
 
+bool LocalLiteRocksDBStore::loadAuthIdentity(
+    const std::string &name, LocalLiteAuthIdentity *identity, bool *found,
+    std::string *error)
+{
+  if (!identity || !found || !open(error) || !ensureRootAuthMetadata(error))
+    return false;
+  std::string value;
+  if (!readCatalogValue(authKey(name), &value, found, error))
+    return false;
+  if (!*found)
+    return true;
+  if (value.compare(0, 5, "LLA1\n") != 0)
+    {
+      setError(error, "invalid local-lite authorization identity metadata");
+      return false;
+    }
+  size_t first = value.find('\n', 5);
+  size_t second = first == std::string::npos
+      ? std::string::npos : value.find('\n', first + 1);
+  if (first == std::string::npos || second == std::string::npos)
+    {
+      setError(error, "truncated local-lite authorization identity metadata");
+      return false;
+    }
+  identity->name = name;
+  identity->id = strtoull(value.substr(5, first - 5).c_str(), NULL, 10);
+  identity->role = value.substr(first + 1, second - first - 1) == "ROLE";
+  return true;
+}
+
+bool LocalLiteRocksDBStore::createAuthIdentity(
+    const std::string &name, bool role, bool ifNotExists, std::string *error)
+{
+  if (name.empty() || name.find('|') != std::string::npos ||
+      !open(error) || !ensureRootAuthMetadata(error))
+    {
+      if (name.empty() || name.find('|') != std::string::npos)
+        setError(error, "invalid local-lite authorization name");
+      return false;
+    }
+  LocalLiteAuthIdentity existing;
+  bool found = false;
+  if (!loadAuthIdentity(name, &existing, &found, error))
+    return false;
+  if (found)
+    {
+      if (ifNotExists && existing.role == role)
+        return true;
+      setError(error, "local-lite authorization identity already exists: " + name);
+      return false;
+    }
+  uint64_t id = LOCAL_LITE_ROOT_ID + 1;
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek(it, "authid|", 7); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      if (keyLen < 7 || memcmp(rawKey, "authid|", 7) != 0)
+        break;
+      uint64_t candidate = strtoull(rawKey + 7, NULL, 10);
+      if (candidate >= id) id = candidate + 1;
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "scan local-lite authorization identities", error))
+    return false;
+
+  LocalLiteAuthIdentity identity;
+  identity.name = name;
+  identity.id = id;
+  identity.role = role;
+  if (!writeCatalogValue(authKey(name), encodeAuthIdentity(identity), error) ||
+      !writeCatalogValue(authIdKey(id), name, error))
+    return false;
+  return bumpAuthorizationGeneration(error);
+}
+
+bool LocalLiteRocksDBStore::dropAuthIdentity(
+    const std::string &name, bool role, bool ifExists, std::string *error)
+{
+  LocalLiteAuthIdentity identity;
+  bool found = false;
+  if (!loadAuthIdentity(name, &identity, &found, error))
+    return false;
+  if (!found)
+    {
+      if (ifExists) return true;
+      setError(error, "local-lite authorization identity does not exist: " + name);
+      return false;
+    }
+  if (identity.role != role || name == LOCAL_LITE_ROOT_NAME)
+    {
+      setError(error, "local-lite authorization identity type cannot be dropped: " + name);
+      return false;
+    }
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  std::string key = authKey(name);
+  std::string idKey = authIdKey(identity.id);
+  rocksdb_writebatch_delete(batch, key.data(), key.size());
+  rocksdb_writebatch_delete(batch, idKey.data(), idKey.size());
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek(it, "role|", 5); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      if (keyLen < 5 || memcmp(rawKey, "role|", 5) != 0) break;
+      std::string roleKeyValue(rawKey, keyLen);
+      size_t separator = roleKeyValue.find('|', 5);
+      std::string rolePart = separator == std::string::npos
+          ? std::string() : roleKeyValue.substr(5, separator - 5);
+      std::string granteePart = separator == std::string::npos
+          ? std::string() : roleKeyValue.substr(separator + 1);
+      if (rolePart == name || granteePart == name)
+        rocksdb_writebatch_delete(batch, rawKey, keyLen);
+    }
+  for (rocksdb_iter_seek(it, "priv|", 5); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      if (keyLen < 5 || memcmp(rawKey, "priv|", 5) != 0) break;
+      std::string privilegeKeyValue(rawKey, keyLen);
+      size_t granteeSeparator = privilegeKeyValue.rfind('|');
+      if (granteeSeparator != std::string::npos &&
+          privilegeKeyValue.substr(granteeSeparator + 1) == name)
+        rocksdb_writebatch_delete(batch, rawKey, keyLen);
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "scan local-lite authorization dependencies", error))
+    {
+      rocksdb_writebatch_destroy(batch);
+      return false;
+    }
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+                batch, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  if (!checkRocksError(err, "delete local-lite authorization identity", error))
+    return false;
+  return bumpAuthorizationGeneration(error);
+}
+
+bool LocalLiteRocksDBStore::grantRole(
+    const std::string &role, const std::string &grantee, bool adminOption,
+    std::string *error)
+{
+  LocalLiteAuthIdentity roleIdentity, granteeIdentity;
+  bool roleFound = false, granteeFound = false;
+  if (!loadAuthIdentity(role, &roleIdentity, &roleFound, error) ||
+      !loadAuthIdentity(grantee, &granteeIdentity, &granteeFound, error))
+    return false;
+  if (!roleFound || !roleIdentity.role || !granteeFound || role == grantee)
+    {
+      setError(error, "invalid local-lite role grant");
+      return false;
+    }
+  if (!writeCatalogValue(roleKey(role, grantee), adminOption ? "1" : "0", error))
+    return false;
+  return bumpAuthorizationGeneration(error);
+}
+
+bool LocalLiteRocksDBStore::revokeRole(
+    const std::string &role, const std::string &grantee, std::string *error)
+{
+  LocalLiteAuthIdentity roleIdentity;
+  bool found = false;
+  if (!loadAuthIdentity(role, &roleIdentity, &found, error)) return false;
+  if (!found || !roleIdentity.role)
+    {
+      setError(error, "local-lite role does not exist: " + role);
+      return false;
+    }
+  if (!deleteCatalogValue(roleKey(role, grantee), error)) return false;
+  return bumpAuthorizationGeneration(error);
+}
+
+bool LocalLiteRocksDBStore::grantPrivilege(
+    const std::string &catalog, const std::string &schema,
+    const std::string &object, uint32_t privilegeMask,
+    const std::string &grantee, bool grantOption, std::string *error)
+{
+  LocalLiteAuthIdentity granteeIdentity;
+  bool found = false;
+  if (!loadAuthIdentity(grantee, &granteeIdentity, &found, error)) return false;
+  if (!found && grantee != "PUBLIC")
+    {
+      setError(error, "local-lite grantee does not exist: " + grantee);
+      return false;
+    }
+  bool objectExists = false;
+  if (!tableExists(catalog, schema, object, &objectExists, error) || !objectExists)
+    {
+      setError(error, "local-lite privilege object does not exist: " +
+               catalog + "." + schema + "." + object);
+      return false;
+    }
+  std::string key = privilegeKey(catalog, schema, object, grantee);
+  std::string value;
+  bool current = false;
+  if (!readCatalogValue(key, &value, &current, error)) return false;
+  uint32_t mask = 0; bool oldGrantOption = false;
+  if (current)
+    {
+      size_t sep = value.find('|');
+      mask = static_cast<uint32_t>(strtoul(value.substr(0, sep).c_str(), NULL, 10));
+      oldGrantOption = sep != std::string::npos && value.substr(sep + 1) == "1";
+    }
+  mask |= privilegeMask;
+  value = std::to_string(static_cast<unsigned long>(mask)) + "|" +
+          ((grantOption || oldGrantOption) ? "1" : "0");
+  if (!writeCatalogValue(key, value, error)) return false;
+  return bumpAuthorizationGeneration(error);
+}
+
+bool LocalLiteRocksDBStore::revokePrivilege(
+    const std::string &catalog, const std::string &schema,
+    const std::string &object, uint32_t privilegeMask,
+    const std::string &grantee, std::string *error)
+{
+  std::string key = privilegeKey(catalog, schema, object, grantee);
+  std::string value;
+  bool found = false;
+  if (!readCatalogValue(key, &value, &found, error)) return false;
+  if (!found) return true;
+  size_t sep = value.find('|');
+  uint32_t mask = static_cast<uint32_t>(strtoul(value.substr(0, sep).c_str(), NULL, 10));
+  mask &= ~privilegeMask;
+  if (mask == 0)
+    {
+      if (!deleteCatalogValue(key, error)) return false;
+    }
+  else
+    {
+      std::string option = sep != std::string::npos ? value.substr(sep + 1) : "0";
+      if (!writeCatalogValue(key, std::to_string(static_cast<unsigned long>(mask)) +
+                                  "|" + option, error)) return false;
+    }
+  return bumpAuthorizationGeneration(error);
+}
+
+bool LocalLiteRocksDBStore::hasPrivilege(
+    const std::string &catalog, const std::string &schema,
+    const std::string &object, const std::string &user,
+    uint32_t privilegeMask, std::string *error)
+{
+  if (!open(error) || !ensureRootAuthMetadata(error)) return false;
+  if (user == LOCAL_LITE_ROOT_NAME) return true;
+  std::string owner;
+  bool ownerFound = false;
+  if (!readCatalogValue(ownerKey(catalog, schema, object), &owner,
+                        &ownerFound, error)) return false;
+  if (ownerFound && owner == user) return true;
+
+  std::set<std::string> principals;
+  std::vector<std::string> pending;
+  principals.insert(user);
+  pending.push_back(user);
+  for (size_t pos = 0; pos < pending.size(); pos++)
+    {
+      rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+      rocksdb_iterator_t *it = rocksdb_create_iterator(
+          LocalLiteStorageManager::instance().catalogDb(), readOptions);
+      for (rocksdb_iter_seek(it, "role|", 5); rocksdb_iter_valid(it);
+           rocksdb_iter_next(it))
+        {
+          size_t keyLen = 0;
+          const char *rawKey = rocksdb_iter_key(it, &keyLen);
+          if (keyLen < 5 || memcmp(rawKey, "role|", 5) != 0) break;
+          std::string key(rawKey, keyLen);
+          size_t first = key.find('|', 5);
+          if (first == std::string::npos || key.substr(first + 1) != pending[pos])
+            continue;
+          std::string role = key.substr(5, first - 5);
+          if (principals.insert(role).second) pending.push_back(role);
+        }
+      char *err = NULL;
+      rocksdb_iter_get_error(it, &err);
+      rocksdb_iter_destroy(it);
+      rocksdb_readoptions_destroy(readOptions);
+      if (!checkRocksError(err, "scan local-lite role membership", error)) return false;
+    }
+  principals.insert("PUBLIC");
+  for (std::set<std::string>::const_iterator it = principals.begin();
+       it != principals.end(); ++it)
+    {
+      std::string value;
+      bool found = false;
+      if (!readCatalogValue(privilegeKey(catalog, schema, object, *it),
+                            &value, &found, error)) return false;
+      if (!found) continue;
+      size_t sep = value.find('|');
+      uint32_t mask = static_cast<uint32_t>(strtoul(value.substr(0, sep).c_str(), NULL, 10));
+      if ((mask & privilegeMask) == privilegeMask) return true;
+    }
+  return false;
+}
+
+bool LocalLiteRocksDBStore::setTableOwner(
+    const std::string &catalog, const std::string &schema,
+    const std::string &object, const std::string &owner, std::string *error)
+{
+  return writeCatalogValue(ownerKey(catalog, schema, object), owner, error);
+}
+
+bool LocalLiteRocksDBStore::isTableOwner(
+    const std::string &catalog, const std::string &schema,
+    const std::string &object, const std::string &user, bool *owner,
+    std::string *error)
+{
+  if (!owner || !open(error)) return false;
+  std::string value;
+  bool found = false;
+  if (!readCatalogValue(ownerKey(catalog, schema, object), &value, &found, error))
+    return false;
+  *owner = found && value == user;
+  return true;
+}
+
+bool LocalLiteRocksDBStore::bumpAuthorizationGeneration(std::string *error)
+{
+  std::string value;
+  bool found = false;
+  if (!readCatalogValue(authorizationGenerationKey(), &value, &found, error))
+    return false;
+  uint64_t generation = found ? strtoull(value.c_str(), NULL, 10) : 0;
+  return writeCatalogValue(authorizationGenerationKey(),
+                           std::to_string(static_cast<unsigned long long>(generation + 1)),
+                           error);
+}
+
 bool LocalLiteRocksDBStore::dropSchema(const std::string &catalog,
                                        const std::string &schema,
                                        bool ifExists,
@@ -4653,6 +5116,15 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
   rocksdb_writeoptions_destroy(writeOptions);
   rocksdb_writebatch_destroy(batch);
   if (!checkRocksError(err, "delete local-lite table metadata", error))
+    return false;
+
+  // Ownership is separate from the table encoding so existing local-lite
+  // catalogs remain readable across M8 upgrades.
+  if (!deleteCatalogValue(ownerKey(catalog, schema, name), error))
+    return false;
+  if (dropTransition &&
+      !deleteCatalogValue(ownerKey(transition.catalog, transition.schema,
+                                   transition.name), error))
     return false;
 
   LocalLiteStorageManager::instance().closeTable(tablePath(table));
