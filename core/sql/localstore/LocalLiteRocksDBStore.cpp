@@ -196,6 +196,33 @@ static std::string tableKey(const std::string &catalog,
   return "table|" + catalog + "|" + schema + "|" + name;
 }
 
+static std::string schemaKey(const std::string &catalog,
+                             const std::string &schema)
+{
+  return "schema|" + catalog + "|" + schema;
+}
+
+static std::string synonymKey(const std::string &catalog,
+                              const std::string &schema,
+                              const std::string &name)
+{
+  return "synonym|" + catalog + "|" + schema + "|" + name;
+}
+
+static std::string sequenceKey(const std::string &catalog,
+                               const std::string &schema,
+                               const std::string &name)
+{
+  return "sequence|" + catalog + "|" + schema + "|" + name;
+}
+
+static std::string triggerKey(const std::string &catalog,
+                              const std::string &schema,
+                              const std::string &name)
+{
+  return "trigger|" + catalog + "|" + schema + "|" + name;
+}
+
 static std::string tableKey(const LocalLiteTableDef &table)
 {
   return tableKey(table.catalog, table.schema, table.name);
@@ -233,10 +260,143 @@ static uint64_t readUint64(const std::string &s, size_t *offset)
   return v;
 }
 
+static void appendTriggerString(std::string &out, const std::string &value)
+{
+  appendUint64(out, value.size());
+  out.append(value);
+}
+
+static bool readTriggerString(const std::string &encoded, size_t *offset,
+                              std::string *value)
+{
+  if (!offset || !value || *offset + 8 > encoded.size())
+    return false;
+  uint64_t size = readUint64(encoded, offset);
+  if (size > encoded.size() - *offset)
+    return false;
+  value->assign(encoded.data() + *offset, static_cast<size_t>(size));
+  *offset += static_cast<size_t>(size);
+  return true;
+}
+
+static std::string encodeTrigger(const LocalLiteTriggerDef &trigger)
+{
+  std::string out("LLG1", 4);
+  appendTriggerString(out, trigger.catalog);
+  appendTriggerString(out, trigger.schema);
+  appendTriggerString(out, trigger.name);
+  appendTriggerString(out, trigger.subjectCatalog);
+  appendTriggerString(out, trigger.subjectSchema);
+  appendTriggerString(out, trigger.subjectTable);
+  appendUint64(out, static_cast<uint64_t>(trigger.operation));
+  appendUint64(out, static_cast<uint64_t>(trigger.activation));
+  appendUint64(out, static_cast<uint64_t>(trigger.granularity));
+  appendUint64(out, trigger.timestamp);
+  appendUint64(out, trigger.allUpdateColumns ? 1 : 0);
+  appendUint64(out, trigger.updateColumns.size());
+  for (size_t i = 0; i < trigger.updateColumns.size(); i++)
+    appendUint64(out, trigger.updateColumns[i]);
+  appendTriggerString(out, trigger.sqlText);
+  return out;
+}
+
+static bool decodeTrigger(const std::string &encoded,
+                          LocalLiteTriggerDef *trigger,
+                          std::string *error)
+{
+  if (!trigger || encoded.size() < 4 || encoded.compare(0, 4, "LLG1") != 0)
+    {
+      setError(error, "invalid local-lite trigger metadata");
+      return false;
+    }
+  size_t offset = 4;
+  if (!readTriggerString(encoded, &offset, &trigger->catalog) ||
+      !readTriggerString(encoded, &offset, &trigger->schema) ||
+      !readTriggerString(encoded, &offset, &trigger->name) ||
+      !readTriggerString(encoded, &offset, &trigger->subjectCatalog) ||
+      !readTriggerString(encoded, &offset, &trigger->subjectSchema) ||
+      !readTriggerString(encoded, &offset, &trigger->subjectTable) ||
+      offset + 6 * 8 > encoded.size())
+    {
+      setError(error, "truncated local-lite trigger metadata");
+      return false;
+    }
+  trigger->operation = static_cast<int>(readUint64(encoded, &offset));
+  trigger->activation = static_cast<int>(readUint64(encoded, &offset));
+  trigger->granularity = static_cast<int>(readUint64(encoded, &offset));
+  trigger->timestamp = readUint64(encoded, &offset);
+  trigger->allUpdateColumns = readUint64(encoded, &offset) != 0;
+  uint64_t count = readUint64(encoded, &offset);
+  if (count > (encoded.size() - offset) / 8)
+    {
+      setError(error, "invalid local-lite trigger column metadata");
+      return false;
+    }
+  trigger->updateColumns.clear();
+  for (uint64_t i = 0; i < count; i++)
+    trigger->updateColumns.push_back(
+        static_cast<size_t>(readUint64(encoded, &offset)));
+  if (!readTriggerString(encoded, &offset, &trigger->sqlText) ||
+      offset != encoded.size())
+    {
+      setError(error, "truncated local-lite trigger SQL text");
+      return false;
+    }
+  return true;
+}
+
+static std::string encodeSequence(const LocalLiteSequenceDef &sequence)
+{
+  std::string value("LLS1", 4);
+  appendUint64(value, sequence.objectUid);
+  appendUint64(value, static_cast<uint64_t>(sequence.fsDataType));
+  appendUint64(value, static_cast<uint64_t>(sequence.startValue));
+  appendUint64(value, static_cast<uint64_t>(sequence.increment));
+  appendUint64(value, static_cast<uint64_t>(sequence.minValue));
+  appendUint64(value, static_cast<uint64_t>(sequence.maxValue));
+  appendUint64(value, static_cast<uint64_t>(sequence.nextValue));
+  appendUint64(value, sequence.cycle ? 1 : 0);
+  appendUint64(value, static_cast<uint64_t>(sequence.cache));
+  appendUint64(value, sequence.numCalls);
+  appendUint64(value, sequence.internal ? 1 : 0);
+  return value;
+}
+
+static bool decodeSequence(const std::string &value,
+                           const std::string &catalog,
+                           const std::string &schema,
+                           const std::string &name,
+                           LocalLiteSequenceDef *sequence,
+                           std::string *error)
+{
+  if (!sequence || value.size() != 4 + 11 * 8 ||
+      value.compare(0, 4, "LLS1") != 0)
+    {
+      setError(error, "invalid local-lite sequence metadata");
+      return false;
+    }
+  size_t offset = 4;
+  sequence->catalog = catalog;
+  sequence->schema = schema;
+  sequence->name = name;
+  sequence->objectUid = readUint64(value, &offset);
+  sequence->fsDataType = static_cast<int>(readUint64(value, &offset));
+  sequence->startValue = static_cast<int64_t>(readUint64(value, &offset));
+  sequence->increment = static_cast<int64_t>(readUint64(value, &offset));
+  sequence->minValue = static_cast<int64_t>(readUint64(value, &offset));
+  sequence->maxValue = static_cast<int64_t>(readUint64(value, &offset));
+  sequence->nextValue = static_cast<int64_t>(readUint64(value, &offset));
+  sequence->cycle = readUint64(value, &offset) != 0;
+  sequence->cache = static_cast<int64_t>(readUint64(value, &offset));
+  sequence->numCalls = readUint64(value, &offset);
+  sequence->internal = readUint64(value, &offset) != 0;
+  return true;
+}
+
 static std::string encodeTable(const LocalLiteTableDef &table)
 {
   std::string out;
-  out += "LLT5\n";
+  out += "LLT11\n";
   out += table.catalog + "\n";
   out += table.schema + "\n";
   out += table.name + "\n";
@@ -257,6 +417,19 @@ static std::string encodeTable(const LocalLiteTableDef &table)
       out += table.columns[i].type;
       out += "\t";
       out += table.columns[i].nullable ? "1" : "0";
+      out += "\t";
+      snprintf(buf, sizeof(buf), "%d", table.columns[i].defaultClass);
+      out += buf;
+      out += "\t";
+      for (size_t j = 0; j < table.columns[i].defaultValue.size(); j++)
+        {
+          static const char hex[] = "0123456789ABCDEF";
+          unsigned char c = static_cast<unsigned char>(table.columns[i].defaultValue[j]);
+          out += hex[c >> 4];
+          out += hex[c & 15];
+        }
+      out += "\t";
+      out += table.columns[i].added ? "1" : "0";
       out += "\n";
     }
   snprintf(buf, sizeof(buf), "%lu\n",
@@ -307,6 +480,91 @@ static std::string encodeTable(const LocalLiteTableDef &table)
           out += buf;
         }
     }
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.checkConstraints.size()));
+  out += buf;
+  for (size_t i = 0; i < table.checkConstraints.size(); i++)
+    {
+      const std::string fields[2] = { table.checkConstraints[i].name,
+                                      table.checkConstraints[i].expression };
+      for (size_t f = 0; f < 2; f++)
+        {
+          snprintf(buf, sizeof(buf), "%lu\n",
+                   static_cast<unsigned long>(fields[f].size()));
+          out += buf;
+          out.append(fields[f]);
+          out += "\n";
+        }
+    }
+  out += table.view ? "1\n" : "0\n";
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.viewText.size()));
+  out += buf;
+  out.append(table.viewText);
+  out += "\n";
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.riConstraints.size()));
+  out += buf;
+  for (size_t i = 0; i < table.riConstraints.size(); i++)
+    {
+      const LocalLiteRIDef &ri = table.riConstraints[i];
+      const std::string fields[5] = { ri.name, ri.referencedCatalog,
+                                      ri.referencedSchema,
+                                      ri.referencedTable,
+                                      ri.referencedConstraint };
+      for (size_t f = 0; f < 5; f++)
+        {
+          snprintf(buf, sizeof(buf), "%lu\n",
+                   static_cast<unsigned long>(fields[f].size()));
+          out += buf;
+          out.append(fields[f]);
+          out += "\n";
+        }
+      snprintf(buf, sizeof(buf), "%lu\n",
+               static_cast<unsigned long>(ri.referencingColumns.size()));
+      out += buf;
+      for (size_t j = 0; j < ri.referencingColumns.size(); j++)
+        {
+          snprintf(buf, sizeof(buf), "%lu\t%lu\n",
+                   static_cast<unsigned long>(ri.referencingColumns[j]),
+                   static_cast<unsigned long>(ri.referencedColumns[j]));
+          out += buf;
+        }
+    }
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.dependencies.size()));
+  out += buf;
+  for (size_t i = 0; i < table.dependencies.size(); i++)
+    {
+      const std::string fields[3] = { table.dependencies[i].catalog,
+                                      table.dependencies[i].schema,
+                                      table.dependencies[i].name };
+      for (size_t f = 0; f < 3; f++)
+        {
+          snprintf(buf, sizeof(buf), "%lu\n",
+                   static_cast<unsigned long>(fields[f].size()));
+          out += buf;
+          out.append(fields[f]);
+          out += "\n";
+        }
+    }
+  const std::string keyNames[1] = { table.primaryKeyName };
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(keyNames[0].size()));
+  out += buf;
+  out.append(keyNames[0]);
+  out += "\n";
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.uniqueKeyNames.size()));
+  out += buf;
+  for (size_t i = 0; i < table.uniqueKeyNames.size(); i++)
+    {
+      snprintf(buf, sizeof(buf), "%lu\n",
+               static_cast<unsigned long>(table.uniqueKeyNames[i].size()));
+      out += buf;
+      out.append(table.uniqueKeyNames[i]);
+      out += "\n";
+    }
   return out;
 }
 
@@ -330,18 +588,42 @@ static bool decodeTable(const std::string &encoded,
   size_t pos = 0;
   if (!nextLine(encoded, &pos, &line) ||
       (line != "LLT1" && line != "LLT2" && line != "LLT3" &&
-       line != "LLT4" && line != "LLT5"))
+       line != "LLT4" && line != "LLT5" && line != "LLT6" &&
+       line != "LLT7" && line != "LLT8" && line != "LLT9" &&
+       line != "LLT10" && line != "LLT11"))
     {
       setError(error, "invalid local-lite table metadata");
       return false;
     }
   const bool hasKeyMetadata =
       (line == "LLT2" || line == "LLT3" || line == "LLT4" ||
-       line == "LLT5");
+       line == "LLT5" || line == "LLT6" || line == "LLT7" ||
+       line == "LLT8" || line == "LLT9" || line == "LLT10" ||
+       line == "LLT11");
   const bool hasUniqueMetadata =
-      (line == "LLT3" || line == "LLT4" || line == "LLT5");
-  const bool hasIndexMetadata = (line == "LLT4" || line == "LLT5");
-  const bool hasIndexEncodingMetadata = (line == "LLT5");
+      (line == "LLT3" || line == "LLT4" || line == "LLT5" ||
+       line == "LLT6" || line == "LLT7" || line == "LLT8" ||
+       line == "LLT9" || line == "LLT10" || line == "LLT11");
+  const bool hasIndexMetadata = (line == "LLT4" || line == "LLT5" ||
+                                 line == "LLT6" || line == "LLT7" ||
+                                 line == "LLT8" || line == "LLT9" ||
+                                 line == "LLT10" || line == "LLT11");
+  const bool hasIndexEncodingMetadata = (line == "LLT5" || line == "LLT6" ||
+                                         line == "LLT7" || line == "LLT8" ||
+                                         line == "LLT9" || line == "LLT10" ||
+                                         line == "LLT11");
+  const bool hasColumnDefaultMetadata = (line == "LLT6" || line == "LLT7" ||
+                                         line == "LLT8" || line == "LLT9" ||
+                                         line == "LLT10" || line == "LLT11");
+  const bool hasCheckMetadata = (line == "LLT7" || line == "LLT8" ||
+                                 line == "LLT9" || line == "LLT10" ||
+                                 line == "LLT11");
+  const bool hasViewMetadata = (line == "LLT8" || line == "LLT9" ||
+                                line == "LLT10" || line == "LLT11");
+  const bool hasRIMetadata = (line == "LLT9" || line == "LLT10" ||
+                              line == "LLT11");
+  const bool hasDependencyMetadata = (line == "LLT10" || line == "LLT11");
+  const bool hasConstraintNameMetadata = (line == "LLT11");
   if (!nextLine(encoded, &pos, &table->catalog) ||
       !nextLine(encoded, &pos, &table->schema) ||
       !nextLine(encoded, &pos, &table->name) ||
@@ -359,8 +641,15 @@ static bool decodeTable(const std::string &encoded,
   unsigned long count = strtoul(line.c_str(), NULL, 10);
   table->columns.clear();
   table->primaryKeyColumns.clear();
+  table->primaryKeyName.clear();
   table->uniqueKeyColumns.clear();
+  table->uniqueKeyNames.clear();
   table->secondaryIndexes.clear();
+  table->checkConstraints.clear();
+  table->riConstraints.clear();
+  table->dependencies.clear();
+  table->view = false;
+  table->viewText.clear();
   for (unsigned long i = 0; i < count; i++)
     {
       if (!nextLine(encoded, &pos, &line))
@@ -378,7 +667,41 @@ static bool decodeTable(const std::string &encoded,
       LocalLiteColumnDef col;
       col.name = line.substr(0, p1);
       col.type = line.substr(p1 + 1, p2 - p1 - 1);
-      col.nullable = (line.substr(p2 + 1) == "1");
+      if (!hasColumnDefaultMetadata)
+        col.nullable = (line.substr(p2 + 1) == "1");
+      else
+        {
+          size_t p3 = line.find('\t', p2 + 1);
+          size_t p4 = p3 == std::string::npos ? p3 : line.find('\t', p3 + 1);
+          size_t p5 = p4 == std::string::npos ? p4 : line.find('\t', p4 + 1);
+          if (p3 == std::string::npos || p4 == std::string::npos ||
+              p5 == std::string::npos)
+            {
+              setError(error, "invalid local-lite column default metadata");
+              return false;
+            }
+          col.nullable = (line.substr(p2 + 1, p3 - p2 - 1) == "1");
+          col.defaultClass = atoi(line.substr(p3 + 1, p4 - p3 - 1).c_str());
+          std::string hex = line.substr(p4 + 1, p5 - p4 - 1);
+          if (hex.size() % 2 != 0)
+            {
+              setError(error, "invalid local-lite encoded default value");
+              return false;
+            }
+          for (size_t j = 0; j < hex.size(); j += 2)
+            {
+              char pair[3] = { hex[j], hex[j + 1], 0 };
+              char *end = NULL;
+              unsigned long value = strtoul(pair, &end, 16);
+              if (!end || *end)
+                {
+                  setError(error, "invalid local-lite encoded default value");
+                  return false;
+                }
+              col.defaultValue += static_cast<char>(value);
+            }
+          col.added = (line.substr(p5 + 1) == "1");
+        }
       table->columns.push_back(col);
     }
   if (hasKeyMetadata)
@@ -521,6 +844,222 @@ static bool decodeTable(const std::string &encoded,
             }
           table->secondaryIndexes.push_back(index);
         }
+    }
+  if (hasCheckMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite check metadata");
+          return false;
+        }
+      unsigned long checkCount = strtoul(line.c_str(), NULL, 10);
+      for (unsigned long i = 0; i < checkCount; i++)
+        {
+          LocalLiteCheckDef check;
+          std::string *fields[2] = { &check.name, &check.expression };
+          for (size_t f = 0; f < 2; f++)
+            {
+              if (!nextLine(encoded, &pos, &line))
+                {
+                  setError(error, "truncated local-lite check metadata");
+                  return false;
+                }
+              unsigned long length = strtoul(line.c_str(), NULL, 10);
+              if (pos + length >= encoded.size() || encoded[pos + length] != '\n')
+                {
+                  setError(error, "invalid local-lite check metadata");
+                  return false;
+                }
+              fields[f]->assign(encoded, pos, length);
+              pos += length + 1;
+            }
+          table->checkConstraints.push_back(check);
+        }
+    }
+  if (hasViewMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite view metadata");
+          return false;
+        }
+      table->view = (line == "1");
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite view metadata");
+          return false;
+        }
+      unsigned long length = strtoul(line.c_str(), NULL, 10);
+      if (pos + length >= encoded.size() || encoded[pos + length] != '\n')
+        {
+          setError(error, "invalid local-lite view metadata");
+          return false;
+        }
+      table->viewText.assign(encoded, pos, length);
+      pos += length + 1;
+      if (table->view != !table->viewText.empty())
+        {
+          setError(error, "invalid local-lite view definition");
+          return false;
+        }
+    }
+  if (hasRIMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite RI metadata");
+          return false;
+        }
+      unsigned long riCount = strtoul(line.c_str(), NULL, 10);
+      for (unsigned long i = 0; i < riCount; i++)
+        {
+          LocalLiteRIDef ri;
+          std::string *fields[5] = { &ri.name, &ri.referencedCatalog,
+                                     &ri.referencedSchema,
+                                     &ri.referencedTable,
+                                     &ri.referencedConstraint };
+          for (size_t f = 0; f < 5; f++)
+            {
+              if (!nextLine(encoded, &pos, &line))
+                {
+                  setError(error, "truncated local-lite RI metadata");
+                  return false;
+                }
+              unsigned long length = strtoul(line.c_str(), NULL, 10);
+              if (pos + length >= encoded.size() ||
+                  encoded[pos + length] != '\n')
+                {
+                  setError(error, "invalid local-lite RI metadata");
+                  return false;
+                }
+              fields[f]->assign(encoded, pos, length);
+              pos += length + 1;
+            }
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite RI column metadata");
+              return false;
+            }
+          unsigned long columnCount = strtoul(line.c_str(), NULL, 10);
+          for (unsigned long j = 0; j < columnCount; j++)
+            {
+              if (!nextLine(encoded, &pos, &line))
+                {
+                  setError(error, "truncated local-lite RI column metadata");
+                  return false;
+                }
+              size_t tab = line.find('\t');
+              if (tab == std::string::npos)
+                {
+                  setError(error, "invalid local-lite RI column metadata");
+                  return false;
+                }
+              size_t child = strtoul(line.substr(0, tab).c_str(), NULL, 10);
+              size_t parent = strtoul(line.substr(tab + 1).c_str(), NULL, 10);
+              if (child >= table->columns.size())
+                {
+                  setError(error, "invalid local-lite RI child column");
+                  return false;
+                }
+              ri.referencingColumns.push_back(child);
+              ri.referencedColumns.push_back(parent);
+            }
+          if (ri.name.empty() || ri.referencedCatalog.empty() ||
+              ri.referencedSchema.empty() || ri.referencedTable.empty() ||
+              ri.referencedConstraint.empty() ||
+              ri.referencingColumns.empty())
+            {
+              setError(error, "invalid local-lite RI metadata");
+              return false;
+            }
+          table->riConstraints.push_back(ri);
+        }
+    }
+  if (hasDependencyMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite dependency metadata");
+          return false;
+        }
+      unsigned long dependencyCount = strtoul(line.c_str(), NULL, 10);
+      for (unsigned long i = 0; i < dependencyCount; i++)
+        {
+          LocalLiteObjectRef dependency;
+          std::string *fields[3] = { &dependency.catalog,
+                                     &dependency.schema,
+                                     &dependency.name };
+          for (size_t f = 0; f < 3; f++)
+            {
+              if (!nextLine(encoded, &pos, &line))
+                {
+                  setError(error, "truncated local-lite dependency metadata");
+                  return false;
+                }
+              unsigned long length = strtoul(line.c_str(), NULL, 10);
+              if (pos + length >= encoded.size() ||
+                  encoded[pos + length] != '\n')
+                {
+                  setError(error, "invalid local-lite dependency metadata");
+                  return false;
+                }
+              fields[f]->assign(encoded, pos, length);
+              pos += length + 1;
+            }
+          if (dependency.catalog.empty() || dependency.schema.empty() ||
+              dependency.name.empty())
+            {
+              setError(error, "invalid local-lite dependency metadata");
+              return false;
+            }
+          table->dependencies.push_back(dependency);
+        }
+    }
+  if (hasConstraintNameMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite key constraint metadata");
+          return false;
+        }
+      unsigned long length = strtoul(line.c_str(), NULL, 10);
+      if (pos + length >= encoded.size() || encoded[pos + length] != '\n')
+        {
+          setError(error, "invalid local-lite primary key name metadata");
+          return false;
+        }
+      table->primaryKeyName.assign(encoded, pos, length);
+      pos += length + 1;
+      if (!nextLine(encoded, &pos, &line))
+        return false;
+      unsigned long uniqueCount = strtoul(line.c_str(), NULL, 10);
+      for (unsigned long i = 0; i < uniqueCount; i++)
+        {
+          if (!nextLine(encoded, &pos, &line)) return false;
+          length = strtoul(line.c_str(), NULL, 10);
+          if (pos + length >= encoded.size() || encoded[pos + length] != '\n')
+            {
+              setError(error, "invalid local-lite unique key name metadata");
+              return false;
+            }
+          table->uniqueKeyNames.push_back(encoded.substr(pos, length));
+          pos += length + 1;
+        }
+      if ((!table->primaryKeyColumns.empty()) != !table->primaryKeyName.empty() ||
+          table->uniqueKeyNames.size() != table->uniqueKeyColumns.size())
+        {
+          setError(error, "inconsistent local-lite key constraint metadata");
+          return false;
+        }
+    }
+  else
+    {
+      const std::string prefix = table->catalog + "." + table->schema + "." +
+                                 table->name;
+      if (!table->primaryKeyColumns.empty()) table->primaryKeyName = prefix + "_PK";
+      for (size_t i = 0; i < table->uniqueKeyColumns.size(); i++)
+        table->uniqueKeyNames.push_back(
+            prefix + "_UK_" + std::to_string(i + 1));
     }
   return true;
 }
@@ -726,6 +1265,7 @@ private:
 
 class LocalLiteStorageManager
 {
+  friend class LocalLiteRocksDBStore;
 public:
   static LocalLiteStorageManager &instance()
   {
@@ -1301,7 +1841,22 @@ public:
               }
             if (!value)
               continue;
-            std::string referencedRowKey(value, valueLen);
+            // Version-4 secondary indexes store a covering value rather than
+            // the bare base-row key. Decode both formats before deciding
+            // whether an existing entry belongs to one of the rows being
+            // replaced. Treating the covering payload as a row key makes a
+            // key-preserving UPDATE on a UNIQUE index look like a conflict
+            // after the catalog is reopened in a new SQLCI process.
+            std::string referencedRowKey;
+            std::string ignoredRow;
+            bool covering = false;
+            if (!decodeIndexValue(std::string(value, valueLen),
+                                  &referencedRowKey, &ignoredRow,
+                                  &covering, error))
+              {
+                rocksdb_readoptions_destroy(readOptions);
+                return false;
+              }
             rocksdb_free(value);
             if (oldRowKeySet.find(referencedRowKey) == oldRowKeySet.end())
               {
@@ -1354,6 +1909,191 @@ public:
     rocksdb_writeoptions_destroy(writeOptions);
     rocksdb_writebatch_destroy(batch);
     return checkRocksError(err, "update local-lite rows", error);
+  }
+
+  bool replaceTableDefinition(
+      const LocalLiteTableDef &oldTable,
+      const LocalLiteTableDef &newTable,
+      const std::vector<LocalLiteRowMutation> &mutations,
+      std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    LocalLiteTableDef loaded;
+    if (!loadTableLocked(oldTable.catalog, oldTable.schema, oldTable.name,
+                         &loaded, error))
+      return false;
+    if (loaded.objectUid != oldTable.objectUid ||
+        newTable.objectUid != oldTable.objectUid ||
+        newTable.catalog != oldTable.catalog ||
+        newTable.schema != oldTable.schema || newTable.name != oldTable.name)
+      {
+        setError(error, "local-lite table changed during ALTER");
+        return false;
+      }
+
+    rocksdb_t *db = openTableLocked(LocalLiteRocksDBStore::tablePath(loaded),
+                                    false, error);
+    if (!db)
+      return false;
+
+    std::vector<std::string> oldRowKeys(mutations.size());
+    std::vector<std::string> newRowKeys(mutations.size());
+    std::vector< std::vector<std::string> > oldUniqueKeys(mutations.size());
+    std::vector< std::vector<std::string> > newUniqueKeys(mutations.size());
+    std::vector< std::vector<LocalLitePhysicalIndexEntry> > oldIndexes(
+        mutations.size());
+    std::vector< std::vector<LocalLitePhysicalIndexEntry> > newIndexes(
+        mutations.size());
+    std::set<std::string> rowKeySet;
+    std::set<std::string> uniqueKeySet;
+    std::set<std::string> indexKeySet;
+
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        if (loaded.primaryKeyColumns.empty())
+          appendUint64(oldRowKeys[i], mutations[i].before.rowId);
+        else if (!LocalLiteBuildPrimaryKey(loaded,
+                                           mutations[i].before.value,
+                                           &oldRowKeys[i], error))
+          return false;
+        if (newTable.primaryKeyColumns.empty())
+          appendUint64(newRowKeys[i], mutations[i].before.rowId);
+        else if (!LocalLiteBuildPrimaryKey(newTable, mutations[i].after,
+                                           &newRowKeys[i], error))
+          return false;
+        if (!rowKeySet.insert(newRowKeys[i]).second)
+          {
+            setError(error, "duplicate local-lite primary key after ALTER");
+            return false;
+          }
+        if (!buildSecondaryIndexEntries(loaded, mutations[i].before.value,
+                                        oldRowKeys[i], &oldIndexes[i], error) ||
+            !buildSecondaryIndexEntries(newTable, mutations[i].after,
+                                        newRowKeys[i], &newIndexes[i], error))
+          return false;
+        for (size_t j = 0; j < newIndexes[i].size(); j++)
+          if (!indexKeySet.insert(newIndexes[i][j].key).second)
+            {
+              setError(error, newIndexes[i][j].unique
+                      ? "duplicate local-lite unique index key after ALTER"
+                      : "duplicate local-lite secondary index key after ALTER");
+              return false;
+            }
+        for (size_t j = 0; j < loaded.uniqueKeyColumns.size(); j++)
+          {
+            std::string key;
+            bool hasKey = false;
+            if (!LocalLiteBuildUniqueKey(loaded,
+                                         mutations[i].before.value,
+                                         loaded.uniqueKeyColumns[j], j,
+                                         &key, &hasKey, error))
+              return false;
+            if (hasKey)
+              oldUniqueKeys[i].push_back(key);
+          }
+        for (size_t j = 0; j < newTable.uniqueKeyColumns.size(); j++)
+          {
+            std::string key;
+            bool hasKey = false;
+            if (!LocalLiteBuildUniqueKey(newTable, mutations[i].after,
+                                         newTable.uniqueKeyColumns[j], j,
+                                         &key, &hasKey, error))
+              return false;
+            if (hasKey && !uniqueKeySet.insert(key).second)
+              {
+                setError(error, "duplicate local-lite unique key after ALTER");
+                return false;
+              }
+            if (hasKey)
+              newUniqueKeys[i].push_back(key);
+          }
+      }
+
+    rocksdb_writebatch_t *forward = rocksdb_writebatch_create();
+    rocksdb_writebatch_t *rollback = rocksdb_writebatch_create();
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        rocksdb_writebatch_delete(forward, oldRowKeys[i].data(),
+                                  oldRowKeys[i].size());
+        rocksdb_writebatch_delete(rollback, newRowKeys[i].data(),
+                                  newRowKeys[i].size());
+        for (size_t j = 0; j < oldUniqueKeys[i].size(); j++)
+          rocksdb_writebatch_delete(forward, oldUniqueKeys[i][j].data(),
+                                    oldUniqueKeys[i][j].size());
+        for (size_t j = 0; j < newUniqueKeys[i].size(); j++)
+          rocksdb_writebatch_delete(rollback, newUniqueKeys[i][j].data(),
+                                    newUniqueKeys[i][j].size());
+        for (size_t j = 0; j < oldIndexes[i].size(); j++)
+          rocksdb_writebatch_delete(forward, oldIndexes[i][j].key.data(),
+                                    oldIndexes[i][j].key.size());
+        for (size_t j = 0; j < newIndexes[i].size(); j++)
+          rocksdb_writebatch_delete(rollback, newIndexes[i][j].key.data(),
+                                    newIndexes[i][j].key.size());
+      }
+    for (size_t i = 0; i < mutations.size(); i++)
+      {
+        std::string newValue = encodeRowValue(mutations[i].after);
+        std::string oldValue = encodeRowValue(mutations[i].before.value);
+        rocksdb_writebatch_put(forward, newRowKeys[i].data(),
+                               newRowKeys[i].size(), newValue.data(),
+                               newValue.size());
+        rocksdb_writebatch_put(rollback, oldRowKeys[i].data(),
+                               oldRowKeys[i].size(), oldValue.data(),
+                               oldValue.size());
+        for (size_t j = 0; j < newUniqueKeys[i].size(); j++)
+          rocksdb_writebatch_put(forward, newUniqueKeys[i][j].data(),
+                                 newUniqueKeys[i][j].size(),
+                                 newRowKeys[i].data(), newRowKeys[i].size());
+        for (size_t j = 0; j < oldUniqueKeys[i].size(); j++)
+          rocksdb_writebatch_put(rollback, oldUniqueKeys[i][j].data(),
+                                 oldUniqueKeys[i][j].size(),
+                                 oldRowKeys[i].data(), oldRowKeys[i].size());
+        for (size_t j = 0; j < newIndexes[i].size(); j++)
+          rocksdb_writebatch_put(forward, newIndexes[i][j].key.data(),
+                                 newIndexes[i][j].key.size(),
+                                 newIndexes[i][j].value.data(),
+                                 newIndexes[i][j].value.size());
+        for (size_t j = 0; j < oldIndexes[i].size(); j++)
+          rocksdb_writebatch_put(rollback, oldIndexes[i][j].key.data(),
+                                 oldIndexes[i][j].key.size(),
+                                 oldIndexes[i][j].value.data(),
+                                 oldIndexes[i][j].value.size());
+      }
+
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    char *err = NULL;
+    rocksdb_write(db, writeOptions, forward, &err);
+    rocksdb_writebatch_destroy(forward);
+    if (!checkRocksError(err, "rewrite local-lite rows for ALTER", error))
+      {
+        rocksdb_writebatch_destroy(rollback);
+        rocksdb_writeoptions_destroy(writeOptions);
+        return false;
+      }
+
+    std::string metadataKey = tableKey(loaded);
+    std::string metadata = encodeTable(newTable);
+    err = NULL;
+    rocksdb_put(catalogDb_, writeOptions, metadataKey.data(),
+                metadataKey.size(), metadata.data(), metadata.size(), &err);
+    if (!checkRocksError(err, "write local-lite ALTER metadata", error))
+      {
+        char *rollbackErr = NULL;
+        rocksdb_write(db, writeOptions, rollback, &rollbackErr);
+        if (rollbackErr)
+          {
+            std::string ignored;
+            checkRocksError(rollbackErr, "rollback local-lite ALTER", &ignored);
+            if (error)
+              *error += "; " + ignored;
+          }
+        rocksdb_writebatch_destroy(rollback);
+        rocksdb_writeoptions_destroy(writeOptions);
+        return false;
+      }
+    rocksdb_writebatch_destroy(rollback);
+    rocksdb_writeoptions_destroy(writeOptions);
+    return true;
   }
 
   bool deleteRows(const LocalLiteTableDef &table,
@@ -2065,6 +2805,96 @@ private:
     return true;
   }
 
+  bool allocateSequence(uint64_t objectUid, int64_t requestedCount,
+                        int64_t *nextValue, int64_t *endValue,
+                        std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    std::string uid = uidKey(objectUid);
+    rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+    char *err = NULL;
+    size_t keyLen = 0;
+    char *rawKey = rocksdb_get(catalogDb_, readOptions, uid.data(), uid.size(),
+                               &keyLen, &err);
+    rocksdb_readoptions_destroy(readOptions);
+    if (!checkRocksError(err, "read local-lite sequence UID", error))
+      return false;
+    if (!rawKey)
+      {
+        setError(error, "local-lite sequence does not exist");
+        return false;
+      }
+    std::string key(rawKey, keyLen);
+    rocksdb_free(rawKey);
+    const std::string prefix("sequence|");
+    if (key.compare(0, prefix.size(), prefix) != 0)
+      {
+        setError(error, "local-lite sequence UID resolves to another object");
+        return false;
+      }
+    size_t first = key.find('|', prefix.size());
+    size_t second = first == std::string::npos
+        ? first : key.find('|', first + 1);
+    if (first == std::string::npos || second == std::string::npos)
+      {
+        setError(error, "invalid local-lite sequence catalog key");
+        return false;
+      }
+    std::string catalog = key.substr(prefix.size(), first - prefix.size());
+    std::string schema = key.substr(first + 1, second - first - 1);
+    std::string name = key.substr(second + 1);
+    readOptions = rocksdb_readoptions_create();
+    size_t valueLen = 0;
+    char *rawValue = rocksdb_get(catalogDb_, readOptions,
+                                 key.data(), key.size(), &valueLen, &err);
+    rocksdb_readoptions_destroy(readOptions);
+    if (!checkRocksError(err, "read local-lite sequence", error))
+      return false;
+    if (!rawValue)
+      {
+        setError(error, "local-lite sequence metadata is missing");
+        return false;
+      }
+    std::string value(rawValue, valueLen);
+    rocksdb_free(rawValue);
+    LocalLiteSequenceDef sequence;
+    if (!decodeSequence(value, catalog, schema, name, &sequence, error))
+      return false;
+    if (sequence.increment <= 0 || requestedCount <= 0)
+      {
+        setError(error, "invalid local-lite sequence allocation");
+        return false;
+      }
+    int64_t next = sequence.nextValue;
+    if (next > sequence.maxValue)
+      {
+        if (!sequence.cycle)
+          {
+            setError(error, "local-lite sequence has reached MAXVALUE");
+            return false;
+          }
+        next = sequence.minValue;
+      }
+    uint64_t available = static_cast<uint64_t>(
+        (sequence.maxValue - next) / sequence.increment) + 1;
+    uint64_t requested = static_cast<uint64_t>(requestedCount);
+    uint64_t count = requested < available ? requested : available;
+    int64_t end = next + static_cast<int64_t>(count - 1) * sequence.increment;
+    sequence.nextValue = end + sequence.increment;
+    sequence.numCalls++;
+    std::string updated = encodeSequence(sequence);
+    rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+    err = NULL;
+    rocksdb_put(catalogDb_, writeOptions, key.data(), key.size(),
+                updated.data(), updated.size(), &err);
+    rocksdb_writeoptions_destroy(writeOptions);
+    if (!checkRocksError(err, "update local-lite sequence", error))
+      return false;
+    *nextValue = next;
+    *endValue = end;
+    return true;
+  }
+
   void releaseStatementSnapshotsLocked(const StatementKey &key,
                                        SnapshotMap &snapshots)
   {
@@ -2106,6 +2936,14 @@ private:
   StatementMap statementSnapshots_;
   pthread_mutex_t mutex_;
 };
+
+static bool validateLocalLiteChildRI(
+    LocalLiteRocksDBStore *store, const LocalLiteTableDef &table,
+    const std::vector<std::string> &rows, std::string *error);
+static bool validateLocalLiteParentRI(
+    LocalLiteRocksDBStore *store, const LocalLiteTableDef &parent,
+    const std::vector<std::string> &oldRows,
+    const std::vector<std::string> &newRows, std::string *error);
 
 class LocalLiteTxnState
 {
@@ -2178,6 +3016,11 @@ public:
     }
 
     LocalLiteStorageManager::instance().endStatement(this, transactionId);
+    if (!validatePendingReferentialIntegrity(pending, error))
+      {
+        transactionStore_.close();
+        return false;
+      }
     size_t committedTables = 0;
     for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
       {
@@ -2610,6 +3453,93 @@ private:
   };
   typedef std::map<std::string, PendingTable> PendingMap;
 
+  bool validatePendingReferentialIntegrity(const PendingMap &pending,
+                                            std::string *error)
+  {
+    std::vector<LocalLiteTableDef> tables;
+    if (!transactionStore_.listTables("", "", &tables, error))
+      return false;
+    std::map<std::string, size_t> tableIndexes;
+    std::vector<std::vector<LocalLiteRow> > finalRows(tables.size());
+    for (size_t t = 0; t < tables.size(); t++)
+      {
+        const std::string key = tableKey(tables[t]);
+        tableIndexes[key] = t;
+        if (!transactionStore_.scanRows(tables[t], &finalRows[t], error))
+          return false;
+        PendingMap::const_iterator changes = pending.find(key);
+        if (changes == pending.end())
+          continue;
+        for (size_t u = 0; u < changes->second.updates.size(); u++)
+          for (size_t row = 0; row < finalRows[t].size(); row++)
+            if (finalRows[t][row].rowId ==
+                  changes->second.updates[u].before.rowId &&
+                finalRows[t][row].value ==
+                  changes->second.updates[u].before.value)
+              {
+                finalRows[t][row].value = changes->second.updates[u].after;
+                break;
+              }
+        for (size_t d = 0; d < changes->second.deletes.size(); d++)
+          for (size_t row = 0; row < finalRows[t].size(); row++)
+            if (finalRows[t][row].rowId == changes->second.deletes[d].rowId &&
+                finalRows[t][row].value == changes->second.deletes[d].value)
+              {
+                finalRows[t].erase(finalRows[t].begin() + row);
+                break;
+              }
+        finalRows[t].insert(finalRows[t].end(), changes->second.rows.begin(),
+                            changes->second.rows.end());
+      }
+
+    // Validate the complete post-commit image. This permits a transaction to
+    // insert a parent and its child together while still rejecting parent-key
+    // removal and child-key insertion regardless of pending-table order.
+    for (size_t child = 0; child < tables.size(); child++)
+      for (size_t r = 0; r < tables[child].riConstraints.size(); r++)
+        {
+          const LocalLiteRIDef &ri = tables[child].riConstraints[r];
+          std::map<std::string, size_t>::const_iterator parent =
+              tableIndexes.find(tableKey(ri.referencedCatalog,
+                                         ri.referencedSchema,
+                                         ri.referencedTable));
+          if (parent == tableIndexes.end())
+            {
+              setError(error, "referenced local-lite table is missing for " +
+                              ri.name);
+              return false;
+            }
+          std::set<std::string> parentKeys;
+          for (size_t row = 0; row < finalRows[parent->second].size(); row++)
+            {
+              std::string key;
+              bool hasKey = false;
+              if (!LocalLiteBuildConstraintKey(
+                      tables[parent->second],
+                      finalRows[parent->second][row].value,
+                      ri.referencedColumns, &key, &hasKey, error))
+                return false;
+              if (hasKey) parentKeys.insert(key);
+            }
+          for (size_t row = 0; row < finalRows[child].size(); row++)
+            {
+              std::string key;
+              bool hasKey = false;
+              if (!LocalLiteBuildConstraintKey(
+                      tables[child], finalRows[child][row].value,
+                      ri.referencingColumns, &key, &hasKey, error))
+                return false;
+              if (hasKey && parentKeys.find(key) == parentKeys.end())
+                {
+                  setError(error, "referential integrity constraint " +
+                                  ri.name + " is violated");
+                  return false;
+                }
+            }
+        }
+    return true;
+  }
+
   bool pendingRowMatchesKey(const LocalLiteTableDef &table,
                             const LocalLiteRow &row,
                             const std::string &storageKey,
@@ -2806,6 +3736,697 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   return true;
 }
 
+bool LocalLiteRocksDBStore::schemaExists(const std::string &catalog,
+                                         const std::string &schema,
+                                         bool *exists,
+                                         std::string *error)
+{
+  if (!exists || !open(error))
+    return false;
+  std::string key = schemaKey(catalog, schema);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                            readOptions, key.data(), key.size(),
+                            &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite schema metadata", error))
+    return false;
+  *exists = value != NULL;
+  if (value)
+    rocksdb_free(value);
+  return true;
+}
+
+bool LocalLiteRocksDBStore::createSchema(const std::string &catalog,
+                                         const std::string &schema,
+                                         bool ifNotExists,
+                                         std::string *error)
+{
+  bool exists = false;
+  if (catalog.empty() || schema.empty() ||
+      !schemaExists(catalog, schema, &exists, error))
+    return false;
+  if (exists)
+    {
+      if (ifNotExists)
+        return true;
+      setError(error, "local-lite schema already exists: " + catalog + "." +
+              schema);
+      return false;
+    }
+  std::string key = schemaKey(catalog, schema);
+  static const char value[] = "LLSC1";
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+              key.data(), key.size(), value, sizeof(value) - 1, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "write local-lite schema metadata", error);
+}
+
+bool LocalLiteRocksDBStore::resolveSynonym(
+    const std::string &catalog, const std::string &schema,
+    const std::string &name, std::string *targetCatalog,
+    std::string *targetSchema, std::string *targetName, bool *found,
+    std::string *error)
+{
+  if (!found || !targetCatalog || !targetSchema || !targetName || !open(error))
+    return false;
+  std::string key = synonymKey(catalog, schema, name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *value = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                            readOptions, key.data(), key.size(), &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite synonym metadata", error))
+    return false;
+  *found = value != NULL;
+  if (!value)
+    return true;
+  std::string encoded(value, valueLen);
+  rocksdb_free(value);
+  size_t first = encoded.find('\n');
+  size_t second = first == std::string::npos
+      ? first : encoded.find('\n', first + 1);
+  if (first == std::string::npos || second == std::string::npos)
+    {
+      setError(error, "invalid local-lite synonym metadata");
+      return false;
+    }
+  *targetCatalog = encoded.substr(0, first);
+  *targetSchema = encoded.substr(first + 1, second - first - 1);
+  *targetName = encoded.substr(second + 1);
+  return !targetCatalog->empty() && !targetSchema->empty() && !targetName->empty();
+}
+
+bool LocalLiteRocksDBStore::createSynonym(
+    const std::string &catalog, const std::string &schema,
+    const std::string &name, const std::string &targetCatalog,
+    const std::string &targetSchema, const std::string &targetName,
+    std::string *error)
+{
+  bool targetExists = false;
+  bool synonymExists = false;
+  std::string tc, ts, tn;
+  if (!tableExists(targetCatalog, targetSchema, targetName, &targetExists, error) ||
+      !resolveSynonym(catalog, schema, name, &tc, &ts, &tn,
+                      &synonymExists, error))
+    return false;
+  if (!targetExists)
+    {
+      setError(error, "local-lite synonym target does not exist: " +
+               targetCatalog + "." + targetSchema + "." + targetName);
+      return false;
+    }
+  if (synonymExists)
+    {
+      setError(error, "local-lite synonym already exists: " + catalog + "." +
+               schema + "." + name);
+      return false;
+    }
+  std::string key = synonymKey(catalog, schema, name);
+  std::string value = targetCatalog + "\n" + targetSchema + "\n" + targetName;
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+              key.data(), key.size(), value.data(), value.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "write local-lite synonym metadata", error);
+}
+
+bool LocalLiteRocksDBStore::dropSynonym(const std::string &catalog,
+                                        const std::string &schema,
+                                        const std::string &name,
+                                        bool ifExists,
+                                        std::string *error)
+{
+  std::string tc, ts, tn;
+  bool exists = false;
+  if (!resolveSynonym(catalog, schema, name, &tc, &ts, &tn, &exists, error))
+    return false;
+  if (!exists)
+    {
+      if (ifExists)
+        return true;
+      setError(error, "local-lite synonym does not exist: " + catalog + "." +
+               schema + "." + name);
+      return false;
+    }
+  std::string key = synonymKey(catalog, schema, name);
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_delete(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+                 key.data(), key.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "delete local-lite synonym metadata", error);
+}
+
+bool LocalLiteRocksDBStore::loadSequence(
+    const std::string &catalog, const std::string &schema,
+    const std::string &name, LocalLiteSequenceDef *sequence, bool *found,
+    std::string *error)
+{
+  if (!sequence || !found || !open(error))
+    return false;
+  std::string key = sequenceKey(catalog, schema, name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *rawValue = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                               readOptions, key.data(), key.size(),
+                               &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite sequence metadata", error))
+    return false;
+  *found = rawValue != NULL;
+  if (!rawValue)
+    return true;
+  std::string value(rawValue, valueLen);
+  rocksdb_free(rawValue);
+  return decodeSequence(value, catalog, schema, name, sequence, error);
+}
+
+bool LocalLiteRocksDBStore::createSequence(
+    const LocalLiteSequenceDef &sequence, std::string *error)
+{
+  LocalLiteSequenceDef ignored;
+  bool exists = false;
+  if (!loadSequence(sequence.catalog, sequence.schema, sequence.name,
+                    &ignored, &exists, error))
+    return false;
+  bool tableExistsFlag = false;
+  if (!tableExists(sequence.catalog, sequence.schema, sequence.name,
+                   &tableExistsFlag, error))
+    return false;
+  std::string tc, ts, tn;
+  bool synonymExists = false;
+  if (!resolveSynonym(sequence.catalog, sequence.schema, sequence.name,
+                      &tc, &ts, &tn, &synonymExists, error))
+    return false;
+  std::string idxKey = indexKey(sequence.catalog, sequence.schema,
+                                sequence.name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *idxValue = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                               readOptions, idxKey.data(), idxKey.size(),
+                               &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite object metadata", error))
+    return false;
+  bool indexExists = idxValue != NULL;
+  if (idxValue) rocksdb_free(idxValue);
+  if (exists || tableExistsFlag || synonymExists || indexExists)
+    {
+      setError(error, "local-lite object already exists: " +
+               sequence.catalog + "." + sequence.schema + "." +
+               sequence.name);
+      return false;
+    }
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  std::string key = sequenceKey(sequence.catalog, sequence.schema,
+                                sequence.name);
+  std::string uid = uidKey(sequence.objectUid);
+  std::string value = encodeSequence(sequence);
+  rocksdb_writebatch_put(batch, key.data(), key.size(),
+                         value.data(), value.size());
+  rocksdb_writebatch_put(batch, uid.data(), uid.size(), key.data(), key.size());
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  err = NULL;
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
+                writeOptions, batch, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  return checkRocksError(err, "write local-lite sequence metadata", error);
+}
+
+bool LocalLiteRocksDBStore::alterSequence(
+    const LocalLiteSequenceDef &sequence, std::string *error)
+{
+  LocalLiteSequenceDef existing;
+  bool found = false;
+  if (!loadSequence(sequence.catalog, sequence.schema, sequence.name,
+                    &existing, &found, error))
+    return false;
+  if (!found || existing.objectUid != sequence.objectUid)
+    {
+      setError(error, "local-lite sequence does not exist: " +
+               sequence.catalog + "." + sequence.schema + "." +
+               sequence.name);
+      return false;
+    }
+  std::string key = sequenceKey(sequence.catalog, sequence.schema,
+                                sequence.name);
+  std::string value = encodeSequence(sequence);
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+              key.data(), key.size(), value.data(), value.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "update local-lite sequence metadata", error);
+}
+
+bool LocalLiteRocksDBStore::dropSequence(
+    const std::string &catalog, const std::string &schema,
+    const std::string &name, bool ifExists, std::string *error)
+{
+  LocalLiteSequenceDef sequence;
+  bool found = false;
+  if (!loadSequence(catalog, schema, name, &sequence, &found, error))
+    return false;
+  if (!found)
+    {
+      if (ifExists) return true;
+      setError(error, "local-lite sequence does not exist: " + catalog + "." +
+               schema + "." + name);
+      return false;
+    }
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  std::string key = sequenceKey(catalog, schema, name);
+  std::string uid = uidKey(sequence.objectUid);
+  rocksdb_writebatch_delete(batch, key.data(), key.size());
+  rocksdb_writebatch_delete(batch, uid.data(), uid.size());
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  char *err = NULL;
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
+                writeOptions, batch, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  return checkRocksError(err, "delete local-lite sequence metadata", error);
+}
+
+bool LocalLiteRocksDBStore::allocateSequence(
+    uint64_t objectUid, int64_t requestedCount, int64_t *nextValue,
+    int64_t *endValue, std::string *error)
+{
+  if (!nextValue || !endValue || !open(error))
+    return false;
+  return LocalLiteStorageManager::instance().allocateSequence(
+      objectUid, requestedCount, nextValue, endValue, error);
+}
+
+bool LocalLiteRocksDBStore::listTriggers(
+    const std::string &subjectCatalog, const std::string &subjectSchema,
+    const std::string &subjectTable, int operation,
+    std::vector<LocalLiteTriggerDef> *triggers, std::string *error)
+{
+  if (!triggers || !open(error))
+    return false;
+  triggers->clear();
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek(it, "trigger|", 8); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0, valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      if (keyLen < 8 || memcmp(rawKey, "trigger|", 8) != 0)
+        break;
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      LocalLiteTriggerDef trigger;
+      if (!decodeTrigger(std::string(rawValue, valueLen), &trigger, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+      if ((subjectCatalog.empty() || trigger.subjectCatalog == subjectCatalog) &&
+          (subjectSchema.empty() || trigger.subjectSchema == subjectSchema) &&
+          (subjectTable.empty() || trigger.subjectTable == subjectTable) &&
+          (operation < 0 || trigger.operation == operation))
+        triggers->push_back(trigger);
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  return checkRocksError(err, "scan local-lite trigger metadata", error);
+}
+
+bool LocalLiteRocksDBStore::createTrigger(
+    const LocalLiteTriggerDef &trigger, std::string *error)
+{
+  bool subjectExists = false;
+  if (!tableExists(trigger.subjectCatalog, trigger.subjectSchema,
+                   trigger.subjectTable, &subjectExists, error))
+    return false;
+  if (!subjectExists)
+    {
+      setError(error, "local-lite trigger subject table does not exist: " +
+               trigger.subjectCatalog + "." + trigger.subjectSchema + "." +
+               trigger.subjectTable);
+      return false;
+    }
+  std::string key = triggerKey(trigger.catalog, trigger.schema, trigger.name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *existing = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                               readOptions, key.data(), key.size(),
+                               &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite trigger metadata", error))
+    return false;
+  if (existing)
+    {
+      rocksdb_free(existing);
+      setError(error, "local-lite trigger already exists: " + trigger.catalog +
+               "." + trigger.schema + "." + trigger.name);
+      return false;
+    }
+  std::string value = encodeTrigger(trigger);
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  rocksdb_put(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+              key.data(), key.size(), value.data(), value.size(), &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  return checkRocksError(err, "write local-lite trigger metadata", error);
+}
+
+bool LocalLiteRocksDBStore::dropTrigger(
+    const std::string &catalog, const std::string &schema,
+    const std::string &name, bool ifExists, std::string *error)
+{
+  if (!open(error))
+    return false;
+  std::string key = triggerKey(catalog, schema, name);
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t valueLen = 0;
+  char *existing = rocksdb_get(LocalLiteStorageManager::instance().catalogDb(),
+                               readOptions, key.data(), key.size(),
+                               &valueLen, &err);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "read local-lite trigger metadata", error))
+    return false;
+  if (!existing)
+    {
+      if (ifExists) return true;
+      setError(error, "local-lite trigger does not exist: " + catalog + "." +
+               schema + "." + name);
+      return false;
+    }
+  LocalLiteTriggerDef trigger;
+  if (!decodeTrigger(std::string(existing, valueLen), &trigger, error))
+    {
+      rocksdb_free(existing);
+      return false;
+    }
+  rocksdb_free(existing);
+
+  std::vector<LocalLiteTriggerDef> subjectTriggers;
+  if (!listTriggers(trigger.subjectCatalog, trigger.subjectSchema,
+                    trigger.subjectTable, -1, &subjectTriggers, error))
+    return false;
+  const bool lastSubjectTrigger = subjectTriggers.size() == 1;
+  LocalLiteTableDef transition;
+  bool dropTransition = false;
+  if (lastSubjectTrigger)
+    {
+      const std::string transitionName = trigger.subjectTable + "__TEMP";
+      bool transitionExists = false;
+      if (!tableExists(trigger.subjectCatalog, trigger.subjectSchema,
+                       transitionName, &transitionExists, error))
+        return false;
+      if (transitionExists)
+        {
+          if (!loadTable(trigger.subjectCatalog, trigger.subjectSchema,
+                         transitionName, &transition, error))
+            return false;
+          dropTransition = true;
+        }
+    }
+
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  rocksdb_writebatch_delete(batch, key.data(), key.size());
+  if (dropTransition)
+    {
+      std::string transitionKey = tableKey(transition);
+      std::string transitionUid = uidKey(transition.objectUid);
+      rocksdb_writebatch_delete(batch, transitionKey.data(),
+                                transitionKey.size());
+      rocksdb_writebatch_delete(batch, transitionUid.data(),
+                                transitionUid.size());
+      for (size_t i = 0; i < transition.secondaryIndexes.size(); i++)
+        {
+          std::string indexMetadata = indexKey(
+              transition.catalog, transition.schema,
+              transition.secondaryIndexes[i].name);
+          std::string indexUid = uidKey(
+              transition.secondaryIndexes[i].objectUid);
+          rocksdb_writebatch_delete(batch, indexMetadata.data(),
+                                    indexMetadata.size());
+          rocksdb_writebatch_delete(batch, indexUid.data(), indexUid.size());
+        }
+    }
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+                batch, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  if (!checkRocksError(err, "delete local-lite trigger metadata", error))
+    return false;
+  if (dropTransition)
+    {
+      LocalLiteStorageManager::instance().closeTable(tablePath(transition));
+      rocksdb_options_t *options = rocksdb_options_create();
+      err = NULL;
+      rocksdb_destroy_db(options, tablePath(transition).c_str(), &err);
+      rocksdb_options_destroy(options);
+      if (!checkRocksError(err, "destroy RocksDB table " +
+                               tablePath(transition), error))
+        return false;
+    }
+  return true;
+}
+
+bool LocalLiteRocksDBStore::dropSchema(const std::string &catalog,
+                                       const std::string &schema,
+                                       bool ifExists,
+                                       bool cascade,
+                                       std::string *error)
+{
+  bool exists = false;
+  if (!schemaExists(catalog, schema, &exists, error))
+    return false;
+  if (!exists)
+    {
+      if (ifExists)
+        return true;
+      setError(error, "local-lite schema does not exist: " + catalog + "." +
+              schema);
+      return false;
+    }
+
+  std::vector<LocalLiteTableDef> tables;
+  if (!listTables(catalog, schema, &tables, error))
+    return false;
+
+  struct CatalogEntry
+    {
+      std::string key;
+      std::string value;
+    };
+  std::vector<CatalogEntry> sequences;
+  std::vector<CatalogEntry> synonyms;
+  std::vector<CatalogEntry> triggers;
+  const std::string sequencePrefix =
+      "sequence|" + catalog + "|" + schema + "|";
+  const std::string synonymPrefix =
+      "synonym|" + catalog + "|" + schema + "|";
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek_to_first(it); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0, valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      std::string key(rawKey, keyLen);
+      if (key.compare(0, sequencePrefix.size(), sequencePrefix) == 0)
+        {
+          CatalogEntry entry;
+          entry.key = key;
+          entry.value.assign(rawValue, valueLen);
+          sequences.push_back(entry);
+        }
+      else if (key.compare(0, 8, "synonym|") == 0)
+        {
+          std::string value(rawValue, valueLen);
+          size_t first = value.find('\n');
+          size_t second = first == std::string::npos
+              ? first : value.find('\n', first + 1);
+          bool inSchema =
+              key.compare(0, synonymPrefix.size(), synonymPrefix) == 0;
+          bool targetsSchema =
+              first != std::string::npos && second != std::string::npos &&
+              value.substr(0, first) == catalog &&
+              value.substr(first + 1, second - first - 1) == schema;
+          if (inSchema || targetsSchema)
+            {
+              CatalogEntry entry;
+              entry.key = key;
+              entry.value = value;
+              synonyms.push_back(entry);
+            }
+        }
+      else if (key.compare(0, 8, "trigger|") == 0)
+        {
+          LocalLiteTriggerDef trigger;
+          std::string value(rawValue, valueLen);
+          if (!decodeTrigger(value, &trigger, error))
+            {
+              rocksdb_iter_destroy(it);
+              rocksdb_readoptions_destroy(readOptions);
+              return false;
+            }
+          if ((trigger.catalog == catalog && trigger.schema == schema) ||
+              (trigger.subjectCatalog == catalog &&
+               trigger.subjectSchema == schema))
+            {
+              CatalogEntry entry;
+              entry.key = key;
+              entry.value = value;
+              triggers.push_back(entry);
+            }
+        }
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "scan local-lite schema metadata", error))
+    return false;
+  std::vector<LocalLiteTableDef> allTables;
+  if (!listTables("", "", &allTables, error))
+    return false;
+  if ((!tables.empty() || !sequences.empty() || !synonyms.empty() ||
+       !triggers.empty()) && !cascade)
+    {
+      setError(error, "local-lite schema is not empty: " + catalog + "." +
+              schema);
+      return false;
+    }
+  if (cascade)
+    {
+      std::set<std::string> dropped;
+      for (size_t i = 0; i < tables.size(); i++)
+        dropped.insert(tableKey(tables[i]));
+      bool added = true;
+      while (added)
+        {
+          added = false;
+          for (size_t i = 0; i < allTables.size(); i++)
+            {
+              if (!allTables[i].view ||
+                  dropped.find(tableKey(allTables[i])) != dropped.end())
+                continue;
+              for (size_t d = 0; d < allTables[i].dependencies.size(); d++)
+                if (dropped.find(tableKey(
+                        allTables[i].dependencies[d].catalog,
+                        allTables[i].dependencies[d].schema,
+                        allTables[i].dependencies[d].name)) != dropped.end())
+                  {
+                    tables.push_back(allTables[i]);
+                    dropped.insert(tableKey(allTables[i]));
+                    added = true;
+                    break;
+                  }
+            }
+        }
+    }
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  for (size_t i = 0; i < tables.size(); i++)
+    {
+      std::string key = tableKey(tables[i]);
+      std::string uid = uidKey(tables[i].objectUid);
+      rocksdb_writebatch_delete(batch, key.data(), key.size());
+      rocksdb_writebatch_delete(batch, uid.data(), uid.size());
+      for (size_t x = 0; x < tables[i].secondaryIndexes.size(); x++)
+        {
+          std::string indexMetadata = indexKey(
+              tables[i].catalog, tables[i].schema,
+              tables[i].secondaryIndexes[x].name);
+          std::string indexUid = uidKey(
+              tables[i].secondaryIndexes[x].objectUid);
+          rocksdb_writebatch_delete(batch, indexMetadata.data(),
+                                    indexMetadata.size());
+          rocksdb_writebatch_delete(batch, indexUid.data(), indexUid.size());
+        }
+    }
+  for (size_t i = 0; i < sequences.size(); i++)
+    {
+      LocalLiteSequenceDef sequence;
+      std::string name = sequences[i].key.substr(sequencePrefix.size());
+      if (!decodeSequence(sequences[i].value, catalog, schema, name,
+                          &sequence, error))
+        {
+          rocksdb_writebatch_destroy(batch);
+          return false;
+        }
+      std::string uid = uidKey(sequence.objectUid);
+      rocksdb_writebatch_delete(batch, sequences[i].key.data(),
+                                sequences[i].key.size());
+      rocksdb_writebatch_delete(batch, uid.data(), uid.size());
+    }
+  for (size_t i = 0; i < synonyms.size(); i++)
+    rocksdb_writebatch_delete(batch, synonyms[i].key.data(),
+                              synonyms[i].key.size());
+  for (size_t i = 0; i < triggers.size(); i++)
+    rocksdb_writebatch_delete(batch, triggers[i].key.data(),
+                              triggers[i].key.size());
+
+  // Remove RI edges from surviving tables as part of the same catalog batch.
+  for (size_t i = 0; i < allTables.size(); i++)
+    {
+      bool isDropped = false;
+      for (size_t d = 0; d < tables.size(); d++)
+        if (tableKey(allTables[i]) == tableKey(tables[d])) isDropped = true;
+      if (isDropped)
+        continue;
+      LocalLiteTableDef updated = allTables[i];
+      for (size_t r = updated.riConstraints.size(); r > 0; r--)
+        if (updated.riConstraints[r - 1].referencedCatalog == catalog &&
+            updated.riConstraints[r - 1].referencedSchema == schema)
+          updated.riConstraints.erase(updated.riConstraints.begin() + r - 1);
+      if (updated.riConstraints.size() != allTables[i].riConstraints.size())
+        {
+          std::string key = tableKey(updated);
+          std::string value = encodeTable(updated);
+          rocksdb_writebatch_put(batch, key.data(), key.size(), value.data(),
+                                 value.size());
+        }
+    }
+
+  std::string key = schemaKey(catalog, schema);
+  rocksdb_writebatch_delete(batch, key.data(), key.size());
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  err = NULL;
+  rocksdb_write(LocalLiteStorageManager::instance().catalogDb(), writeOptions,
+                batch, &err);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  if (!checkRocksError(err, "delete local-lite schema metadata", error))
+    return false;
+
+  for (size_t i = 0; i < tables.size(); i++)
+    {
+      LocalLiteStorageManager::instance().closeTable(tablePath(tables[i]));
+      rocksdb_options_t *options = rocksdb_options_create();
+      err = NULL;
+      rocksdb_destroy_db(options, tablePath(tables[i]).c_str(), &err);
+      rocksdb_options_destroy(options);
+      if (!checkRocksError(err, "destroy RocksDB table " +
+                               tablePath(tables[i]), error))
+        return false;
+    }
+  return true;
+}
+
 bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
                                       const std::string &schema,
                                       const std::string &name,
@@ -2814,6 +4435,35 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
   LocalLiteTableDef table;
   if (!loadTable(catalog, schema, name, &table, error))
     return false;
+
+  LocalLiteTableDef transition;
+  bool dropTransition = false;
+  std::vector<LocalLiteTriggerDef> subjectTriggers;
+  if (!listTriggers(catalog, schema, name, -1, &subjectTriggers, error))
+    return false;
+  if (!subjectTriggers.empty())
+    {
+      const std::string transitionName = name + "__TEMP";
+      bool transitionExists = false;
+      if (!tableExists(catalog, schema, transitionName, &transitionExists,
+                       error))
+        return false;
+      if (transitionExists)
+        {
+          if (!loadTable(catalog, schema, transitionName, &transition, error))
+            return false;
+          if (transition.columns.size() < 2 ||
+              transition.columns[0].name != "@UNIQUE_EXECUTE_ID" ||
+              transition.columns[1].name != "@UNIQUE_IUD_ID")
+            {
+              setError(error, "local-lite trigger transition table metadata "
+                       "is invalid: " + catalog + "." + schema + "." +
+                       transitionName);
+              return false;
+            }
+          dropTransition = true;
+        }
+    }
 
   rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
   std::string key = tableKey(catalog, schema, name);
@@ -2828,8 +4478,75 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
       rocksdb_writebatch_delete(batch, idxKey.data(), idxKey.size());
       rocksdb_writebatch_delete(batch, idxUid.data(), idxUid.size());
     }
-  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  if (dropTransition)
+    {
+      std::string transitionKey = tableKey(transition);
+      std::string transitionUid = uidKey(transition.objectUid);
+      rocksdb_writebatch_delete(batch, transitionKey.data(),
+                                transitionKey.size());
+      rocksdb_writebatch_delete(batch, transitionUid.data(),
+                                transitionUid.size());
+      for (size_t i = 0; i < transition.secondaryIndexes.size(); i++)
+        {
+          std::string idxKey = indexKey(
+              transition.catalog, transition.schema,
+              transition.secondaryIndexes[i].name);
+          std::string idxUid = uidKey(
+              transition.secondaryIndexes[i].objectUid);
+          rocksdb_writebatch_delete(batch, idxKey.data(), idxKey.size());
+          rocksdb_writebatch_delete(batch, idxUid.data(), idxUid.size());
+        }
+    }
+
+  // A synonym is a catalog dependency on its target. Remove every synonym
+  // that would otherwise become dangling in the same catalog write batch.
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  const std::string target = catalog + "\n" + schema + "\n" + name;
+  for (rocksdb_iter_seek(it, "synonym|", 8); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t synonymKeyLen = 0, valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &synonymKeyLen);
+      if (synonymKeyLen < 8 || memcmp(rawKey, "synonym|", 8) != 0)
+        break;
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      if (valueLen == target.size() &&
+          memcmp(rawValue, target.data(), valueLen) == 0)
+        rocksdb_writebatch_delete(batch, rawKey, synonymKeyLen);
+    }
+  for (rocksdb_iter_seek(it, "trigger|", 8); rocksdb_iter_valid(it);
+       rocksdb_iter_next(it))
+    {
+      size_t triggerKeyLen = 0, valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &triggerKeyLen);
+      if (triggerKeyLen < 8 || memcmp(rawKey, "trigger|", 8) != 0)
+        break;
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      LocalLiteTriggerDef trigger;
+      if (!decodeTrigger(std::string(rawValue, valueLen), &trigger, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          rocksdb_writebatch_destroy(batch);
+          return false;
+        }
+      if (trigger.subjectCatalog == catalog && trigger.subjectSchema == schema &&
+          trigger.subjectTable == name)
+        rocksdb_writebatch_delete(batch, rawKey, triggerKeyLen);
+    }
   char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "scan local-lite synonym dependencies", error))
+    {
+      rocksdb_writebatch_destroy(batch);
+      return false;
+    }
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  err = NULL;
   rocksdb_write(LocalLiteStorageManager::instance().catalogDb(),
                 writeOptions, batch, &err);
   rocksdb_writeoptions_destroy(writeOptions);
@@ -2844,6 +4561,17 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
   rocksdb_options_destroy(options);
   if (!checkRocksError(err, "destroy RocksDB table " + tablePath(table), error))
     return false;
+  if (dropTransition)
+    {
+      LocalLiteStorageManager::instance().closeTable(tablePath(transition));
+      rocksdb_options_t *options = rocksdb_options_create();
+      err = NULL;
+      rocksdb_destroy_db(options, tablePath(transition).c_str(), &err);
+      rocksdb_options_destroy(options);
+      if (!checkRocksError(err, "destroy RocksDB table " +
+                               tablePath(transition), error))
+        return false;
+    }
   return true;
 }
 
@@ -2874,6 +4602,49 @@ bool LocalLiteRocksDBStore::tableExists(const std::string &catalog,
     }
   *exists = false;
   return true;
+}
+
+bool LocalLiteRocksDBStore::listTables(
+    const std::string &catalog, const std::string &schema,
+    std::vector<LocalLiteTableDef> *tables, std::string *error)
+{
+  if (!tables || !open(error))
+    return false;
+  tables->clear();
+  std::string prefix = "table|";
+  if (!catalog.empty())
+    {
+      prefix += catalog + "|";
+      if (!schema.empty())
+        prefix += schema + "|";
+    }
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek(it, prefix.data(), prefix.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      size_t valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      if (keyLen < prefix.size() ||
+          memcmp(rawKey, prefix.data(), prefix.size()) != 0)
+        break;
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      LocalLiteTableDef table;
+      if (!decodeTable(std::string(rawValue, valueLen), &table, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+      tables->push_back(table);
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  return checkRocksError(err, "scan local-lite table metadata", error);
 }
 
 bool LocalLiteRocksDBStore::loadTable(const std::string &catalog,
@@ -3221,12 +4992,190 @@ bool LocalLiteRocksDBStore::dropIndex(const std::string &catalog,
   return checkRocksError(err, "delete local-lite index records", error);
 }
 
+bool LocalLiteRocksDBStore::alterTable(
+    const LocalLiteTableDef &oldTable,
+    const LocalLiteTableDef &newTable,
+    const std::vector<int> &newToOldColumn,
+    const std::vector<std::string> &addedValues,
+    std::string *error)
+{
+  if (!open(error))
+    return false;
+  if (LocalLiteTxnManager::active())
+    {
+      setError(error,
+               "local-lite ALTER TABLE is not allowed in an active transaction");
+      return false;
+    }
+  if (newToOldColumn.size() != newTable.columns.size() ||
+      addedValues.size() != newTable.columns.size())
+    {
+      setError(error, "invalid local-lite ALTER TABLE row mapping");
+      return false;
+    }
+
+  std::vector<LocalLiteRow> rows;
+  if (!scanRows(oldTable, &rows, error))
+    return false;
+  LocalLiteTableDef persistedTable = newTable;
+  std::vector<LocalLiteRowMutation> mutations(rows.size());
+  for (size_t i = 0; i < rows.size(); i++)
+    {
+      mutations[i].before = rows[i];
+      if (!oldTable.primaryKeyColumns.empty() &&
+          newTable.primaryKeyColumns.empty())
+        mutations[i].before.rowId = persistedTable.nextRowId++;
+      if (!LocalLiteRebuildBinaryRow(oldTable, newTable, rows[i].value,
+                                     newToOldColumn, addedValues,
+                                     &mutations[i].after, error))
+        return false;
+    }
+  return LocalLiteStorageManager::instance().replaceTableDefinition(
+      oldTable, persistedTable, mutations, error);
+}
+
+static bool validateLocalLiteChildRI(
+    LocalLiteRocksDBStore *store, const LocalLiteTableDef &table,
+    const std::vector<std::string> &rows, std::string *error)
+{
+  for (size_t r = 0; r < table.riConstraints.size(); r++)
+    {
+      const LocalLiteRIDef &ri = table.riConstraints[r];
+      LocalLiteTableDef parent;
+      if (!store->loadTable(ri.referencedCatalog, ri.referencedSchema,
+                            ri.referencedTable, &parent, error))
+        return false;
+      std::vector<LocalLiteRow> parentRows;
+      if (!store->scanRows(parent, &parentRows, error))
+        return false;
+      std::set<std::string> parentKeys;
+      for (size_t i = 0; i < parentRows.size(); i++)
+        {
+          std::string key;
+          bool hasKey = false;
+          if (!LocalLiteBuildConstraintKey(parent, parentRows[i].value,
+                                           ri.referencedColumns, &key,
+                                           &hasKey, error))
+            return false;
+          if (hasKey) parentKeys.insert(key);
+        }
+      // Self-referencing rows inserted by the same statement are also part
+      // of the statement's final parent image.
+      if (parent.objectUid == table.objectUid)
+        for (size_t i = 0; i < rows.size(); i++)
+          {
+            std::string key;
+            bool hasKey = false;
+            if (!LocalLiteBuildConstraintKey(parent, rows[i],
+                                             ri.referencedColumns, &key,
+                                             &hasKey, error))
+              return false;
+            if (hasKey) parentKeys.insert(key);
+          }
+      for (size_t i = 0; i < rows.size(); i++)
+        {
+          std::string key;
+          bool hasKey = false;
+          if (!LocalLiteBuildConstraintKey(table, rows[i],
+                                           ri.referencingColumns, &key,
+                                           &hasKey, error))
+            return false;
+          if (hasKey && parentKeys.find(key) == parentKeys.end())
+            {
+              setError(error, "referential integrity constraint " + ri.name +
+                              " is violated");
+              return false;
+            }
+        }
+    }
+  return true;
+}
+
+static bool validateLocalLiteParentRI(
+    LocalLiteRocksDBStore *store, const LocalLiteTableDef &parent,
+    const std::vector<std::string> &oldRows,
+    const std::vector<std::string> &newRows, std::string *error)
+{
+  std::vector<LocalLiteTableDef> tables;
+  if (!store->listTables("", "", &tables, error))
+    return false;
+  for (size_t t = 0; t < tables.size(); t++)
+    for (size_t r = 0; r < tables[t].riConstraints.size(); r++)
+      {
+        const LocalLiteRIDef &ri = tables[t].riConstraints[r];
+        if (ri.referencedCatalog != parent.catalog ||
+            ri.referencedSchema != parent.schema ||
+            ri.referencedTable != parent.name)
+          continue;
+        std::set<std::string> removedKeys;
+        for (size_t i = 0; i < oldRows.size(); i++)
+          {
+            std::string key;
+            bool hasKey = false;
+            if (!LocalLiteBuildConstraintKey(parent, oldRows[i],
+                                             ri.referencedColumns, &key,
+                                             &hasKey, error))
+              return false;
+            if (hasKey) removedKeys.insert(key);
+          }
+        for (size_t i = 0; i < newRows.size(); i++)
+          {
+            std::string key;
+            bool hasKey = false;
+            if (!LocalLiteBuildConstraintKey(parent, newRows[i],
+                                             ri.referencedColumns, &key,
+                                             &hasKey, error))
+              return false;
+            if (hasKey) removedKeys.erase(key);
+          }
+        if (removedKeys.empty()) continue;
+        std::vector<LocalLiteRow> childRows;
+        if (!store->scanRows(tables[t], &childRows, error))
+          return false;
+        for (size_t i = 0; i < childRows.size(); i++)
+          {
+            std::string key;
+            bool hasKey = false;
+            if (!LocalLiteBuildConstraintKey(tables[t], childRows[i].value,
+                                             ri.referencingColumns, &key,
+                                             &hasKey, error))
+              return false;
+            if (hasKey && removedKeys.find(key) != removedKeys.end())
+              {
+                setError(error, "referential integrity constraint " + ri.name +
+                                " is violated");
+                return false;
+              }
+          }
+      }
+  return true;
+}
+
+bool LocalLiteRocksDBStore::validateReferentialIntegrity(
+    const LocalLiteTableDef &table, std::string *error)
+{
+  if (!open(error))
+    return false;
+  std::vector<LocalLiteRow> storedRows;
+  if (!scanRows(table, &storedRows, error))
+    return false;
+  std::vector<std::string> rows;
+  rows.reserve(storedRows.size());
+  for (size_t i = 0; i < storedRows.size(); i++)
+    rows.push_back(storedRows[i].value);
+  return validateLocalLiteChildRI(this, table, rows, error);
+}
+
 bool LocalLiteRocksDBStore::insertRow(const LocalLiteTableDef &table,
                                       const std::string &encodedRow,
                                       uint64_t *rowId,
                                       std::string *error)
 {
   if (!open(error))
+    return false;
+
+  std::vector<std::string> rows(1, encodedRow);
+  if (!validateLocalLiteChildRI(this, table, rows, error))
     return false;
 
   return LocalLiteStorageManager::instance().insertRow(table, encodedRow,
@@ -3240,6 +5189,16 @@ bool LocalLiteRocksDBStore::updateRows(
 {
   if (!open(error))
     return false;
+  std::vector<std::string> oldRows;
+  std::vector<std::string> newRows;
+  for (size_t i = 0; i < mutations.size(); i++)
+    {
+      oldRows.push_back(mutations[i].before.value);
+      newRows.push_back(mutations[i].after);
+    }
+  if (!validateLocalLiteChildRI(this, table, newRows, error) ||
+      !validateLocalLiteParentRI(this, table, oldRows, newRows, error))
+    return false;
   return LocalLiteStorageManager::instance().updateRows(table, mutations,
                                                         error);
 }
@@ -3250,6 +5209,12 @@ bool LocalLiteRocksDBStore::deleteRows(
     std::string *error)
 {
   if (!open(error))
+    return false;
+  std::vector<std::string> oldRows;
+  for (size_t i = 0; i < rows.size(); i++)
+    oldRows.push_back(rows[i].value);
+  std::vector<std::string> noNewRows;
+  if (!validateLocalLiteParentRI(this, table, oldRows, noNewRows, error))
     return false;
   return LocalLiteStorageManager::instance().deleteRows(table, rows, error);
 }

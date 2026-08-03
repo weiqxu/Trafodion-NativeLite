@@ -44,6 +44,18 @@ bool LocalLiteApplyBinaryUpdate(
     std::string *encoded,
     std::string *error);
 
+// Rebuild a stored row after a catalog-only column change.  Each entry in
+// newToOldColumn maps a column in newTable to its oldTable column, or -1 for
+// a newly added column.  Added columns are initialized from addedValues.
+bool LocalLiteRebuildBinaryRow(
+    const LocalLiteTableDef &oldTable,
+    const LocalLiteTableDef &newTable,
+    const std::string &original,
+    const std::vector<int> &newToOldColumn,
+    const std::vector<std::string> &addedValues,
+    std::string *encoded,
+    std::string *error);
+
 bool LocalLiteProjectBinaryRow(const LocalLiteTableDef &table,
                                const std::string &encoded,
                                uint64_t syntheticRowId,
@@ -72,6 +84,15 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &table,
                              std::string *key,
                              bool *hasKey,
                              std::string *error);
+
+// Build an ordinal-independent key for comparing RI columns across tables.
+// A NULL component returns hasKey=false, implementing MATCH SIMPLE.
+bool LocalLiteBuildConstraintKey(const LocalLiteTableDef &table,
+                                 const std::string &encoded,
+                                 const std::vector<size_t> &keyColumns,
+                                 std::string *key,
+                                 bool *hasKey,
+                                 std::string *error);
 
 bool LocalLiteBuildUniqueKeyFromTextFields(
     const LocalLiteTableDef &table,

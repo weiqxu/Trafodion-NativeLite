@@ -36,6 +36,9 @@
 #include "Triggers.h"
 #include "TriggerDB.h"
 #include "BindWA.h"
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#endif
 
 //-----------------------------------------------------------------------------
 //
@@ -165,6 +168,79 @@ TriggerDB::getTriggers(QualifiedName &subjectTable,
 		       BindWA        *bindWA)
 {
   BeforeAndAfterTriggers *triggers = NULL;
+
+#ifdef TRAF_LOCAL_LITE
+  TableOp lookupKey(subjectTable, operation);
+  triggers = getValidEntry(&lookupKey, bindWA);
+  if (triggers)
+    return triggers;
+
+  std::vector<LocalLiteTriggerDef> definitions;
+  std::string error;
+  LocalLiteRocksDBStore store;
+  if (!store.listTriggers(subjectTable.getCatalogName().data(),
+                          subjectTable.getSchemaName().data(),
+                          subjectTable.getObjectName().data(),
+                          static_cast<int>(operation), &definitions, &error))
+    {
+      *CmpCommon::diags() << DgSqlCode(-3242)
+                          << DgString0((char *)error.c_str());
+      bindWA->setErrStatus();
+      return NULL;
+    }
+  if (definitions.empty())
+    return NULL;
+
+  NAMemory *heap = Trigger::Heap();
+  TriggerList *before = NULL;
+  TriggerList *afterStatement = NULL;
+  TriggerList *afterRow = NULL;
+  ComTimestamp subjectTimestamp = 1;
+  for (size_t i = 0; i < definitions.size(); i++)
+    {
+      const LocalLiteTriggerDef &def = definitions[i];
+      QualifiedName triggerName(def.name.c_str(), def.schema.c_str(),
+                                def.catalog.c_str(), heap);
+      QualifiedName tableName(def.subjectTable.c_str(),
+                              def.subjectSchema.c_str(),
+                              def.subjectCatalog.c_str(), heap);
+      UpdateColumns *columns = new (heap) UpdateColumns(def.allUpdateColumns);
+      if (!def.allUpdateColumns)
+        for (size_t c = 0; c < def.updateColumns.size(); c++)
+          columns->addColumn(static_cast<Lng32>(def.updateColumns[c]));
+      Trigger *trigger = new (heap) Trigger(
+          triggerName, tableName, static_cast<ComOperation>(def.operation),
+          static_cast<ComActivationTime>(def.activation),
+          static_cast<ComGranularity>(def.granularity),
+          static_cast<ComTimestamp>(def.timestamp),
+          new (heap) NAString(def.sqlText.c_str(), heap), CharInfo::UTF8,
+          columns);
+      if (trigger->isBeforeTrigger())
+        {
+          if (!before) before = new (heap) TriggerList(heap);
+          before->insert(trigger);
+        }
+      else if (trigger->isStatementTrigger())
+        {
+          if (!afterStatement) afterStatement = new (heap) TriggerList(heap);
+          afterStatement->insert(trigger);
+        }
+      else
+        {
+          if (!afterRow) afterRow = new (heap) TriggerList(heap);
+          afterRow->insert(trigger);
+        }
+      if (static_cast<ComTimestamp>(def.timestamp) > subjectTimestamp)
+        subjectTimestamp = static_cast<ComTimestamp>(def.timestamp);
+    }
+  if (before) before->sortByTimeStamp();
+  if (afterStatement) afterStatement->sortByTimeStamp();
+  if (afterRow) afterRow->sortByTimeStamp();
+  triggers = new (heap) BeforeAndAfterTriggers(
+      before, afterStatement, afterRow, subjectTimestamp);
+  TableOp *storedKey = new (heap) TableOp(subjectTable, operation);
+  insert(storedKey, triggers);
+#endif
 
   return triggers;
 }
@@ -319,4 +395,3 @@ SchemaDB::getRIs(QualifiedName &subjectTable,
 {
   return NULL;
 }
-

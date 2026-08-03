@@ -524,17 +524,16 @@ grep -q 'local_lite_storage: rocksdb' <<<"$secondary_explain_output" ||
 grep -q 'secondary_index: yes index_only: yes' <<<"$secondary_explain_output" ||
   fail "secondary-index explain did not expose index-only access"
 
-unsupported_output=$(
-  printf "CREATE VIEW v AS SELECT * FROM t;\nALTER TABLE t ADD COLUMN c INT;\nTRUNCATE TABLE t;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nexit;\n" |
+catalog_ddl_output=$(
+  printf "CREATE TABLE catalog_base(a INT, b VARCHAR(20));\nINSERT INTO catalog_base VALUES (1, 'one');\nCREATE VIEW v AS SELECT * FROM catalog_base;\nALTER TABLE catalog_base ADD COLUMN c INT;\nTRUNCATE TABLE catalog_base;\nCREATE TABLE constrained(a INT CHECK (a > 0));\nINSERT INTO constrained VALUES (0);\nINSERT INTO constrained VALUES (1);\nDROP VIEW v;\nDROP TABLE constrained;\nDROP TABLE catalog_base;\nexit;\n" |
     run_sqlci
 )
-grep -q 'CREATE VIEW is not supported in local-lite' <<<"$unsupported_output" ||
-  fail "CREATE VIEW unsupported diagnostic missing"
-grep -q 'ALTER TABLE is not supported in local-lite' <<<"$unsupported_output" ||
-  fail "ALTER TABLE unsupported diagnostic missing"
-grep -q 'TRUNCATE TABLE is not supported in local-lite' <<<"$unsupported_output" ||
-  fail "TRUNCATE TABLE unsupported diagnostic missing"
-grep -q 'local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported' <<<"$unsupported_output" ||
-  fail "constraint unsupported diagnostic missing"
+catalog_ddl_complete_count=$(grep -c -- '--- SQL operation complete.' <<<"$catalog_ddl_output")
+[[ "$catalog_ddl_complete_count" -ge 5 ]] ||
+  fail "M4 catalog DDL did not complete all supported operations"
+grep -q 'ERROR\[8101\]' <<<"$catalog_ddl_output" ||
+  fail "CHECK constraint violation diagnostic missing"
+grep -q -- '--- 1 row(s) inserted.' <<<"$catalog_ddl_output" ||
+  fail "CHECK constraint did not allow a valid row"
 
 echo "local-lite RocksDB sqlci smoke passed"

@@ -91,6 +91,9 @@
 #include "LmRoutine.h"
 #include "CmpDDLCatErrorCodes.h"
 #include "ExpLOBaccess.h"
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#endif
 
 #define DISPLAY_DONE_WARNING 1032
 extern Lng32 getTotalTcbSpace(char * tdb, char * otherInfo, 
@@ -10599,6 +10602,31 @@ Lng32 SQLCLI_SeqGenCliInterface
  void * seqGenAttrs
  )
 {
+#ifdef TRAF_LOCAL_LITE
+  SequenceGeneratorAttributes *localSga =
+      static_cast<SequenceGeneratorAttributes *>(seqGenAttrs);
+  LocalLiteRocksDBStore localStore;
+  std::string localError;
+  Int64 localNext = 0;
+  Int64 localEnd = 0;
+  Int64 localCount = localSga->getSGCache() > 0
+      ? localSga->getSGCache() : 1;
+  if (!localStore.allocateSequence(
+          static_cast<uint64_t>(localSga->getSGObjectUID().get_value()),
+          localCount, &localNext, &localEnd, &localError))
+    {
+      ContextCli &localContext = *(cliGlobals->currContext());
+      ComDiagsArea *localDiags = &localContext.diags();
+      Lng32 localCode = localError.find("MAXVALUE") != std::string::npos
+          ? 1579 : 1583;
+      ExRaiseSqlError(localContext.exHeap(), &localDiags,
+                      static_cast<ExeErrorCode>(localCode));
+      return -localCode;
+    }
+  localSga->setSGNextValue(localNext);
+  localSga->setSGEndValue(localEnd);
+  return 0;
+#endif
   Lng32 rc = 0;
   Lng32 cliRC = 0;
 

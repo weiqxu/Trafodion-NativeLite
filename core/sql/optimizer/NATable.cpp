@@ -3118,6 +3118,64 @@ static bool localLiteMapType(const std::string &typeText,
   return false;
 }
 
+static std::string localLiteFullName(const LocalLiteTableDef &table)
+{
+  return table.catalog + "." + table.schema + "." + table.name;
+}
+
+static std::string localLiteConstraintName(const LocalLiteTableDef &table,
+                                           const std::string &suffix)
+{
+  return localLiteFullName(table) + suffix;
+}
+
+static TrafDesc *localLiteConstraintKeys(
+    const LocalLiteTableDef &table, const std::vector<size_t> &columns,
+    NAMemory *heap, std::string *error)
+{
+  TrafDesc *first = NULL;
+  TrafDesc *last = NULL;
+  for (size_t i = 0; i < columns.size(); i++)
+    {
+      if (columns[i] >= table.columns.size())
+        {
+          *error = "invalid local-lite constraint column metadata";
+          return NULL;
+        }
+      TrafDesc *key =
+          TrafAllocateDDLdesc(DESC_CONSTRNT_KEY_COLS_TYPE, heap);
+      key->constrntKeyColsDesc()->colname =
+          localLiteCopyToHeap(table.columns[columns[i]].name, heap);
+      // TrafConstrntKeyColsDesc::position is the zero-based position in the
+      // base table, not the ordinal position within the constraint.
+      key->constrntKeyColsDesc()->position =
+          static_cast<Int32>(columns[i]);
+      if (!first) first = key;
+      else last->next = key;
+      last = key;
+    }
+  return first;
+}
+
+static TrafDesc *localLiteRefDesc(const std::string &constraint,
+                                  const std::string &table,
+                                  NAMemory *heap)
+{
+  TrafDesc *ref = TrafAllocateDDLdesc(DESC_REF_CONSTRNTS_TYPE, heap);
+  ref->refConstrntsDesc()->constrntname =
+      localLiteCopyToHeap(constraint, heap);
+  ref->refConstrntsDesc()->tablename = localLiteCopyToHeap(table, heap);
+  return ref;
+}
+
+static void localLiteAppendConstraint(TrafDesc **first, TrafDesc **last,
+                                      TrafDesc *constraint)
+{
+  if (!*first) *first = constraint;
+  else (*last)->next = constraint;
+  *last = constraint;
+}
+
 static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
                                                      NAMemory *heap,
                                                      bool *found,
@@ -3129,13 +3187,25 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   std::string catalog(qn.getCatalogName().data());
   std::string schema(qn.getSchemaName().data());
   std::string object(qn.getObjectName().data());
-
   LocalLiteRocksDBStore store;
   bool exists = false;
   if (!store.tableExists(catalog, schema, object, &exists, error))
     return NULL;
+  bool synonym = false;
   if (!exists)
-    return NULL;
+    {
+      std::string targetCatalog;
+      std::string targetSchema;
+      std::string targetObject;
+      if (!store.resolveSynonym(catalog, schema, object, &targetCatalog,
+                                &targetSchema, &targetObject, &synonym, error))
+        return NULL;
+      if (!synonym)
+        return NULL;
+      catalog = targetCatalog;
+      schema = targetSchema;
+      object = targetObject;
+    }
 
   LocalLiteTableDef table;
   if (!store.loadTable(catalog, schema, object, &table, error))
@@ -3150,11 +3220,13 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   tableDesc->tableDesc()->catUID = 0;
   tableDesc->tableDesc()->schemaUID = 0;
   tableDesc->tableDesc()->objectUID = static_cast<Int64>(table.objectUid);
-  tableDesc->tableDesc()->setObjectType(COM_BASE_TABLE_OBJECT);
+  tableDesc->tableDesc()->setObjectType(table.view
+      ? COM_VIEW_OBJECT : COM_BASE_TABLE_OBJECT);
   tableDesc->tableDesc()->setRowFormat(COM_ALIGNED_FORMAT_TYPE);
   tableDesc->tableDesc()->setPartitioningScheme(COM_NO_PARTITIONING);
   tableDesc->tableDesc()->setInsertMode(COM_REGULAR_TABLE_INSERT_MODE);
   tableDesc->tableDesc()->setDroppable(TRUE);
+  tableDesc->tableDesc()->setSynonymTranslationDone(synonym ? TRUE : FALSE);
 
   TrafDesc *filesDesc = TrafAllocateDDLdesc(DESC_FILES_TYPE, heap);
   filesDesc->filesDesc()->setAudited(TRUE);
@@ -3165,7 +3237,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   TrafDesc *firstColumnDesc = NULL;
   TrafDesc *lastColumnDesc = NULL;
 
-  if (table.primaryKeyColumns.empty())
+  if (!table.view && table.primaryKeyColumns.empty())
     {
       TrafDesc *syskeyDesc = TrafMakeColumnDesc(
           tableDesc->tableDesc()->tablename,
@@ -3236,6 +3308,12 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       columnDesc->columnsDesc()->character_set = CharInfo::ISO88591;
       columnDesc->columnsDesc()->encoding_charset = CharInfo::ISO88591;
       columnDesc->columnsDesc()->collation_sequence = CharInfo::DefaultCollation;
+      columnDesc->columnsDesc()->setDefaultClass(
+          static_cast<ComColumnDefaultClass>(table.columns[i].defaultClass));
+      if (!table.columns[i].defaultValue.empty())
+        columnDesc->columnsDesc()->defaultvalue =
+          localLiteCopyToHeap(table.columns[i].defaultValue, heap);
+      columnDesc->columnsDesc()->setAdded(table.columns[i].added);
       columnDesc->columnsDesc()->hbaseColFam =
         localLiteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
       char qual[32];
@@ -3253,6 +3331,58 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   tableDesc->tableDesc()->columns_desc = firstColumnDesc;
   tableDesc->tableDesc()->colcount = colNumber;
   tableDesc->tableDesc()->record_length = offset;
+
+  for (size_t i = 0; i < table.columns.size(); i++)
+    if (table.columns[i].defaultClass == COM_IDENTITY_GENERATED_BY_DEFAULT ||
+        table.columns[i].defaultClass == COM_IDENTITY_GENERATED_ALWAYS)
+      {
+        NAString sequenceName;
+        SequenceGeneratorAttributes::genSequenceName(
+            table.catalog.c_str(), table.schema.c_str(), table.name.c_str(),
+            table.columns[i].name.c_str(), sequenceName);
+        LocalLiteSequenceDef sequence;
+        bool sequenceFound = false;
+        if (!store.loadSequence(table.catalog, table.schema,
+                                sequenceName.data(), &sequence,
+                                &sequenceFound, error))
+          return NULL;
+        if (!sequenceFound)
+          {
+            *error = "missing local-lite identity sequence: " +
+                     table.catalog + "." + table.schema + "." +
+                     sequenceName.data();
+            return NULL;
+          }
+        TrafDesc *sequenceDesc =
+            TrafAllocateDDLdesc(DESC_SEQUENCE_GENERATOR_TYPE, heap);
+        TrafSequenceGeneratorDesc *sg =
+            sequenceDesc->sequenceGeneratorDesc();
+        sg->setSgType(sequence.internal ? COM_INTERNAL_SG : COM_EXTERNAL_SG);
+        sg->fsDataType = static_cast<ComFSDataType>(sequence.fsDataType);
+        sg->startValue = sequence.startValue;
+        sg->increment = sequence.increment;
+        sg->maxValue = sequence.maxValue;
+        sg->minValue = sequence.minValue;
+        sg->cycleOption = sequence.cycle ? TRUE : FALSE;
+        sg->cache = sequence.cache;
+        sg->objectUID = static_cast<Int64>(sequence.objectUid);
+        sg->nextValue = sequence.nextValue;
+        sg->redefTime = 0;
+        tableDesc->tableDesc()->sequence_generator_desc = sequenceDesc;
+        break;
+      }
+
+  if (table.view)
+    {
+      TrafDesc *viewDesc = TrafAllocateDDLdesc(DESC_VIEW_TYPE, heap);
+      viewDesc->viewDesc()->viewname = tableDesc->tableDesc()->tablename;
+      viewDesc->viewDesc()->viewfilename = tableDesc->tableDesc()->tablename;
+      viewDesc->viewDesc()->viewtext = localLiteCopyToHeap(table.viewText, heap);
+      viewDesc->viewDesc()->viewtextcharset = CharInfo::UTF8;
+      tableDesc->tableDesc()->views_desc = viewDesc;
+      tableDesc->tableDesc()->files_desc = NULL;
+      return tableDesc;
+    }
 
   TrafDesc *indexDesc = TrafAllocateDDLdesc(DESC_INDEXES_TYPE, heap);
   indexDesc->indexesDesc()->tablename = tableDesc->tableDesc()->tablename;
@@ -3428,8 +3558,12 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       secondaryDesc->indexesDesc()->colcount =
           tableDesc->tableDesc()->colcount;
       secondaryDesc->indexesDesc()->blocksize = 4096;
-      secondaryDesc->indexesDesc()->setUnique(
-          localIndex.unique ? TRUE : FALSE);
+      // Local-lite enforces secondary-index uniqueness in the RocksDB
+      // mutation path. Keep the optimizer descriptor non-unique so the
+      // legacy HBase UPDATE code does not enter its delete/insert index-key
+      // maintenance path; SELECT planning still reads the authoritative
+      // LocalLiteIndexDef metadata in GenPreCode.
+      secondaryDesc->indexesDesc()->setUnique(FALSE);
       secondaryDesc->indexesDesc()->setExplicit(TRUE);
       secondaryDesc->indexesDesc()->setRowFormat(COM_ALIGNED_FORMAT_TYPE);
       secondaryDesc->indexesDesc()->setPartitioningScheme(COM_NO_PARTITIONING);
@@ -3494,6 +3628,135 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       lastIndexDesc->next = secondaryDesc;
       lastIndexDesc = secondaryDesc;
     }
+
+  TrafDesc *firstConstraintDesc = NULL;
+  TrafDesc *lastConstraintDesc = NULL;
+  std::vector<LocalLiteTableDef> allTables;
+  if (!store.listTables("", "", &allTables, error))
+    return NULL;
+
+  if (!table.primaryKeyColumns.empty())
+    {
+      std::string constraintName = table.primaryKeyName.empty()
+          ? localLiteConstraintName(table, "_PK") : table.primaryKeyName;
+      TrafDesc *constraintDesc =
+          TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
+      TrafConstrntsDesc *constraint = constraintDesc->constrntsDesc();
+      constraint->constrntname = localLiteCopyToHeap(constraintName, heap);
+      constraint->tablename = localLiteCopyToHeap(localLiteFullName(table), heap);
+      constraint->type = PRIMARY_KEY_CONSTRAINT;
+      constraint->setEnforced(TRUE);
+      constraint->colcount = static_cast<Int32>(table.primaryKeyColumns.size());
+      constraint->constr_key_cols_desc = localLiteConstraintKeys(
+          table, table.primaryKeyColumns, heap, error);
+      TrafDesc *lastRef = NULL;
+      for (size_t t = 0; t < allTables.size(); t++)
+        for (size_t r = 0; r < allTables[t].riConstraints.size(); r++)
+          if (allTables[t].riConstraints[r].referencedConstraint ==
+              constraintName)
+            {
+              TrafDesc *ref = localLiteRefDesc(
+                  allTables[t].riConstraints[r].name,
+                  localLiteFullName(allTables[t]), heap);
+              if (!constraint->referencing_constrnts_desc)
+                constraint->referencing_constrnts_desc = ref;
+              else
+                lastRef->next = ref;
+              lastRef = ref;
+            }
+      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+                                constraintDesc);
+    }
+
+  for (size_t u = 0; u < table.uniqueKeyColumns.size(); u++)
+    {
+      std::string constraintName = u < table.uniqueKeyNames.size()
+          ? table.uniqueKeyNames[u]
+          : localLiteConstraintName(
+                table, "_UK_" + std::to_string(u + 1));
+      TrafDesc *constraintDesc =
+          TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
+      TrafConstrntsDesc *constraint = constraintDesc->constrntsDesc();
+      constraint->constrntname = localLiteCopyToHeap(constraintName, heap);
+      constraint->tablename = localLiteCopyToHeap(localLiteFullName(table), heap);
+      constraint->type = UNIQUE_CONSTRAINT;
+      constraint->setEnforced(TRUE);
+      constraint->colcount =
+          static_cast<Int32>(table.uniqueKeyColumns[u].size());
+      constraint->constr_key_cols_desc = localLiteConstraintKeys(
+          table, table.uniqueKeyColumns[u], heap, error);
+      TrafDesc *lastRef = NULL;
+      for (size_t t = 0; t < allTables.size(); t++)
+        for (size_t r = 0; r < allTables[t].riConstraints.size(); r++)
+          if (allTables[t].riConstraints[r].referencedConstraint ==
+              constraintName)
+            {
+              TrafDesc *ref = localLiteRefDesc(
+                  allTables[t].riConstraints[r].name,
+                  localLiteFullName(allTables[t]), heap);
+              if (!constraint->referencing_constrnts_desc)
+                constraint->referencing_constrnts_desc = ref;
+              else
+                lastRef->next = ref;
+              lastRef = ref;
+            }
+      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+                                constraintDesc);
+    }
+
+  for (size_t i = 0; i < table.checkConstraints.size(); i++)
+    {
+      const LocalLiteCheckDef &localCheck = table.checkConstraints[i];
+      if (localCheck.name.empty() || localCheck.expression.empty())
+        {
+          *error = "invalid local-lite check constraint metadata";
+          return NULL;
+        }
+      TrafDesc *constraintDesc =
+        TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
+      constraintDesc->constrntsDesc()->constrntname =
+        localLiteCopyToHeap(localCheck.name, heap);
+      constraintDesc->constrntsDesc()->tablename =
+        tableDesc->tableDesc()->tablename;
+      constraintDesc->constrntsDesc()->type = CHECK_CONSTRAINT;
+      constraintDesc->constrntsDesc()->setEnforced(TRUE);
+
+      TrafDesc *checkDesc =
+        TrafAllocateDDLdesc(DESC_CHECK_CONSTRNTS_TYPE, heap);
+      checkDesc->checkConstrntsDesc()->constrnt_text =
+        localLiteCopyToHeap(localCheck.expression, heap);
+      constraintDesc->constrntsDesc()->check_constrnts_desc = checkDesc;
+
+      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+                                constraintDesc);
+    }
+  for (size_t i = 0; i < table.riConstraints.size(); i++)
+    {
+      const LocalLiteRIDef &ri = table.riConstraints[i];
+      TrafDesc *constraintDesc =
+          TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
+      TrafConstrntsDesc *constraint = constraintDesc->constrntsDesc();
+      constraint->constrntname = localLiteCopyToHeap(ri.name, heap);
+      constraint->tablename = localLiteCopyToHeap(localLiteFullName(table), heap);
+      constraint->type = REF_CONSTRAINT;
+      constraint->setEnforced(TRUE);
+      constraint->colcount = static_cast<Int32>(ri.referencingColumns.size());
+      constraint->constr_key_cols_desc = localLiteConstraintKeys(
+          table, ri.referencingColumns, heap, error);
+      LocalLiteTableDef parent;
+      if (!store.loadTable(ri.referencedCatalog, ri.referencedSchema,
+                           ri.referencedTable, &parent, error))
+        return NULL;
+      constraint->referenced_constrnts_desc = localLiteRefDesc(
+          ri.referencedConstraint, localLiteFullName(parent), heap);
+      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+                                constraintDesc);
+    }
+  tableDesc->tableDesc()->constrnts_desc = firstConstraintDesc;
+  tableDesc->tableDesc()->constr_count =
+      static_cast<Int32>((table.primaryKeyColumns.empty() ? 0 : 1) +
+          table.uniqueKeyColumns.size() + table.checkConstraints.size() +
+          table.riConstraints.size());
 
   return tableDesc;
 }
@@ -9000,7 +9263,8 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
 #ifdef TRAF_LOCAL_LITE
           bool localLiteFound = false;
           std::string localLiteError;
-          if (!corrName.isSpecialTable())
+          if (!corrName.isSpecialTable() ||
+              corrName.getSpecialType() == ExtendedQualName::TRIGTEMP_TABLE)
             tableDesc = localLiteCreateTableDescFromCatalog(
                 corrName, naTableHeap, &localLiteFound, &localLiteError);
           if (!tableDesc && !localLiteError.empty())

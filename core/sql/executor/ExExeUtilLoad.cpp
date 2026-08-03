@@ -147,6 +147,12 @@ short ExExeUtilCreateTableAsTcb::work()
               }
 
 	    doSidetreeInsert_ = TRUE;
+#ifdef TRAF_LOCAL_LITE
+            // Local-lite tables are backed by RocksDB. The sidetree path
+            // compiles an UPSERT USING LOAD HBase access operator, so CTAS
+            // must use its regular INSERT ... SELECT statement instead.
+            doSidetreeInsert_ = FALSE;
+#endif
 	    if (xnAlreadyStarted)
                 doSidetreeInsert_ = FALSE;
 	    else if ( ctaTdb().siQuery_ == (NABasicPtr) NULL )

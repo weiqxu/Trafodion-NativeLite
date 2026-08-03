@@ -36,7 +36,7 @@ CPPSRC := \
 	CliImplLmExtFunc.cpp
 
 CPPSRC += mpisetup.cpp vers_libcli.cpp 
-SRCPATH := cli bin common
+SRCPATH := cli bin common localstore
 CPPSRC += CliExtern.cpp
 C_INC_OVERRIDE := -I$(TRAF_HOME)/export/include -I$(TRAF_HOME)/export/include/seabed
 
@@ -46,4 +46,3 @@ USER_INCLUDES += $(WMS_INC) \
 ifeq ($(FLAVOR), debug)
     CXXFLAGS += -DNA_DEBUG_GUI
 endif
-

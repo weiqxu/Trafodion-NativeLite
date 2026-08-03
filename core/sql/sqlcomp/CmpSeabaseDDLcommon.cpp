@@ -49,6 +49,8 @@
 #include "NAUserId.h"
 #include "StmtDDLCreateView.h"
 #include "StmtDDLDropView.h"
+#include "StmtDDLCreateTrigger.h"
+#include "StmtDDLDropTrigger.h"
 #include "StmtDDLAlterTableDisableIndex.h"
 #include "StmtDDLAlterTableEnableIndex.h"
 #include "StmtDDLCreateComponentPrivilege.h"
@@ -72,6 +74,80 @@
 #include "logmxevent_traf.h"
 #include "exp_clause_derived.h"
 #include "TrafDDLdesc.h"
+#ifdef TRAF_LOCAL_LITE
+#include "ExecuteIdTrig.h"
+#include "LocalLiteRocksDBStore.h"
+
+static uint64_t localLiteNextTriggerTimestamp()
+{
+  static volatile uint64_t lastTimestamp = 0;
+  uint64_t now = static_cast<uint64_t>(NA_JulianTimestamp());
+  for (;;)
+    {
+      uint64_t previous = lastTimestamp;
+      uint64_t next = now > previous ? now : previous + 1;
+      if (__sync_bool_compare_and_swap(&lastTimestamp, previous, next))
+        return next;
+    }
+}
+
+static bool localLiteValidTriggerTransition(
+    const LocalLiteTableDef &transition,
+    const LocalLiteTableDef &subject,
+    std::string *error)
+{
+  const bool needsSyskey = subject.primaryKeyColumns.empty();
+  const size_t subjectOffset = needsSyskey ? 3 : 2;
+  char executeIdType[64];
+  snprintf(executeIdType, sizeof(executeIdType),
+           "CHAR(%d) CHARACTER SET ISO88591",
+           static_cast<int>(SIZEOF_UNIQUE_EXECUTE_ID));
+  if (transition.view ||
+      transition.columns.size() != subject.columns.size() + subjectOffset ||
+      transition.columns[0].name != "@UNIQUE_EXECUTE_ID" ||
+      transition.columns[0].type != executeIdType ||
+      transition.columns[0].nullable ||
+      transition.columns[1].name != "@UNIQUE_IUD_ID" ||
+      transition.columns[1].type != "INT" ||
+      transition.columns[1].nullable ||
+      (needsSyskey &&
+       (transition.columns[2].name != "@SYSKEY" ||
+        transition.columns[2].type != "LARGEINT" ||
+        transition.columns[2].nullable)))
+    {
+      if (error) *error = "local-lite trigger transition table has an "
+                          "incompatible hidden-column layout";
+      return false;
+    }
+  for (size_t i = 0; i < subject.columns.size(); i++)
+    {
+      const LocalLiteColumnDef &actual = transition.columns[subjectOffset + i];
+      const LocalLiteColumnDef &expected = subject.columns[i];
+      if (actual.name != expected.name || actual.type != expected.type ||
+          actual.nullable != expected.nullable)
+        {
+          if (error) *error = "local-lite trigger transition table does not "
+                              "match the subject table";
+          return false;
+        }
+    }
+  std::vector<size_t> expectedKeys;
+  expectedKeys.push_back(0);
+  expectedKeys.push_back(1);
+  if (needsSyskey)
+    expectedKeys.push_back(2);
+  else
+    for (size_t i = 0; i < subject.primaryKeyColumns.size(); i++)
+      expectedKeys.push_back(2 + subject.primaryKeyColumns[i]);
+  if (transition.primaryKeyColumns != expectedKeys)
+    {
+      if (error) *error = "local-lite trigger transition table has an "
+                          "incompatible primary key";
+      return false;
+    }
+  return true;
+}
+#endif
 
 void cleanupLOBDataDescFiles(const char*, int, const char *);
 
@@ -7491,6 +7567,37 @@ short CmpSeabaseDDL::createPrivMgrRepos(ExeCliInterface *cliInterface,
 void  CmpSeabaseDDL::createSeabaseSequence(StmtDDLCreateSequence  * createSequenceNode,
                                            NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  ComObjectName localName(createSequenceNode->getSeqName(), COM_TABLE_NAME);
+  localName.applyDefaults(ComAnsiNamePart(currCatName),
+                          ComAnsiNamePart(currSchName));
+  ElemDDLSGOptions *localOptions = createSequenceNode->getSGoptions();
+  LocalLiteSequenceDef localSequence;
+  localSequence.catalog = localName.getCatalogNamePartAsAnsiString().data();
+  localSequence.schema = localName.getSchemaNamePartAsAnsiString(TRUE).data();
+  localSequence.name = localName.getObjectNamePartAsAnsiString(TRUE).data();
+  ComUID localUid;
+  localUid.make_UID();
+  localSequence.objectUid = localUid.get_value();
+  localSequence.fsDataType = localOptions->getFSDataType();
+  localSequence.startValue = localOptions->getStartValue();
+  localSequence.increment = localOptions->getIncrement();
+  localSequence.minValue = localOptions->getMinValue();
+  localSequence.maxValue = localOptions->getMaxValue();
+  localSequence.nextValue = localSequence.startValue;
+  localSequence.cycle = localOptions->getCycle();
+  localSequence.cache = localOptions->getCache();
+  localSequence.internal = localOptions->isInternalSG();
+  std::string localError;
+  LocalLiteRocksDBStore localStore;
+  if (!localStore.createSequence(localSequence, &localError))
+    *CmpCommon::diags() << DgSqlCode(-3242)
+                        << DgString0((char *)localError.c_str());
+  ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+  ActiveSchemaDB()->getNATableDB()->setCachingON();
+  processReturn();
+  return;
+#endif
   Lng32 cliRC;
   Lng32 retcode;
 
@@ -7636,6 +7743,50 @@ void  CmpSeabaseDDL::createSeabaseSequence(StmtDDLCreateSequence  * createSequen
 void  CmpSeabaseDDL::alterSeabaseSequence(StmtDDLCreateSequence  * alterSequenceNode,
                                           NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  ComObjectName localName(alterSequenceNode->getSeqName(), COM_TABLE_NAME);
+  localName.applyDefaults(ComAnsiNamePart(currCatName),
+                          ComAnsiNamePart(currSchName));
+  LocalLiteSequenceDef localSequence;
+  bool localFound = false;
+  std::string localError;
+  LocalLiteRocksDBStore localStore;
+  if (!localStore.loadSequence(
+          localName.getCatalogNamePartAsAnsiString().data(),
+          localName.getSchemaNamePartAsAnsiString(TRUE).data(),
+          localName.getObjectNamePartAsAnsiString(TRUE).data(),
+          &localSequence, &localFound, &localError) || !localFound)
+    {
+      if (localError.empty()) localError = "local-lite sequence does not exist";
+      *CmpCommon::diags() << DgSqlCode(-3242)
+                          << DgString0((char *)localError.c_str());
+      processReturn();
+      return;
+    }
+  ElemDDLSGOptions *localOptions = alterSequenceNode->getSGoptions();
+  if (localOptions->isIncrementSpecified())
+    localSequence.increment = localOptions->getIncrement();
+  if (localOptions->isMinValueSpecified())
+    localSequence.minValue = localOptions->getMinValue();
+  if (localOptions->isMaxValueSpecified())
+    localSequence.maxValue = localOptions->getMaxValue();
+  if (localOptions->isCycleSpecified())
+    localSequence.cycle = localOptions->getCycle();
+  if (localOptions->isCacheSpecified())
+    localSequence.cache = localOptions->getCache();
+  if (localOptions->isResetSpecified())
+    {
+      localSequence.nextValue = localSequence.startValue;
+      localSequence.numCalls = 0;
+    }
+  if (!localStore.alterSequence(localSequence, &localError))
+    *CmpCommon::diags() << DgSqlCode(-3242)
+                        << DgString0((char *)localError.c_str());
+  ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+  ActiveSchemaDB()->getNATableDB()->setCachingON();
+  processReturn();
+  return;
+#endif
   Lng32 cliRC;
   Lng32 retcode;
 
@@ -7788,6 +7939,24 @@ void  CmpSeabaseDDL::alterSeabaseSequence(StmtDDLCreateSequence  * alterSequence
 void  CmpSeabaseDDL::dropSeabaseSequence(StmtDDLDropSequence  * dropSequenceNode,
                                          NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  ComObjectName localName(dropSequenceNode->getSeqName(), COM_TABLE_NAME);
+  localName.applyDefaults(ComAnsiNamePart(currCatName),
+                          ComAnsiNamePart(currSchName));
+  std::string localError;
+  LocalLiteRocksDBStore localStore;
+  if (!localStore.dropSequence(
+          localName.getCatalogNamePartAsAnsiString().data(),
+          localName.getSchemaNamePartAsAnsiString(TRUE).data(),
+          localName.getObjectNamePartAsAnsiString(TRUE).data(),
+          false, &localError))
+    *CmpCommon::diags() << DgSqlCode(-3242)
+                        << DgString0((char *)localError.c_str());
+  ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+  ActiveSchemaDB()->getNATableDB()->setCachingON();
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 
@@ -8688,7 +8857,21 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
      ((ddlNode->getOperatorType() == DDL_CREATE_TABLE) ||
       (ddlNode->getOperatorType() == DDL_DROP_TABLE) ||
       (ddlNode->getOperatorType() == DDL_CREATE_INDEX) ||
-      (ddlNode->getOperatorType() == DDL_DROP_INDEX)));
+      (ddlNode->getOperatorType() == DDL_DROP_INDEX) ||
+      (ddlNode->getOperatorType() == DDL_CREATE_VIEW) ||
+      (ddlNode->getOperatorType() == DDL_DROP_VIEW) ||
+      (ddlNode->getOperatorType() == DDL_CREATE_SEQUENCE) ||
+      (ddlNode->getOperatorType() == DDL_DROP_SEQUENCE) ||
+      (ddlNode->getOperatorType() == DDL_CREATE_TRIGGER) ||
+      (ddlNode->getOperatorType() == DDL_DROP_TRIGGER) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ADD_COLUMN) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_DROP_COLUMN) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ALTER_COLUMN_RENAME) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ADD_CONSTRAINT_PRIMARY_KEY) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ADD_CONSTRAINT_UNIQUE) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ADD_CONSTRAINT_CHECK) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ADD_CONSTRAINT_REFERENTIAL_INTEGRITY) ||
+      (ddlNode->getOperatorType() == DDL_ALTER_TABLE_DROP_CONSTRAINT)));
 #else
   NABoolean localLiteLocalStoreDDL = FALSE;
 #endif
@@ -9156,6 +9339,190 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
           
           dropSeabaseView(dropViewParseNode, currCatName, currSchName);
         }
+#ifdef TRAF_LOCAL_LITE
+      else if (ddlNode->getOperatorType() == DDL_CREATE_TRIGGER)
+        {
+          StmtDDLCreateTrigger *node =
+            ddlNode->castToStmtDDLNode()->castToStmtDDLCreateTrigger();
+          const QualifiedName &triggerName = node->getTriggerNameAsQualifiedName();
+          const QualifiedName &subjectName = node->getTableNameObject();
+          LocalLiteTriggerDef trigger;
+          trigger.catalog = triggerName.getCatalogName().data();
+          trigger.schema = triggerName.getSchemaName().data();
+          trigger.name = triggerName.getObjectName().data();
+          trigger.subjectCatalog = subjectName.getCatalogName().data();
+          trigger.subjectSchema = subjectName.getSchemaName().data();
+          trigger.subjectTable = subjectName.getObjectName().data();
+          trigger.operation = static_cast<int>(node->getIUDEvent());
+          trigger.activation = static_cast<int>(
+              node->isAfter() ? COM_AFTER : COM_BEFORE);
+          trigger.granularity = static_cast<int>(
+              node->isStatement() ? COM_STATEMENT : COM_ROW);
+          trigger.timestamp = localLiteNextTriggerTimestamp();
+          trigger.allUpdateColumns = node->areColumnsImplicit();
+          LocalLiteRocksDBStore store;
+          LocalLiteTableDef subject;
+          std::string error;
+          if (!store.loadTable(trigger.subjectCatalog, trigger.subjectSchema,
+                               trigger.subjectTable, &subject, &error))
+            *CmpCommon::diags() << DgSqlCode(-3242)
+                                << DgString0((char *)error.c_str());
+          else
+            {
+              const ElemDDLColRefArray &columns = node->getColRefArray();
+              for (CollIndex i = 0; i < columns.entries(); i++)
+                {
+                  size_t found = subject.columns.size();
+                  for (size_t c = 0; c < subject.columns.size(); c++)
+                    if (columns[i] && subject.columns[c].name ==
+                                      columns[i]->getColumnName().data())
+                      found = c;
+                  if (found == subject.columns.size())
+                    {
+                      error = "local-lite trigger update column does not exist";
+                      break;
+                    }
+                  trigger.updateColumns.push_back(found);
+                }
+              // The legacy trigger inliner uses a hidden transition table.
+              // In a full Trafodion installation Catman creates this table;
+              // local-lite creates the equivalent RocksDB table directly.
+              LocalLiteTableDef transition;
+              const std::string transitionName =
+                  trigger.subjectTable + "__TEMP";
+              bool transitionExists = false;
+              bool createdTransition = false;
+              if (error.empty() &&
+                  !store.tableExists(trigger.subjectCatalog,
+                                     trigger.subjectSchema, transitionName,
+                                     &transitionExists, &error))
+                transitionExists = false;
+              if (error.empty() && !transitionExists)
+                {
+                  transition.catalog = trigger.subjectCatalog;
+                  transition.schema = trigger.subjectSchema;
+                  transition.name = transitionName;
+                  transition.objectUid = trigger.timestamp;
+                  if (transition.objectUid == 0)
+                    transition.objectUid = subject.objectUid + 1;
+                  LocalLiteColumnDef executeId;
+                  executeId.name = "@UNIQUE_EXECUTE_ID";
+                  char executeIdType[64];
+                  snprintf(executeIdType, sizeof(executeIdType),
+                           "CHAR(%d) CHARACTER SET ISO88591",
+                           static_cast<int>(SIZEOF_UNIQUE_EXECUTE_ID));
+                  executeId.type = executeIdType;
+                  executeId.nullable = false;
+                  executeId.defaultClass = COM_NO_DEFAULT;
+                  transition.columns.push_back(executeId);
+                  LocalLiteColumnDef iudId;
+                  iudId.name = "@UNIQUE_IUD_ID";
+                  iudId.type = "INT";
+                  iudId.nullable = false;
+                  iudId.defaultClass = COM_NO_DEFAULT;
+                  transition.columns.push_back(iudId);
+                  transition.primaryKeyColumns.push_back(0);
+                  transition.primaryKeyColumns.push_back(1);
+                  if (subject.primaryKeyColumns.empty())
+                    {
+                      LocalLiteColumnDef syskey;
+                      syskey.name = "@SYSKEY";
+                      syskey.type = "LARGEINT";
+                      syskey.nullable = false;
+                      syskey.defaultClass = COM_NO_DEFAULT;
+                      transition.columns.push_back(syskey);
+                      transition.primaryKeyColumns.push_back(2);
+                    }
+                  transition.columns.insert(transition.columns.end(),
+                                            subject.columns.begin(),
+                                            subject.columns.end());
+                  if (!subject.primaryKeyColumns.empty())
+                    for (size_t key = 0;
+                         key < subject.primaryKeyColumns.size(); key++)
+                      transition.primaryKeyColumns.push_back(
+                          2 + subject.primaryKeyColumns[key]);
+                  transition.primaryKeyName = transition.catalog + "." +
+                      transition.schema + "." + transitionName + "_PK";
+                  if (!store.createTable(transition, &error))
+                    transitionExists = false;
+                  else
+                    createdTransition = true;
+                }
+              else if (error.empty())
+                {
+                  LocalLiteTableDef existingTransition;
+                  if (!store.loadTable(trigger.subjectCatalog,
+                                       trigger.subjectSchema, transitionName,
+                                       &existingTransition, &error) ||
+                      !localLiteValidTriggerTransition(existingTransition,
+                                                       subject, &error))
+                    transitionExists = false;
+                }
+              // Persist expanded object names. Trigger text is reparsed for
+              // every firing and that parser requires the three-part names
+              // normally stored by Catman, not the user's session defaults.
+              const ParNameLocList &nameLocList = node->getNameLocList();
+              const char *input = nameLocList.getInputStringPtr();
+              StringPos inputPos = node->getStartPosition();
+              for (CollIndex locIndex = 0;
+                   input && locIndex < nameLocList.entries(); locIndex++)
+                {
+                  const ParNameLoc &loc = nameLocList[locIndex];
+                  if (loc.getNamePosition() < inputPos ||
+                      loc.getNamePosition() > node->getEndPosition())
+                    continue;
+                  trigger.sqlText.append(input + inputPos,
+                      loc.getNamePosition() - inputPos);
+                  const NAString &expanded = loc.getExpandedName(FALSE);
+                  if (expanded.isNull())
+                    trigger.sqlText.append(input + loc.getNamePosition(),
+                                           loc.getNameLength());
+                  else
+                    trigger.sqlText.append(expanded.data(), expanded.length());
+                  inputPos = loc.getNamePosition() + loc.getNameLength();
+                }
+              if (input && node->getEndPosition() >= inputPos)
+                trigger.sqlText.append(input + inputPos,
+                    node->getEndPosition() + 1 - inputPos);
+              if (trigger.sqlText.empty())
+                trigger.sqlText = ddlExpr->getDDLStmtText();
+              if (!error.empty() || !store.createTrigger(trigger, &error))
+                {
+                  if (createdTransition)
+                    {
+                      std::string cleanupError;
+                      store.dropTable(transition.catalog, transition.schema,
+                                      transition.name, &cleanupError);
+                    }
+                  *CmpCommon::diags() << DgSqlCode(-3242)
+                                      << DgString0((char *)error.c_str());
+                }
+              else
+                {
+                  ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+                  ActiveSchemaDB()->getNATableDB()->setCachingON();
+                }
+            }
+        }
+      else if (ddlNode->getOperatorType() == DDL_DROP_TRIGGER)
+        {
+          StmtDDLDropTrigger *node =
+            ddlNode->castToStmtDDLNode()->castToStmtDDLDropTrigger();
+          const QualifiedName &name = node->getTriggerNameAsQualifiedName();
+          LocalLiteRocksDBStore store;
+          std::string error;
+          if (!store.dropTrigger(name.getCatalogName().data(),
+                                 name.getSchemaName().data(),
+                                 name.getObjectName().data(), false, &error))
+            *CmpCommon::diags() << DgSqlCode(-3242)
+                                << DgString0((char *)error.c_str());
+          else
+            {
+              ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+              ActiveSchemaDB()->getNATableDB()->setCachingON();
+            }
+        }
+#endif
       else if (ddlNode->getOperatorType() == DDL_REGISTER_USER)
         {
          StmtDDLRegisterUser *registerUserParseNode =

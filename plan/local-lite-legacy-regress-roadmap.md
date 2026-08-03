@@ -202,6 +202,17 @@ predicates, and EXPLAIN coverage.
 
 ## Milestone 4: Catalog DDL And Constraints
 
+Status: complete in the working tree. The local catalog now persists schemas,
+views, synonyms, sequences, table defaults, CHECK and RESTRICT/NO ACTION RI
+constraints, identity allocation state, triggers, dependency metadata, and
+ALTER/TRUNCATE changes in RocksDB. Metadata updates use replacement writes and
+invalidate compiler table metadata; row/key migrations are validated before
+publication. Native coverage is in `localLite/TEST009`, `TEST021`,
+`TEST036`, and `TEST037`, and the RocksDB SQLCI smoke validates positive view,
+ALTER, TRUNCATE, DEFAULT, and CHECK behavior. The intentionally bounded
+surface is explicit: RI CASCADE actions and computed system columns remain
+unsupported, and HBase/HFile execution is not used.
+
 Implement schemas, views, ALTER/TRUNCATE, DEFAULT, CHECK, RI, sequences,
 identity/generated columns, synonyms, triggers, object dependencies, cache
 invalidation, and failure-atomic metadata changes.

@@ -1,1 +1,1 @@
-/tmp/local-lite-deps/usr/include/sqlite3.h
+/usr/include/sqlite3.h

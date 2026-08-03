@@ -888,6 +888,13 @@ Lng32 FetchHistograms( const QualifiedName & qualifiedName
         }
     }
 
+#ifdef TRAF_LOCAL_LITE
+  // Persistent histogram metadata belongs to the local-lite statistics
+  // milestone. Until those _MD_ objects exist, use the optimizer's fake
+  // histograms for RocksDB tables, including trigger transition tables.
+  specialTable = TRUE;
+#endif
+
   // -----------------------------------------------------------------------
   // fakeHistogram:  Entry k is FALSE if there exists a single-column 
   //                 histogram for table column k.

@@ -1054,7 +1054,9 @@ public:
       pool_(NULL),
       workAtp_(NULL),
       convertRow_(NULL),
-      matches_(0)
+      matches_(0),
+      pendingReturn_(FALSE),
+      pendingDone_(FALSE)
   {
     Space *space = globals->getSpace();
     CollHeap *heap = globals->getDefaultHeap();
@@ -1133,8 +1135,25 @@ public:
         if (qparent_.up->isFull())
           return WORK_OK;
 
-        matches_ = 0;
         ex_queue_entry *down = qparent_.down->getHeadEntry();
+        if (pendingReturn_)
+          {
+            if (sendReturnedRow(down))
+              return WORK_OK;
+            pendingReturn_ = FALSE;
+            pendingDone_ = TRUE;
+            continue;
+          }
+        if (pendingDone_)
+          {
+            if (sendDone())
+              return WORK_OK;
+            pendingDone_ = FALSE;
+            matches_ = 0;
+            continue;
+          }
+
+        matches_ = 0;
         if (down->downState.request != ex_queue::GET_NOMORE)
           {
             std::string error;
@@ -1145,9 +1164,10 @@ public:
                   return WORK_OK;
               }
           }
-
-        if (sendDone())
-          return WORK_OK;
+        if (insertTdb().returnRow() && matches_ > 0)
+          pendingReturn_ = TRUE;
+        else
+          pendingDone_ = TRUE;
       }
     return WORK_OK;
   }
@@ -1265,6 +1285,26 @@ private:
     return qparent_.up->isFull();
   }
 
+  bool sendReturnedRow(ex_queue_entry *down)
+  {
+    if (qparent_.up->isFull())
+      return true;
+    tupp returned;
+    if (pool_->get_free_tuple(returned, insertTdb().convertRowLen_))
+      return true;
+    str_cpy_all(returned.getDataPointer(), convertRow_,
+                insertTdb().convertRowLen_);
+    ex_queue_entry *up = qparent_.up->getTailEntry();
+    up->copyAtp(down);
+    up->getAtp()->getTupp(insertTdb().returnedTuppIndex_) = returned;
+    up->upState.status = ex_queue::Q_OK_MMORE;
+    up->upState.downIndex = qparent_.down->getHeadIndex();
+    up->upState.parentIndex = down->downState.parentIndex;
+    up->upState.setMatchNo(matches_);
+    qparent_.up->insert();
+    return false;
+  }
+
   bool sendDone()
   {
     if (qparent_.up->isFull())
@@ -1306,6 +1346,8 @@ private:
   atp_struct *workAtp_;
   char *convertRow_;
   Lng32 matches_;
+  NABoolean pendingReturn_;
+  NABoolean pendingDone_;
   LocalLiteRocksDBStore store_;
   LocalLiteTableDef table_;
 };
@@ -1320,7 +1362,9 @@ public:
       workAtp_(NULL),
       asciiRow_(NULL),
       convertRow_(NULL),
-      matches_(0)
+      matches_(0),
+      pendingReturn_(FALSE),
+      pendingDone_(FALSE)
   {
     Space *space = globals->getSpace();
     CollHeap *heap = globals->getDefaultHeap();
@@ -1396,8 +1440,24 @@ public:
       {
         if (qparent_.up->isFull())
           return WORK_OK;
-        matches_ = 0;
         ex_queue_entry *down = qparent_.down->getHeadEntry();
+        if (pendingReturn_)
+          {
+            if (sendReturnedRow())
+              return WORK_OK;
+            pendingReturn_ = FALSE;
+            pendingDone_ = TRUE;
+            continue;
+          }
+        if (pendingDone_)
+          {
+            if (sendDone())
+              return WORK_OK;
+            pendingDone_ = FALSE;
+            matches_ = 0;
+            continue;
+          }
+        matches_ = 0;
         if (down->downState.request != ex_queue::GET_NOMORE)
           {
             std::string error;
@@ -1407,8 +1467,10 @@ public:
                   return WORK_OK;
               }
           }
-        if (sendDone())
-          return WORK_OK;
+        if (deleteTdb().returnRow() && matches_ > 0)
+          pendingReturn_ = TRUE;
+        else
+          pendingDone_ = TRUE;
       }
     return WORK_OK;
   }
@@ -1579,6 +1641,32 @@ private:
 
     if (sourceRows.empty())
       return true;
+    if (deleteTdb().returnRow())
+      {
+        // The normal scan-driven path supplies the selected row through the
+        // side map, so materialize its executor tuple here for OLD values.
+        // A trigger-enabled delete is driven one row per target request.
+        const LocalLiteRow &returnedSource = sourceRows.back();
+        workAtp_->getTupp(deleteTdb().asciiTuppIndex_)
+          .setDataPointer(asciiRow_);
+        workAtp_->getTupp(deleteTdb().convertTuppIndex_)
+          .setDataPointer(convertRow_);
+        unsigned int sourceLen = 0;
+        if (!LocalLiteProjectBinaryRow(
+                table_, returnedSource.value, returnedSource.rowId,
+                asciiIndexes, asciiTd, asciiRow_, deleteTdb().asciiRowLen_,
+                &sourceLen, error))
+          return false;
+        str_pad(convertRow_, deleteTdb().convertRowLen_, '\0');
+        ULng32 convertLen = deleteTdb().convertRowLen_;
+        if (deleteTdb().convertExpr_->eval(
+                downEntry()->getAtp(), workAtp_, NULL, -1, &convertLen) ==
+            ex_expr::EXPR_ERROR)
+          {
+            *error = "local-lite delete return-row conversion failed";
+            return false;
+          }
+      }
     if (!txn.deleteRows(table_, sourceRows, error))
       return false;
     matches_ = static_cast<Lng32>(sourceRows.size());
@@ -1629,12 +1717,34 @@ private:
     return false;
   }
 
+  bool sendReturnedRow()
+  {
+    if (qparent_.up->isFull())
+      return true;
+    tupp returned;
+    if (pool_->get_free_tuple(returned, deleteTdb().convertRowLen_))
+      return true;
+    str_cpy_all(returned.getDataPointer(), convertRow_,
+                deleteTdb().convertRowLen_);
+    ex_queue_entry *up = qparent_.up->getTailEntry();
+    up->copyAtp(downEntry());
+    up->getAtp()->getTupp(deleteTdb().returnedTuppIndex_) = returned;
+    up->upState.status = ex_queue::Q_OK_MMORE;
+    up->upState.downIndex = qparent_.down->getHeadIndex();
+    up->upState.parentIndex = downEntry()->downState.parentIndex;
+    up->upState.setMatchNo(matches_);
+    qparent_.up->insert();
+    return false;
+  }
+
   ex_queue_pair qparent_;
   sql_buffer_pool *pool_;
   atp_struct *workAtp_;
   char *asciiRow_;
   char *convertRow_;
   Lng32 matches_;
+  NABoolean pendingReturn_;
+  NABoolean pendingDone_;
   LocalLiteRocksDBStore store_;
   LocalLiteTableDef table_;
 };
@@ -1651,7 +1761,9 @@ public:
       convertRow_(NULL),
       updateRow_(NULL),
       mergeInsertRow_(NULL),
-      matches_(0)
+      matches_(0),
+      pendingReturn_(FALSE),
+      pendingDone_(FALSE)
   {
     Space *space = globals->getSpace();
     CollHeap *heap = globals->getDefaultHeap();
@@ -1703,6 +1815,12 @@ public:
     if (tdb.updConstraintExpr_)
       tdb.updConstraintExpr_->fixup(0, getExpressionMode(), this, space, heap,
                                     FALSE, globals);
+    if (tdb.returnFetchExpr_)
+      tdb.returnFetchExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                                  FALSE, globals);
+    if (tdb.returnUpdateExpr_)
+      tdb.returnUpdateExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                                   FALSE, globals);
   }
 
   ~LocalLiteHbaseUpdateTcb() { freeResources(); }
@@ -1758,8 +1876,24 @@ public:
         if (qparent_.up->isFull())
           return WORK_OK;
 
-        matches_ = 0;
         ex_queue_entry *down = qparent_.down->getHeadEntry();
+        if (pendingReturn_)
+          {
+            if (sendReturnedRow())
+              return WORK_OK;
+            pendingReturn_ = FALSE;
+            pendingDone_ = TRUE;
+            continue;
+          }
+        if (pendingDone_)
+          {
+            if (sendDone())
+              return WORK_OK;
+            pendingDone_ = FALSE;
+            matches_ = 0;
+            continue;
+          }
+        matches_ = 0;
         if (down->downState.request != ex_queue::GET_NOMORE)
           {
             std::string error;
@@ -1769,8 +1903,10 @@ public:
                   return WORK_OK;
               }
           }
-        if (sendDone())
-          return WORK_OK;
+        if (updateTdb().returnRow() && matches_ > 0)
+          pendingReturn_ = TRUE;
+        else
+          pendingDone_ = TRUE;
       }
     return WORK_OK;
   }
@@ -1918,7 +2054,9 @@ private:
     if (!isMerge &&
         localLiteTakeScanRow(localLiteScanRowKey(
             updateTdb().getTableName(), statementGlobals), &sourceRow))
-      sourceRows.push_back(sourceRow);
+      {
+        sourceRows.push_back(sourceRow);
+      }
     else
       {
         std::vector<LocalLiteRow> rows;
@@ -2162,6 +2300,51 @@ private:
     return false;
   }
 
+  bool sendReturnedRow()
+  {
+    if (qparent_.up->isFull())
+      return true;
+    ex_queue_entry *up = qparent_.up->getTailEntry();
+    up->copyAtp(downEntry());
+    if (updateTdb().returnFetchExpr_)
+      {
+        tupp fetched;
+        if (pool_->get_free_tuple(
+                fetched, updateTdb().returnFetchedRowLen_))
+          return true;
+        up->getAtp()->getTupp(updateTdb().returnedFetchedTuppIndex_) = fetched;
+        if (updateTdb().returnFetchExpr_->eval(up->getAtp(), workAtp_) ==
+            ex_expr::EXPR_ERROR)
+          return true;
+      }
+    if (updateTdb().returnUpdateExpr_)
+      {
+        tupp updated;
+        if (pool_->get_free_tuple(
+                updated, updateTdb().returnUpdatedRowLen_))
+          return true;
+        up->getAtp()->getTupp(updateTdb().returnedUpdatedTuppIndex_) = updated;
+        if (updateTdb().returnUpdateExpr_->eval(up->getAtp(), workAtp_) ==
+            ex_expr::EXPR_ERROR)
+          return true;
+      }
+    else
+      {
+        tupp returned;
+        if (pool_->get_free_tuple(returned, updateTdb().convertRowLen_))
+          return true;
+        str_cpy_all(returned.getDataPointer(), convertRow_,
+                    updateTdb().convertRowLen_);
+        up->getAtp()->getTupp(updateTdb().returnedTuppIndex_) = returned;
+      }
+    up->upState.status = ex_queue::Q_OK_MMORE;
+    up->upState.downIndex = qparent_.down->getHeadIndex();
+    up->upState.parentIndex = downEntry()->downState.parentIndex;
+    up->upState.setMatchNo(matches_);
+    qparent_.up->insert();
+    return false;
+  }
+
   ex_queue_pair qparent_;
   sql_buffer_pool *pool_;
   atp_struct *workAtp_;
@@ -2170,6 +2353,8 @@ private:
   char *updateRow_;
   char *mergeInsertRow_;
   Lng32 matches_;
+  NABoolean pendingReturn_;
+  NABoolean pendingDone_;
   LocalLiteRocksDBStore store_;
   LocalLiteTableDef table_;
 };

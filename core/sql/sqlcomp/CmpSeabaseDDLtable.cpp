@@ -69,6 +69,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <string>
 #endif
                   
@@ -193,17 +194,6 @@ static bool localLiteFillTableName(const ComObjectName &objectName,
 
 static bool localLiteRejectUnsupportedCreate(StmtDDLCreateTable *createTableNode)
 {
-  if (createTableNode->getIsLikeOptionSpecified())
-    {
-      localLiteDDLDiag("CREATE TABLE LIKE is not supported in local-lite");
-      return true;
-    }
-  if (createTableNode->getAddConstraintRIArray().entries() > 0 ||
-      createTableNode->getAddConstraintCheckArray().entries() > 0)
-    {
-      localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported");
-      return true;
-    }
   if (createTableNode->isPartitionSpecified() ||
       createTableNode->isPartitionBySpecified() ||
       createTableNode->isDivisionClauseSpecified() ||
@@ -280,11 +270,943 @@ static bool localLiteFindColumn(const ElemDDLColDefArray &colArray,
   return false;
 }
 
+static bool localLiteColumnDefault(ElemDDLColDef *col,
+                                   LocalLiteColumnDef *localCol)
+{
+  localCol->defaultClass = COM_NO_DEFAULT;
+  localCol->defaultValue.clear();
+
+  if (col->getDefaultClauseStatus() == ElemDDLColDef::DEFAULT_CLAUSE_NOT_SPEC)
+    {
+      if (localCol->nullable)
+        localCol->defaultClass = COM_NULL_DEFAULT;
+      return true;
+    }
+  if (col->getDefaultClauseStatus() == ElemDDLColDef::NO_DEFAULT_CLAUSE_SPEC)
+    return true;
+
+  ItemExpr *expr = col->getDefaultValueExpr();
+  if (col->getSGOptions())
+    {
+      localCol->defaultClass = col->getSGOptions()->isGeneratedAlways()
+        ? COM_IDENTITY_GENERATED_ALWAYS : COM_IDENTITY_GENERATED_BY_DEFAULT;
+      return true;
+    }
+  if (!col->getDefaultExprString().isNull())
+    {
+      localCol->defaultClass = COM_FUNCTION_DEFINED_DEFAULT;
+      localCol->defaultValue = col->getDefaultExprString().data();
+      return true;
+    }
+  if (!expr)
+    {
+      localLiteDDLDiag("computed system columns are not supported in local-lite");
+      return false;
+    }
+
+  switch (expr->getOperatorType())
+    {
+    case ITM_CURRENT_TIMESTAMP:
+      localCol->defaultClass = COM_CURRENT_DEFAULT;
+      return true;
+    case ITM_UNIX_TIMESTAMP:
+      localCol->defaultClass = COM_CURRENT_UT_DEFAULT;
+      return true;
+    case ITM_UNIQUE_ID:
+      localCol->defaultClass = COM_UUID_DEFAULT;
+      return true;
+    case ITM_USER:
+    case ITM_CURRENT_USER:
+    case ITM_SESSION_USER:
+      localCol->defaultClass = COM_USER_FUNCTION_DEFAULT;
+      return true;
+    default:
+      break;
+    }
+
+  NABoolean negate = FALSE;
+  ConstValue *value = expr->castToConstValue(negate);
+  if (!value)
+    {
+      localLiteDDLDiag("local-lite DEFAULT must be a constant or supported built-in value");
+      return false;
+    }
+  if (value->isNull())
+    {
+      localCol->defaultClass = COM_NULL_DEFAULT;
+      return true;
+    }
+
+  NAString text;
+  expr->unparse(text, PARSER_PHASE, USER_FORMAT);
+  localCol->defaultClass = COM_USER_DEFINED_DEFAULT;
+  localCol->defaultValue = text.data();
+  return true;
+}
+
+static bool localLiteAppendCheck(LocalLiteTableDef *table,
+                                 ElemDDLConstraintCheck *constraint)
+{
+  if (!constraint || !constraint->getSearchCondition())
+    {
+      localLiteDDLDiag("invalid local-lite CHECK constraint");
+      return false;
+    }
+  LocalLiteCheckDef check;
+  NAString expression;
+  constraint->getSearchCondition()->unparse(expression, PARSER_PHASE,
+                                             USER_FORMAT);
+  check.expression = expression.data();
+  NAString parsedName = constraint->getConstraintName();
+  if (!parsedName.isNull())
+    check.name = parsedName.data();
+  else
+    {
+      char suffix[40];
+      snprintf(suffix, sizeof(suffix), "_CK_%lu",
+               static_cast<unsigned long>(table->checkConstraints.size() + 1));
+      check.name = table->catalog + "." + table->schema + "." +
+                   table->name + suffix;
+    }
+  if (check.name.find('.') == std::string::npos)
+    check.name = table->catalog + "." + table->schema + "." + check.name;
+  table->checkConstraints.push_back(check);
+  return true;
+}
+
+static std::string localLiteConstraintName(const LocalLiteTableDef &table,
+                                           const std::string &suffix)
+{
+  return table.catalog + "." + table.schema + "." + table.name + suffix;
+}
+
+static std::string localLiteQualifiedConstraintName(
+    const LocalLiteTableDef &table, const NAString &parsed,
+    const std::string &fallbackSuffix)
+{
+  std::string name = parsed.length() == 0
+      ? localLiteConstraintName(table, fallbackSuffix) : parsed.data();
+  if (name.find('.') == std::string::npos)
+    name = table.catalog + "." + table.schema + "." + name;
+  return name;
+}
+
+static bool localLiteAppendRI(LocalLiteTableDef *table,
+                              ElemDDLConstraintRI *constraint)
+{
+  if (!constraint)
+    {
+      localLiteDDLDiag("invalid local-lite referential constraint");
+      return false;
+    }
+  if ((constraint->isDeleteRuleSpecified() &&
+       constraint->getDeleteRule() != COM_RESTRICT_DELETE_RULE &&
+       constraint->getDeleteRule() != COM_NO_ACTION_DELETE_RULE) ||
+      (constraint->isUpdateRuleSpecified() &&
+       constraint->getUpdateRule() != COM_RESTRICT_UPDATE_RULE &&
+       constraint->getUpdateRule() != COM_NO_ACTION_UPDATE_RULE))
+    {
+      localLiteDDLDiag("local-lite RI supports only RESTRICT/NO ACTION");
+      return false;
+    }
+
+  LocalLiteRIDef ri;
+  NAString parsedName = constraint->getConstraintName();
+  ri.name = parsedName.isNull()
+      ? localLiteConstraintName(*table, "_RI_" +
+          std::to_string(table->riConstraints.size() + 1))
+      : parsedName.data();
+  if (ri.name.find('.') == std::string::npos)
+    ri.name = table->catalog + "." + table->schema + "." + ri.name;
+
+  ElemDDLColNameArray &childColumns = constraint->getReferencingColumns();
+  if (childColumns.entries() == 0)
+    {
+      localLiteDDLDiag("local-lite RI requires referencing columns");
+      return false;
+    }
+  for (CollIndex i = 0; i < childColumns.entries(); i++)
+    {
+      size_t column = table->columns.size();
+      for (size_t j = 0; j < table->columns.size(); j++)
+        if (table->columns[j].name == childColumns[i]->getColumnName().data())
+          column = j;
+      if (column == table->columns.size())
+        {
+          localLiteDDLDiag("local-lite RI referencing column does not exist");
+          return false;
+        }
+      ri.referencingColumns.push_back(column);
+    }
+
+  ComObjectName referencedName(constraint->getReferencedTableName(),
+                               COM_TABLE_NAME);
+  referencedName.applyDefaults(ComAnsiNamePart(table->catalog.c_str()),
+                               ComAnsiNamePart(table->schema.c_str()));
+  ri.referencedCatalog =
+      referencedName.getCatalogNamePartAsAnsiString().data();
+  ri.referencedSchema =
+      referencedName.getSchemaNamePartAsAnsiString(TRUE).data();
+  ri.referencedTable =
+      referencedName.getObjectNamePartAsAnsiString(TRUE).data();
+
+  LocalLiteTableDef parent;
+  if (ri.referencedCatalog == table->catalog &&
+      ri.referencedSchema == table->schema &&
+      ri.referencedTable == table->name)
+    parent = *table;
+  else
+    {
+      std::string error;
+      LocalLiteRocksDBStore store;
+      if (!store.loadTable(ri.referencedCatalog, ri.referencedSchema,
+                           ri.referencedTable, &parent, &error))
+        {
+          localLiteDDLDiag(error);
+          return false;
+        }
+    }
+
+  ElemDDLColNameArray &parentColumns = constraint->getReferencedColumns();
+  if (parentColumns.entries() == 0)
+    ri.referencedColumns = parent.primaryKeyColumns;
+  else
+    for (CollIndex i = 0; i < parentColumns.entries(); i++)
+      {
+        size_t column = parent.columns.size();
+        for (size_t j = 0; j < parent.columns.size(); j++)
+          if (parent.columns[j].name == parentColumns[i]->getColumnName().data())
+            column = j;
+        if (column == parent.columns.size())
+          {
+            localLiteDDLDiag("local-lite RI referenced column does not exist");
+            return false;
+          }
+        ri.referencedColumns.push_back(column);
+      }
+  if (ri.referencingColumns.size() != ri.referencedColumns.size() ||
+      ri.referencedColumns.empty())
+    {
+      localLiteDDLDiag("local-lite RI column counts do not match");
+      return false;
+    }
+  for (size_t i = 0; i < ri.referencingColumns.size(); i++)
+    if (localLiteUpper(table->columns[ri.referencingColumns[i]].type) !=
+        localLiteUpper(parent.columns[ri.referencedColumns[i]].type))
+      {
+        localLiteDDLDiag("local-lite RI column types do not match");
+        return false;
+      }
+
+  if (ri.referencedColumns == parent.primaryKeyColumns)
+    ri.referencedConstraint = parent.primaryKeyName;
+  else
+    {
+      size_t match = parent.uniqueKeyColumns.size();
+      for (size_t i = 0; i < parent.uniqueKeyColumns.size(); i++)
+        if (ri.referencedColumns == parent.uniqueKeyColumns[i]) match = i;
+      if (match == parent.uniqueKeyColumns.size())
+        {
+          localLiteDDLDiag("local-lite RI must reference a PRIMARY KEY or UNIQUE key");
+          return false;
+        }
+      ri.referencedConstraint = parent.uniqueKeyNames[match];
+    }
+  table->riConstraints.push_back(ri);
+  return true;
+}
+
+static bool localLiteLoadAlterTable(StmtDDLAlterTable *node,
+                                    NAString &currCatName,
+                                    NAString &currSchName,
+                                    LocalLiteTableDef *table)
+{
+  ComObjectName name(node->getTableName(), COM_TABLE_NAME);
+  name.applyDefaults(ComAnsiNamePart(currCatName),
+                     ComAnsiNamePart(currSchName));
+  std::string error;
+  LocalLiteRocksDBStore store;
+  if (!store.loadTable(name.getCatalogNamePartAsAnsiString().data(),
+                       name.getSchemaNamePartAsAnsiString(TRUE).data(),
+                       name.getObjectNamePartAsAnsiString(TRUE).data(),
+                       table, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  if (table->view)
+    {
+      localLiteDDLDiag("ALTER TABLE cannot alter a local-lite view");
+      return false;
+    }
+  return true;
+}
+
+static void localLiteInvalidateNATableCache()
+{
+  ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+  ActiveSchemaDB()->getNATableDB()->setCachingON();
+}
+
+static std::string localLiteMigrationDefault(const LocalLiteColumnDef &column)
+{
+  if (column.defaultClass == COM_NULL_DEFAULT)
+    return std::string();
+  std::string value = column.defaultValue;
+  size_t quote = value.find('\'');
+  if (quote != std::string::npos && value.size() > quote + 1 &&
+      value[value.size() - 1] == '\'')
+    {
+      std::string text = value.substr(quote + 1, value.size() - quote - 2);
+      std::string unescaped;
+      for (size_t i = 0; i < text.size(); i++)
+        {
+          unescaped += text[i];
+          if (text[i] == '\'' && i + 1 < text.size() && text[i + 1] == '\'')
+            i++;
+        }
+      return unescaped;
+    }
+  return value;
+}
+
+static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
+                                    NAString &currCatName,
+                                    NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  ElemDDLColDefArray &defs = node->getColDefArray();
+  if (defs.entries() != 1 || !defs[0])
+    {
+      localLiteDDLDiag("local-lite ALTER TABLE ADD requires one column");
+      return false;
+    }
+  ElemDDLColDef *def = defs[0];
+  for (size_t i = 0; i < oldTable.columns.size(); i++)
+    if (oldTable.columns[i].name == def->getColumnName().data())
+      {
+        if (node->addIfNotExists())
+          return true;
+        localLiteDDLDiag("local-lite column already exists");
+        return false;
+      }
+  if (node->getAddConstraintPK() ||
+      node->getAddConstraintUniqueArray().entries() ||
+      node->getAddConstraintRIArray().entries())
+    {
+      localLiteDDLDiag("key constraints on an added local-lite column are not supported");
+      return false;
+    }
+
+  LocalLiteColumnDef column;
+  NAString typeText;
+  def->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
+  column.name = def->getColumnName().data();
+  column.type = typeText.data();
+  column.nullable = !def->isNotNullConstraintSpecified();
+  column.added = true;
+  if (localLiteRejectUnsupportedColumnType(column.type) ||
+      !localLiteColumnDefault(def, &column))
+    {
+      if (!CmpCommon::diags()->getNumber(DgSqlCode::ERROR_))
+        localLiteDDLDiag("unsupported local-lite ALTER TABLE ADD column type");
+      return false;
+    }
+  if (!column.nullable && column.defaultClass == COM_NO_DEFAULT)
+    {
+      localLiteDDLDiag("a NOT NULL added column requires a DEFAULT");
+      return false;
+    }
+  if (column.defaultClass != COM_NO_DEFAULT &&
+      column.defaultClass != COM_NULL_DEFAULT &&
+      column.defaultClass != COM_USER_DEFINED_DEFAULT)
+    {
+      localLiteDDLDiag("existing rows require a constant local-lite ALTER DEFAULT");
+      return false;
+    }
+
+  LocalLiteTableDef newTable = oldTable;
+  newTable.columns.push_back(column);
+  StmtDDLAddConstraintCheckArray &checks = node->getAddConstraintCheckArray();
+  for (CollIndex i = 0; i < checks.entries(); i++)
+    if (!checks[i] ||
+        !localLiteAppendCheck(&newTable,
+                             checks[i]->getConstraint()
+                               ->castToElemDDLConstraintCheck()))
+      return false;
+  std::vector<int> mapping(newTable.columns.size(), -1);
+  std::vector<std::string> added(newTable.columns.size());
+  for (size_t i = 0; i < oldTable.columns.size(); i++)
+    mapping[i] = static_cast<int>(i);
+  added.back() = localLiteMigrationDefault(column);
+  std::string error;
+  LocalLiteRocksDBStore store;
+  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  localLiteInvalidateNATableCache();
+  return true;
+}
+
+static bool localLiteAlterDropColumn(StmtDDLAlterTableDropColumn *node,
+                                     NAString &currCatName,
+                                     NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  size_t drop = oldTable.columns.size();
+  for (size_t i = 0; i < oldTable.columns.size(); i++)
+    if (oldTable.columns[i].name == node->getColName().data())
+      drop = i;
+  if (drop == oldTable.columns.size())
+    {
+      if (node->dropIfExists())
+        return true;
+      localLiteDDLDiag("local-lite column does not exist");
+      return false;
+    }
+  if (oldTable.columns.size() == 1)
+    {
+      localLiteDDLDiag("cannot drop the last local-lite table column");
+      return false;
+    }
+  for (size_t i = 0; i < oldTable.primaryKeyColumns.size(); i++)
+    if (oldTable.primaryKeyColumns[i] == drop)
+      {
+        localLiteDDLDiag("cannot drop a local-lite primary-key column");
+        return false;
+      }
+  for (size_t i = 0; i < oldTable.uniqueKeyColumns.size(); i++)
+    for (size_t j = 0; j < oldTable.uniqueKeyColumns[i].size(); j++)
+      if (oldTable.uniqueKeyColumns[i][j] == drop)
+        {
+          localLiteDDLDiag("cannot drop a local-lite UNIQUE column");
+          return false;
+        }
+  for (size_t i = 0; i < oldTable.secondaryIndexes.size(); i++)
+    for (size_t j = 0; j < oldTable.secondaryIndexes[i].keyColumns.size(); j++)
+      if (oldTable.secondaryIndexes[i].keyColumns[j] == drop)
+        {
+          localLiteDDLDiag("cannot drop an indexed local-lite column");
+          return false;
+        }
+  if (!oldTable.checkConstraints.empty())
+    {
+      localLiteDDLDiag("drop CHECK constraints before dropping a local-lite column");
+      return false;
+    }
+
+  LocalLiteTableDef newTable = oldTable;
+  newTable.columns.erase(newTable.columns.begin() + drop);
+  for (size_t i = 0; i < newTable.primaryKeyColumns.size(); i++)
+    if (newTable.primaryKeyColumns[i] > drop) newTable.primaryKeyColumns[i]--;
+  for (size_t i = 0; i < newTable.uniqueKeyColumns.size(); i++)
+    for (size_t j = 0; j < newTable.uniqueKeyColumns[i].size(); j++)
+      if (newTable.uniqueKeyColumns[i][j] > drop)
+        newTable.uniqueKeyColumns[i][j]--;
+  for (size_t i = 0; i < newTable.secondaryIndexes.size(); i++)
+    for (size_t j = 0; j < newTable.secondaryIndexes[i].keyColumns.size(); j++)
+      if (newTable.secondaryIndexes[i].keyColumns[j] > drop)
+        newTable.secondaryIndexes[i].keyColumns[j]--;
+  std::vector<int> mapping(newTable.columns.size());
+  std::vector<std::string> added(newTable.columns.size());
+  for (size_t i = 0; i < mapping.size(); i++)
+    mapping[i] = static_cast<int>(i < drop ? i : i + 1);
+  std::string error;
+  LocalLiteRocksDBStore store;
+  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  localLiteInvalidateNATableCache();
+  return true;
+}
+
+static bool localLiteAlterRenameColumn(
+    StmtDDLAlterTableAlterColumnRename *node,
+    NAString &currCatName, NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  size_t column = oldTable.columns.size();
+  for (size_t i = 0; i < oldTable.columns.size(); i++)
+    {
+      if (oldTable.columns[i].name == node->getColumnName().data()) column = i;
+      if (oldTable.columns[i].name == node->getRenamedColumnName().data())
+        {
+          localLiteDDLDiag("local-lite renamed column already exists");
+          return false;
+        }
+    }
+  if (column == oldTable.columns.size())
+    {
+      localLiteDDLDiag("local-lite column does not exist");
+      return false;
+    }
+  if (!oldTable.checkConstraints.empty())
+    {
+      localLiteDDLDiag("drop CHECK constraints before renaming a local-lite column");
+      return false;
+    }
+  LocalLiteTableDef newTable = oldTable;
+  newTable.columns[column].name = node->getRenamedColumnName().data();
+  std::vector<int> mapping(newTable.columns.size());
+  std::vector<std::string> added(newTable.columns.size());
+  for (size_t i = 0; i < mapping.size(); i++) mapping[i] = i;
+  std::string error;
+  LocalLiteRocksDBStore store;
+  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  localLiteInvalidateNATableCache();
+  return true;
+}
+
+static bool localLiteReplaceDefinition(const LocalLiteTableDef &oldTable,
+                                       const LocalLiteTableDef &newTable)
+{
+  std::vector<int> mapping(newTable.columns.size());
+  std::vector<std::string> added(newTable.columns.size());
+  for (size_t i = 0; i < mapping.size(); i++)
+    mapping[i] = static_cast<int>(i);
+  std::string error;
+  LocalLiteRocksDBStore store;
+  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  localLiteInvalidateNATableCache();
+  return true;
+}
+
+static bool localLiteAlterKeyColumns(
+    const LocalLiteTableDef &table, ElemDDLColRefArray &keys,
+    const char *kind, std::vector<size_t> *columns)
+{
+  if (!columns || keys.entries() == 0)
+    {
+      localLiteDDLDiag(std::string("local-lite ") + kind +
+                       " constraint requires columns");
+      return false;
+    }
+  for (CollIndex i = 0; i < keys.entries(); i++)
+    {
+      size_t found = table.columns.size();
+      for (size_t c = 0; c < table.columns.size(); c++)
+        if (keys[i] && table.columns[c].name == keys[i]->getColumnName().data())
+          found = c;
+      if (found == table.columns.size())
+        {
+          localLiteDDLDiag(std::string("local-lite ") + kind +
+                           " column does not exist");
+          return false;
+        }
+      if (std::find(columns->begin(), columns->end(), found) != columns->end())
+        {
+          localLiteDDLDiag(std::string("duplicate local-lite ") + kind +
+                           " column");
+          return false;
+        }
+      columns->push_back(found);
+    }
+  return true;
+}
+
+static bool localLiteConstraintNameExists(const LocalLiteTableDef &table,
+                                          const std::string &name)
+{
+  if (table.primaryKeyName == name) return true;
+  if (std::find(table.uniqueKeyNames.begin(), table.uniqueKeyNames.end(), name) !=
+      table.uniqueKeyNames.end()) return true;
+  for (size_t i = 0; i < table.checkConstraints.size(); i++)
+    if (table.checkConstraints[i].name == name) return true;
+  for (size_t i = 0; i < table.riConstraints.size(); i++)
+    if (table.riConstraints[i].name == name) return true;
+  return false;
+}
+
+static bool localLiteAlterAddPrimaryKey(StmtDDLAddConstraint *node,
+                                        NAString &currCatName,
+                                        NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  if (!oldTable.primaryKeyColumns.empty())
+    {
+      localLiteDDLDiag("local-lite table already has a primary key");
+      return false;
+    }
+  ElemDDLConstraintPK *pk = node->getConstraint()
+      ? node->getConstraint()->castToElemDDLConstraintPK() : NULL;
+  if (!pk)
+    {
+      localLiteDDLDiag("invalid local-lite primary key constraint");
+      return false;
+    }
+  LocalLiteTableDef newTable = oldTable;
+  if (!localLiteAlterKeyColumns(oldTable, pk->getKeyColumnArray(),
+                                "primary key", &newTable.primaryKeyColumns))
+    return false;
+  newTable.primaryKeyName = localLiteQualifiedConstraintName(
+      oldTable, pk->getConstraintName(), "_PK");
+  if (localLiteConstraintNameExists(oldTable, newTable.primaryKeyName))
+    {
+      localLiteDDLDiag("local-lite constraint already exists");
+      return false;
+    }
+  return localLiteReplaceDefinition(oldTable, newTable);
+}
+
+static bool localLiteAlterAddUnique(StmtDDLAddConstraint *node,
+                                    NAString &currCatName,
+                                    NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  ElemDDLConstraintUnique *unique = node->getConstraint()
+      ? node->getConstraint()->castToElemDDLConstraintUnique() : NULL;
+  if (!unique)
+    {
+      localLiteDDLDiag("invalid local-lite UNIQUE constraint");
+      return false;
+    }
+  LocalLiteTableDef newTable = oldTable;
+  std::vector<size_t> columns;
+  if (!localLiteAlterKeyColumns(oldTable, unique->getKeyColumnArray(),
+                                "UNIQUE", &columns))
+    return false;
+  for (size_t i = 0; i < oldTable.uniqueKeyColumns.size(); i++)
+    if (oldTable.uniqueKeyColumns[i] == columns)
+      {
+        localLiteDDLDiag("duplicate local-lite UNIQUE constraint");
+        return false;
+      }
+  std::string name = localLiteQualifiedConstraintName(
+      oldTable, unique->getConstraintName(),
+      "_UK_" + std::to_string(oldTable.uniqueKeyColumns.size() + 1));
+  if (localLiteConstraintNameExists(oldTable, name))
+    {
+      localLiteDDLDiag("local-lite constraint already exists");
+      return false;
+    }
+  newTable.uniqueKeyColumns.push_back(columns);
+  newTable.uniqueKeyNames.push_back(name);
+  return localLiteReplaceDefinition(oldTable, newTable);
+}
+
+static bool localLiteAlterAddCheck(StmtDDLAddConstraint *node,
+                                   NAString &currCatName,
+                                   NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  ElemDDLConstraintCheck *constraint = node->getConstraint()
+    ? node->getConstraint()->castToElemDDLConstraintCheck() : NULL;
+  LocalLiteTableDef newTable = oldTable;
+  if (!localLiteAppendCheck(&newTable, constraint))
+    return false;
+  const std::string &newName = newTable.checkConstraints.back().name;
+  for (size_t i = 0; i < oldTable.checkConstraints.size(); i++)
+    if (oldTable.checkConstraints[i].name == newName)
+      {
+        localLiteDDLDiag("local-lite CHECK constraint already exists");
+        return false;
+      }
+
+  NAString query("select * from ");
+  query += node->getTableName();
+  query += " where not (";
+  query += newTable.checkConstraints.back().expression.c_str();
+  query += ") fetch first 1 row only";
+  ExeCliInterface cli(STMTHEAP, 0, NULL,
+      CmpCommon::context()->sqlSession()->getParentQid());
+  Queue *rows = NULL;
+  Lng32 rc = cli.fetchAllRows(rows, query.data(), 0, FALSE, FALSE, TRUE);
+  if (rc < 0)
+    {
+      cli.retrieveSQLDiagnostics(CmpCommon::diags());
+      return false;
+    }
+  if (rows && rows->numEntries() > 0)
+    {
+      localLiteDDLDiag("existing rows violate the local-lite CHECK constraint");
+      return false;
+    }
+  return localLiteReplaceDefinition(oldTable, newTable);
+}
+
+static bool localLiteAlterAddRI(StmtDDLAddConstraint *node,
+                                NAString &currCatName,
+                                NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  ElemDDLConstraintRI *constraint = node->getConstraint()
+    ? node->getConstraint()->castToElemDDLConstraintRI() : NULL;
+  LocalLiteTableDef newTable = oldTable;
+  if (!localLiteAppendRI(&newTable, constraint))
+    return false;
+  const std::string &newName = newTable.riConstraints.back().name;
+  for (size_t i = 0; i < oldTable.riConstraints.size(); i++)
+    if (oldTable.riConstraints[i].name == newName)
+      {
+        localLiteDDLDiag("local-lite RI constraint already exists");
+        return false;
+      }
+
+  std::string error;
+  LocalLiteRocksDBStore store;
+  if (!store.validateReferentialIntegrity(newTable, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  return localLiteReplaceDefinition(oldTable, newTable);
+}
+
+static bool localLiteAlterDropConstraint(StmtDDLDropConstraint *node,
+                                         NAString &currCatName,
+                                         NAString &currSchName)
+{
+  LocalLiteTableDef oldTable;
+  if (!localLiteLoadAlterTable(node, currCatName, currSchName, &oldTable))
+    return false;
+  std::string requested = node->getConstraintNameAsQualifiedName()
+    .getQualifiedNameAsAnsiString().data();
+  std::string object = node->getConstraintNameAsQualifiedName()
+    .getObjectName().data();
+  LocalLiteTableDef newTable = oldTable;
+  std::string matchedKeyName;
+  bool dropPrimary = oldTable.primaryKeyName == requested ||
+      oldTable.primaryKeyName == object ||
+      (!oldTable.primaryKeyName.empty() &&
+       oldTable.primaryKeyName.substr(oldTable.primaryKeyName.rfind('.') + 1) ==
+         object);
+  size_t dropUnique = oldTable.uniqueKeyNames.size();
+  for (size_t i = 0; i < oldTable.uniqueKeyNames.size(); i++)
+    {
+      const std::string &stored = oldTable.uniqueKeyNames[i];
+      size_t dot = stored.rfind('.');
+      if (stored == requested || stored == object ||
+          (dot != std::string::npos && stored.substr(dot + 1) == object))
+        dropUnique = i;
+    }
+  if (dropPrimary || dropUnique != oldTable.uniqueKeyNames.size())
+    {
+      matchedKeyName = dropPrimary ? oldTable.primaryKeyName
+                                   : oldTable.uniqueKeyNames[dropUnique];
+      std::vector<LocalLiteTableDef> tables;
+      std::string error;
+      LocalLiteRocksDBStore store;
+      if (!store.listTables("", "", &tables, &error))
+        {
+          localLiteDDLDiag(error);
+          return false;
+        }
+      for (size_t t = 0; t < tables.size(); t++)
+        for (size_t r = tables[t].riConstraints.size(); r > 0; r--)
+          if (tables[t].riConstraints[r - 1].referencedConstraint ==
+              matchedKeyName)
+            {
+              if (node->getDropBehavior() != COM_CASCADE_DROP_BEHAVIOR)
+                {
+                  localLiteDDLDiag("local-lite key constraint is referenced by " +
+                                   tables[t].riConstraints[r - 1].name);
+                  return false;
+                }
+              LocalLiteTableDef updated = tables[t];
+              updated.riConstraints.erase(updated.riConstraints.begin() + r - 1);
+              if (!localLiteReplaceDefinition(tables[t], updated))
+                return false;
+              tables[t] = updated;
+            }
+      if (dropPrimary)
+        {
+          newTable.primaryKeyColumns.clear();
+          newTable.primaryKeyName.clear();
+        }
+      else
+        {
+          newTable.uniqueKeyColumns.erase(
+              newTable.uniqueKeyColumns.begin() + dropUnique);
+          newTable.uniqueKeyNames.erase(
+              newTable.uniqueKeyNames.begin() + dropUnique);
+        }
+      return localLiteReplaceDefinition(oldTable, newTable);
+    }
+  size_t found = newTable.checkConstraints.size();
+  for (size_t i = 0; i < newTable.checkConstraints.size(); i++)
+    {
+      const std::string &stored = newTable.checkConstraints[i].name;
+      size_t dot = stored.rfind('.');
+      std::string storedObject = dot == std::string::npos
+          ? stored : stored.substr(dot + 1);
+      if (stored == requested || storedObject == object)
+        found = i;
+    }
+  if (found != newTable.checkConstraints.size())
+    {
+      newTable.checkConstraints.erase(newTable.checkConstraints.begin() + found);
+      return localLiteReplaceDefinition(oldTable, newTable);
+    }
+  found = newTable.riConstraints.size();
+  for (size_t i = 0; i < newTable.riConstraints.size(); i++)
+    {
+      const std::string &stored = newTable.riConstraints[i].name;
+      size_t dot = stored.rfind('.');
+      std::string storedObject = dot == std::string::npos
+          ? stored : stored.substr(dot + 1);
+      if (stored == requested || storedObject == object)
+        found = i;
+    }
+  if (found == newTable.riConstraints.size())
+    {
+      localLiteDDLDiag("local-lite constraint does not exist");
+      return false;
+    }
+  newTable.riConstraints.erase(newTable.riConstraints.begin() + found);
+  return localLiteReplaceDefinition(oldTable, newTable);
+}
+
 static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
                                  const ComObjectName &objectName)
 {
   if (localLiteRejectUnsupportedCreate(createTableNode))
     return false;
+
+  if (createTableNode->getIsLikeOptionSpecified())
+    {
+      ComObjectName sourceName(createTableNode->getLikeSourceTableName(),
+                               COM_TABLE_NAME);
+      sourceName.applyDefaults(
+          objectName.getCatalogNamePart(), objectName.getSchemaNamePart());
+      LocalLiteRocksDBStore store;
+      LocalLiteTableDef source;
+      std::string error;
+      if (!store.loadTable(
+              sourceName.getCatalogNamePartAsAnsiString().data(),
+              sourceName.getSchemaNamePartAsAnsiString(TRUE).data(),
+              sourceName.getObjectNamePartAsAnsiString(TRUE).data(),
+              &source, &error))
+        {
+          localLiteDDLDiag(error);
+          return false;
+        }
+      if (source.view)
+        {
+          localLiteDDLDiag("CREATE TABLE LIKE cannot use a local-lite view");
+          return false;
+        }
+      LocalLiteTableDef table = source;
+      if (!localLiteFillTableName(objectName, &table))
+        {
+          localLiteDDLDiag("invalid local-lite table name");
+          return false;
+        }
+      table.objectUid = localLiteNewObjectUid();
+      table.nextRowId = 1;
+      table.secondaryIndexes.clear();
+      table.view = false;
+      table.viewText.clear();
+      const std::string sourcePrefix = source.catalog + "." + source.schema +
+                                       "." + source.name;
+      const std::string targetPrefix = table.catalog + "." + table.schema +
+                                       "." + table.name;
+      for (size_t i = 0; i < table.checkConstraints.size(); i++)
+        if (table.checkConstraints[i].name.compare(
+                0, sourcePrefix.size(), sourcePrefix) == 0)
+          table.checkConstraints[i].name = targetPrefix +
+              table.checkConstraints[i].name.substr(sourcePrefix.size());
+      for (size_t i = 0; i < table.riConstraints.size(); i++)
+        if (table.riConstraints[i].name.compare(
+                0, sourcePrefix.size(), sourcePrefix) == 0)
+          table.riConstraints[i].name = targetPrefix +
+              table.riConstraints[i].name.substr(sourcePrefix.size());
+      if (table.primaryKeyName.compare(0, sourcePrefix.size(), sourcePrefix) == 0)
+        table.primaryKeyName = targetPrefix +
+            table.primaryKeyName.substr(sourcePrefix.size());
+      for (size_t i = 0; i < table.uniqueKeyNames.size(); i++)
+        if (table.uniqueKeyNames[i].compare(
+                0, sourcePrefix.size(), sourcePrefix) == 0)
+          table.uniqueKeyNames[i] = targetPrefix +
+              table.uniqueKeyNames[i].substr(sourcePrefix.size());
+      if (createTableNode->getLikeOptions().getIsWithoutConstraints())
+        {
+          table.primaryKeyColumns.clear();
+          table.primaryKeyName.clear();
+          table.uniqueKeyColumns.clear();
+          table.uniqueKeyNames.clear();
+          table.checkConstraints.clear();
+          table.riConstraints.clear();
+        }
+      if (!store.createTable(table, &error))
+        {
+          localLiteDDLDiag(error);
+          return false;
+        }
+      // Clone identity sequence attributes while resetting allocation state.
+      for (size_t i = 0; i < table.columns.size(); i++)
+        if (table.columns[i].defaultClass == COM_IDENTITY_GENERATED_ALWAYS ||
+            table.columns[i].defaultClass == COM_IDENTITY_GENERATED_BY_DEFAULT)
+          {
+            NAString oldName, newName;
+            SequenceGeneratorAttributes::genSequenceName(
+                source.catalog.c_str(), source.schema.c_str(),
+                source.name.c_str(), source.columns[i].name.c_str(), oldName);
+            SequenceGeneratorAttributes::genSequenceName(
+                table.catalog.c_str(), table.schema.c_str(), table.name.c_str(),
+                table.columns[i].name.c_str(), newName);
+            LocalLiteSequenceDef sequence;
+            bool found = false;
+            if (!store.loadSequence(source.catalog, source.schema,
+                                    oldName.data(), &sequence, &found, &error) ||
+                !found)
+              {
+                store.dropTable(table.catalog, table.schema, table.name,
+                                &error);
+                localLiteDDLDiag(found ? error :
+                    "local-lite source identity sequence is missing");
+                return false;
+              }
+            sequence.catalog = table.catalog;
+            sequence.schema = table.schema;
+            sequence.name = newName.data();
+            sequence.objectUid = localLiteNewObjectUid();
+            sequence.nextValue = sequence.startValue;
+            sequence.numCalls = 0;
+            table.columns[i].defaultValue = "SEQNUM(" + table.catalog + "." +
+                table.schema + ".\"" + sequence.name + "\")";
+            if (!store.createSequence(sequence, &error))
+              {
+                store.dropTable(table.catalog, table.schema, table.name,
+                                &error);
+                localLiteDDLDiag(error);
+                return false;
+              }
+          }
+      // Persist identity default text after sequence cloning.
+      LocalLiteTableDef created;
+      if (!store.loadTable(table.catalog, table.schema, table.name,
+                           &created, &error) ||
+          !localLiteReplaceDefinition(created, table))
+        return false;
+      localLiteInvalidateNATableCache();
+      return true;
+    }
 
   ElemDDLColDefArray &colArray = createTableNode->getColDefArray();
   if (colArray.entries() == 0)
@@ -301,6 +1223,8 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
     }
   table.objectUid = localLiteNewObjectUid();
   table.nextRowId = 1;
+  ElemDDLSGOptions *identityOptions = NULL;
+  std::string identityColumn;
 
   ElemDDLColRefArray &primaryKeyArray =
     createTableNode->getPrimaryKeyColRefArray();
@@ -308,6 +1232,13 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
       !localLiteAppendKeyColumns(colArray, primaryKeyArray, "primary key",
                                  &table.primaryKeyColumns))
     return false;
+  if (!table.primaryKeyColumns.empty())
+    {
+      StmtDDLAddConstraintPK *pk = createTableNode->getAddConstraintPK();
+      table.primaryKeyName = localLiteQualifiedConstraintName(
+          table, pk && pk->getConstraint()
+              ? pk->getConstraint()->getConstraintName() : NAString(), "_PK");
+    }
 
   StmtDDLAddConstraintUniqueArray &uniqueArray =
     createTableNode->getAddConstraintUniqueArray();
@@ -328,6 +1259,20 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
                                      &keyColumns))
         return false;
       table.uniqueKeyColumns.push_back(keyColumns);
+      table.uniqueKeyNames.push_back(localLiteQualifiedConstraintName(
+          table, uniqueArray[i]->getConstraint()->getConstraintName(),
+          "_UK_" + std::to_string(table.uniqueKeyColumns.size())));
+    }
+
+  StmtDDLAddConstraintCheckArray &checkArray =
+    createTableNode->getAddConstraintCheckArray();
+  for (CollIndex i = 0; i < checkArray.entries(); i++)
+    {
+      if (!checkArray[i] ||
+          !localLiteAppendCheck(&table,
+                                checkArray[i]->getConstraint()
+                                  ->castToElemDDLConstraintCheck()))
+        return false;
     }
 
   for (CollIndex i = 0; i < colArray.entries(); i++)
@@ -338,13 +1283,6 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
           localLiteDDLDiag("invalid local-lite column definition");
           return false;
         }
-      if (col->getConstraintArray().entries() > 0 ||
-          col->getDefaultClauseStatus() != ElemDDLColDef::DEFAULT_CLAUSE_NOT_SPEC)
-        {
-          localLiteDDLDiag("local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported");
-          return false;
-        }
-
       NAString typeText;
       col->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
       std::string type(typeText.data());
@@ -358,8 +1296,56 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
       localCol.name = col->getColumnName().data();
       localCol.type = type;
       localCol.nullable = !col->isNotNullConstraintSpecified();
+      if (col->getSGOptions())
+        {
+          col->getSGOptions()->setFSDataType(
+              static_cast<ComFSDataType>(
+                  col->getColumnDataType()->getFSDatatype()));
+          if (col->getSGOptions()->validate(2 /* identity */))
+            return false;
+        }
+      if (!localLiteColumnDefault(col, &localCol))
+        return false;
+      if (col->getSGOptions())
+        {
+          if (identityOptions)
+            {
+              localLiteDDLDiag("only one identity column is supported per local-lite table");
+              return false;
+            }
+          identityOptions = col->getSGOptions();
+          identityColumn = localCol.name;
+          NAString sequenceName;
+          SequenceGeneratorAttributes::genSequenceName(
+              table.catalog.c_str(), table.schema.c_str(), table.name.c_str(),
+              identityColumn.c_str(), sequenceName);
+          localCol.defaultValue = "SEQNUM(" + table.catalog + "." +
+              table.schema + ".\"" + sequenceName.data() + "\")";
+        }
       table.columns.push_back(localCol);
+
+      ElemDDLConstraintArray &columnConstraints = col->getConstraintArray();
+      for (CollIndex c = 0; c < columnConstraints.entries(); c++)
+        {
+          ElemDDLConstraintCheck *check = columnConstraints[c]
+            ? columnConstraints[c]->castToElemDDLConstraintCheck() : NULL;
+          if (!check)
+            {
+              localLiteDDLDiag("unsupported local-lite column constraint");
+              return false;
+            }
+          if (!localLiteAppendCheck(&table, check))
+            return false;
+        }
     }
+
+  StmtDDLAddConstraintRIArray &riArray =
+      createTableNode->getAddConstraintRIArray();
+  for (CollIndex i = 0; i < riArray.entries(); i++)
+    if (!riArray[i] || !riArray[i]->getConstraint() ||
+        !localLiteAppendRI(&table, riArray[i]->getConstraint()
+                                      ->castToElemDDLConstraintRI()))
+      return false;
 
   LocalLiteRocksDBStore store;
   std::string error;
@@ -369,18 +1355,43 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
       return false;
     }
 
+  if (identityOptions)
+    {
+      LocalLiteSequenceDef sequence;
+      NAString sequenceName;
+      SequenceGeneratorAttributes::genSequenceName(
+          table.catalog.c_str(), table.schema.c_str(), table.name.c_str(),
+          identityColumn.c_str(), sequenceName);
+      sequence.catalog = table.catalog;
+      sequence.schema = table.schema;
+      sequence.name = sequenceName.data();
+      sequence.objectUid = localLiteNewObjectUid();
+      sequence.fsDataType = identityOptions->getFSDataType();
+      sequence.startValue = identityOptions->getStartValue();
+      sequence.increment = identityOptions->getIncrement();
+      sequence.minValue = identityOptions->getMinValue();
+      sequence.maxValue = identityOptions->getMaxValue();
+      sequence.nextValue = sequence.startValue;
+      sequence.cycle = identityOptions->getCycle();
+      sequence.cache = identityOptions->getCache();
+      sequence.internal = true;
+      if (!store.createSequence(sequence, &error))
+        {
+          std::string rollbackError;
+          store.dropTable(table.catalog, table.schema, table.name,
+                          &rollbackError);
+          localLiteDDLDiag(error + (rollbackError.empty()
+              ? "" : "; rollback failed: " + rollbackError));
+          return false;
+        }
+    }
+
   return true;
 }
 
 static bool localLiteDropTable(StmtDDLDropTable *dropTableNode,
                                const ComObjectName &objectName)
 {
-  if (dropTableNode->getDropBehavior() == COM_CASCADE_DROP_BEHAVIOR)
-    {
-      localLiteDDLDiag("DROP TABLE CASCADE is not supported in local-lite");
-      return false;
-    }
-
   LocalLiteTableDef table;
   if (!localLiteFillTableName(objectName, &table))
     {
@@ -399,12 +1410,113 @@ static bool localLiteDropTable(StmtDDLDropTable *dropTableNode,
   if (!exists && dropTableNode->dropIfExists())
     return true;
 
+  if (exists)
+    {
+      if (!store.loadTable(table.catalog, table.schema, table.name,
+                           &table, &error))
+        {
+          localLiteDDLDiag(error);
+          return false;
+        }
+      std::vector<LocalLiteTableDef> tables;
+      if (!store.listTables("", "", &tables, &error))
+        {
+          localLiteDDLDiag(error);
+          return false;
+        }
+      std::vector<size_t> dependentViews;
+      std::vector<LocalLiteObjectRef> dependencyTargets;
+      LocalLiteObjectRef initialTarget;
+      initialTarget.catalog = table.catalog;
+      initialTarget.schema = table.schema;
+      initialTarget.name = table.name;
+      dependencyTargets.push_back(initialTarget);
+      for (size_t target = 0; target < dependencyTargets.size(); target++)
+        for (size_t i = 0; i < tables.size(); i++)
+          {
+            if (!tables[i].view) continue;
+            bool alreadyAdded = false;
+            for (size_t d = 0; d < dependentViews.size(); d++)
+              if (dependentViews[d] == i) alreadyAdded = true;
+            if (alreadyAdded) continue;
+            for (size_t d = 0; d < tables[i].dependencies.size(); d++)
+              if (tables[i].dependencies[d].catalog ==
+                    dependencyTargets[target].catalog &&
+                  tables[i].dependencies[d].schema ==
+                    dependencyTargets[target].schema &&
+                  tables[i].dependencies[d].name ==
+                    dependencyTargets[target].name)
+                {
+                  if (dropTableNode->getDropBehavior() !=
+                      COM_CASCADE_DROP_BEHAVIOR)
+                    {
+                      localLiteDDLDiag("local-lite object is referenced by view " +
+                          tables[i].catalog + "." + tables[i].schema + "." +
+                          tables[i].name);
+                      return false;
+                    }
+                  dependentViews.push_back(i);
+                  LocalLiteObjectRef next;
+                  next.catalog = tables[i].catalog;
+                  next.schema = tables[i].schema;
+                  next.name = tables[i].name;
+                  dependencyTargets.push_back(next);
+                  break;
+                }
+          }
+      for (size_t i = 0; i < tables.size(); i++)
+        for (size_t r = 0; r < tables[i].riConstraints.size(); r++)
+          if (tables[i].riConstraints[r].referencedCatalog == table.catalog &&
+              tables[i].riConstraints[r].referencedSchema == table.schema &&
+              tables[i].riConstraints[r].referencedTable == table.name)
+            {
+              if (dropTableNode->getDropBehavior() !=
+                  COM_CASCADE_DROP_BEHAVIOR)
+                {
+                  localLiteDDLDiag("local-lite table is referenced by " +
+                                   tables[i].riConstraints[r].name);
+                  return false;
+                }
+              LocalLiteTableDef updated = tables[i];
+              updated.riConstraints.erase(updated.riConstraints.begin() + r);
+              if (!localLiteReplaceDefinition(tables[i], updated))
+                return false;
+              tables[i] = updated;
+              r--;
+            }
+      for (size_t d = dependentViews.size(); d > 0; d--)
+        if (!store.dropTable(tables[dependentViews[d - 1]].catalog,
+                             tables[dependentViews[d - 1]].schema,
+                             tables[dependentViews[d - 1]].name, &error))
+          {
+            localLiteDDLDiag(error);
+            return false;
+          }
+    }
+
   if (!store.dropTable(table.catalog, table.schema, table.name, &error))
     {
       localLiteDDLDiag(error);
       return false;
     }
 
+  for (size_t i = 0; i < table.columns.size(); i++)
+    if (table.columns[i].defaultClass == COM_IDENTITY_GENERATED_BY_DEFAULT ||
+        table.columns[i].defaultClass == COM_IDENTITY_GENERATED_ALWAYS)
+      {
+        NAString sequenceName;
+        SequenceGeneratorAttributes::genSequenceName(
+            table.catalog.c_str(), table.schema.c_str(), table.name.c_str(),
+            table.columns[i].name.c_str(), sequenceName);
+        if (!store.dropSequence(table.catalog, table.schema,
+                                sequenceName.data(), true, &error))
+          {
+            localLiteDDLDiag(error);
+            return false;
+          }
+      }
+
+  localLiteInvalidateNATableCache();
   return true;
 }
 #endif
@@ -5758,6 +6870,11 @@ void CmpSeabaseDDL::alterSeabaseTableAddColumn(
                                                StmtDDLAlterTableAddColumn * alterAddColNode,
                                                NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterAddColumn(alterAddColNode, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 
@@ -6724,6 +7841,11 @@ void CmpSeabaseDDL::alterSeabaseTableDropColumn(
                                                 StmtDDLAlterTableDropColumn * alterDropColNode,
                                                 NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterDropColumn(alterDropColNode, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 
@@ -7973,6 +9095,11 @@ void CmpSeabaseDDL::alterSeabaseTableAlterColumnRename(
      StmtDDLAlterTableAlterColumnRename * alterColNode,
      NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterRenameColumn(alterColNode, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 
@@ -8295,6 +9422,11 @@ void CmpSeabaseDDL::alterSeabaseTableAddPKeyConstraint(
                                                        StmtDDLAddConstraint * alterAddConstraint,
                                                        NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterAddPrimaryKey(alterAddConstraint, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 cliRC2 = 0;
   Lng32 retcode = 0;
@@ -8673,6 +9805,11 @@ void CmpSeabaseDDL::alterSeabaseTableAddUniqueConstraint(
                                                 StmtDDLAddConstraint * alterAddConstraint,
                                                 NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterAddUnique(alterAddConstraint, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 
@@ -8855,6 +9992,11 @@ void CmpSeabaseDDL::alterSeabaseTableAddRIConstraint(
                                                 StmtDDLAddConstraint * alterAddConstraint,
                                                 NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterAddRI(alterAddConstraint, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 
@@ -9663,6 +10805,11 @@ void CmpSeabaseDDL::alterSeabaseTableAddCheckConstraint(
                                                 StmtDDLAddConstraint * alterAddConstraint,
                                                 NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterAddCheck(alterAddConstraint, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   StmtDDLAddConstraintCheck *alterAddCheckNode = alterAddConstraint
     ->castToStmtDDLAddConstraintCheck();
 
@@ -9819,6 +10966,11 @@ void CmpSeabaseDDL::alterSeabaseTableDropConstraint(
                                                 StmtDDLDropConstraint * alterDropConstraint,
                                                 NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteAlterDropConstraint(alterDropConstraint, currCatName, currSchName);
+  processReturn();
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 
@@ -12853,6 +14005,42 @@ ComTdbVirtTableSequenceInfo * CmpSeabaseDDL::getSeabaseSequenceInfo(
  Int32 & schemaOwner,
  Int64 & seqUID)
 {
+#ifdef TRAF_LOCAL_LITE
+  LocalLiteSequenceDef localSequence;
+  bool localFound = false;
+  std::string localError;
+  LocalLiteRocksDBStore localStore;
+  if (!localStore.loadSequence(catName.data(), schName.data(), seqName.data(),
+                               &localSequence, &localFound, &localError) ||
+      !localFound)
+    return NULL;
+  NAString localSchema("\"");
+  localSchema += schName;
+  localSchema += "\"";
+  NAString localObject("\"");
+  localObject += seqName;
+  localObject += "\"";
+  ComObjectName localName(catName, localSchema, localObject);
+  extSeqName = localName.getExternalName(TRUE);
+  objectOwner = NA_UserIdDefault;
+  schemaOwner = NA_UserIdDefault;
+  seqUID = static_cast<Int64>(localSequence.objectUid);
+  ComTdbVirtTableSequenceInfo *localInfo =
+      new (STMTHEAP) ComTdbVirtTableSequenceInfo();
+  localInfo->datatype = localSequence.fsDataType;
+  localInfo->startValue = localSequence.startValue;
+  localInfo->increment = localSequence.increment;
+  localInfo->maxValue = localSequence.maxValue;
+  localInfo->minValue = localSequence.minValue;
+  localInfo->cycleOption = localSequence.cycle ? 1 : 0;
+  localInfo->cache = localSequence.cache;
+  localInfo->nextValue = localSequence.nextValue;
+  localInfo->seqType = localSequence.internal
+      ? COM_INTERNAL_SG : COM_EXTERNAL_SG;
+  localInfo->seqUID = seqUID;
+  localInfo->redefTime = 0;
+  return localInfo;
+#endif
   Lng32 retcode = 0;
   Lng32 cliRC = 0;
 
@@ -14041,6 +15229,14 @@ TrafDesc * CmpSeabaseDDL::getSeabaseTableDesc(const NAString &catName,
                                                      const ComObjectType objType,
                                                      NABoolean includeInvalidDefs)
 {
+#ifdef TRAF_LOCAL_LITE
+  // A LocalLite sequence descriptor is entirely backed by the RocksDB
+  // catalog.  Switching to the metadata compiler here would initialize the
+  // regular Seabase metadata/HBase path before getSeabaseSequenceDesc() gets
+  // a chance to load it.
+  if (objType == COM_SEQUENCE_GENERATOR_OBJECT)
+    return getSeabaseSequenceDesc(catName, schName, objName);
+#endif
   Lng32 retcode = 0;
   Lng32 cliRC = 0;
 

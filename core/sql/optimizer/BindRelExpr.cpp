@@ -10970,7 +10970,12 @@ RelExpr *Insert::bindNode(BindWA *bindWA)
     
     
   }
-  if (NOT (isMerge() || noIMneeded()))
+  if (NOT isMerge() &&
+      (NOT noIMneeded()
+#ifdef TRAF_LOCAL_LITE
+       || getenv("TRAF_LOCAL_LITE")
+#endif
+      ))
     boundExpr = handleInlining(bindWA, boundExpr);
 
   // turn OFF Non-atomic Inserts for ODBC if we have detected that Inlining is needed
@@ -12243,7 +12248,11 @@ RelExpr *Delete::bindNode(BindWA *bindWA)
 
   // Triggers --
   
-  if (NOT noIMneeded())
+  if (NOT noIMneeded()
+#ifdef TRAF_LOCAL_LITE
+      || getenv("TRAF_LOCAL_LITE")
+#endif
+     )
     boundExpr = handleInlining(bindWA, boundExpr);
   else if (hbaseOper() && (getGroupAttr()->isEmbeddedUpdateOrDelete()))
   {

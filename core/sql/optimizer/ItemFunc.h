@@ -2542,7 +2542,9 @@ public:
                       1, messageExpr),
       theSQLCODE_(sqlcode),
       constraintName_(SqlState, h),
-      tableName_("", h)
+      tableName_("", h),
+      optionalStr_("", h),
+      type_(NULL)
     {};
 
   RaiseError (Lng32 sqlcode = 0,

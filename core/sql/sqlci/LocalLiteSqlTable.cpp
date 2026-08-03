@@ -7,6 +7,7 @@
 #ifdef TRAF_LOCAL_LITE
 
 #include "LocalLiteSqlTable.h"
+#include "LocalLiteRocksDBStore.h"
 
 #include "SqlciEnv.h"
 
@@ -54,6 +55,62 @@ static short reportError(SqlciEnv *env, const std::string &message)
   return 1;
 }
 
+static std::string unquoteIdentifier(const std::string &name)
+{
+  if (name.size() >= 2 && name[0] == '"' && name[name.size() - 1] == '"')
+    return name.substr(1, name.size() - 2);
+  return upper(name);
+}
+
+static bool parseSchemaName(const std::string &text,
+                            std::string *catalog,
+                            std::string *schema)
+{
+  std::string name = trim(text);
+  size_t end = name.find_first_of(" \t\r\n");
+  if (end != std::string::npos)
+    name.resize(end);
+  size_t dot = name.find('.');
+  *catalog = dot == std::string::npos
+      ? "TRAFODION" : unquoteIdentifier(name.substr(0, dot));
+  *schema = unquoteIdentifier(
+      dot == std::string::npos ? name : name.substr(dot + 1));
+  return !catalog->empty() && !schema->empty();
+}
+
+static bool parseObjectName(const std::string &text,
+                            std::string *catalog,
+                            std::string *schema,
+                            std::string *object)
+{
+  std::string name = trim(text);
+  size_t end = name.find_first_of(" \t\r\n");
+  if (end != std::string::npos)
+    name.resize(end);
+  size_t first = name.find('.');
+  size_t second = first == std::string::npos
+      ? std::string::npos : name.find('.', first + 1);
+  if (first == std::string::npos)
+    {
+      *catalog = "TRAFODION";
+      *schema = "SEABASE";
+      *object = unquoteIdentifier(name);
+    }
+  else if (second == std::string::npos)
+    {
+      *catalog = "TRAFODION";
+      *schema = unquoteIdentifier(name.substr(0, first));
+      *object = unquoteIdentifier(name.substr(first + 1));
+    }
+  else
+    {
+      *catalog = unquoteIdentifier(name.substr(0, first));
+      *schema = unquoteIdentifier(name.substr(first + 1, second - first - 1));
+      *object = unquoteIdentifier(name.substr(second + 1));
+    }
+  return !catalog->empty() && !schema->empty() && !object->empty();
+}
+
 bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *retcode)
 {
   if (!sqlText || !sqlciEnv || !retcode)
@@ -65,24 +122,88 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
   if (sql.empty())
     return false;
 
-  if (startsWithWord(sql, "CREATE VIEW"))
-    {
-      *retcode = reportError(sqlciEnv, "CREATE VIEW is not supported in local-lite");
-      return true;
-    }
-  if (startsWithWord(sql, "CREATE SEQUENCE"))
-    {
-      *retcode = reportError(sqlciEnv, "CREATE SEQUENCE is not supported in local-lite");
-      return true;
-    }
   if (startsWithWord(sql, "CREATE SCHEMA"))
     {
-      *retcode = reportError(sqlciEnv, "CREATE SCHEMA is not supported in local-lite");
+      std::string rest = trim(sql.substr(strlen("CREATE SCHEMA")));
+      bool ifNotExists = false;
+      if (upper(rest).compare(0, strlen("IF NOT EXISTS"), "IF NOT EXISTS") == 0)
+        {
+          ifNotExists = true;
+          rest = trim(rest.substr(strlen("IF NOT EXISTS")));
+        }
+      std::string catalog;
+      std::string schema;
+      LocalLiteRocksDBStore store;
+      std::string error;
+      if (!parseSchemaName(rest, &catalog, &schema) ||
+          !store.createSchema(catalog, schema, ifNotExists, &error))
+        *retcode = reportError(sqlciEnv, error.empty()
+            ? "invalid local-lite schema name" : error);
+      else
+        *retcode = 0;
+      return true;
+    }
+  if (startsWithWord(sql, "DROP SCHEMA"))
+    {
+      std::string rest = trim(sql.substr(strlen("DROP SCHEMA")));
+      bool ifExists = false;
+      if (upper(rest).compare(0, strlen("IF EXISTS"), "IF EXISTS") == 0)
+        {
+          ifExists = true;
+          rest = trim(rest.substr(strlen("IF EXISTS")));
+        }
+      bool cascade = upper(rest).find(" CASCADE") != std::string::npos;
+      std::string catalog;
+      std::string schema;
+      LocalLiteRocksDBStore store;
+      std::string error;
+      if (!parseSchemaName(rest, &catalog, &schema) ||
+          !store.dropSchema(catalog, schema, ifExists, cascade, &error))
+        *retcode = reportError(sqlciEnv, error.empty()
+            ? "invalid local-lite schema name" : error);
+      else
+        *retcode = 0;
       return true;
     }
   if (startsWithWord(sql, "CREATE SYNONYM"))
     {
-      *retcode = reportError(sqlciEnv, "CREATE SYNONYM is not supported in local-lite");
+      std::string rest = trim(sql.substr(strlen("CREATE SYNONYM")));
+      std::string upperRest = upper(rest);
+      size_t forPos = upperRest.find(" FOR ");
+      std::string catalog, schema, object;
+      std::string targetCatalog, targetSchema, targetObject;
+      LocalLiteRocksDBStore store;
+      std::string error;
+      if (forPos == std::string::npos ||
+          !parseObjectName(rest.substr(0, forPos), &catalog, &schema, &object) ||
+          !parseObjectName(rest.substr(forPos + 5), &targetCatalog,
+                           &targetSchema, &targetObject) ||
+          !store.createSynonym(catalog, schema, object, targetCatalog,
+                               targetSchema, targetObject, &error))
+        *retcode = reportError(sqlciEnv, error.empty()
+            ? "invalid local-lite synonym definition" : error);
+      else
+        *retcode = 0;
+      return true;
+    }
+  if (startsWithWord(sql, "DROP SYNONYM"))
+    {
+      std::string rest = trim(sql.substr(strlen("DROP SYNONYM")));
+      bool ifExists = false;
+      if (upper(rest).compare(0, strlen("IF EXISTS"), "IF EXISTS") == 0)
+        {
+          ifExists = true;
+          rest = trim(rest.substr(strlen("IF EXISTS")));
+        }
+      std::string catalog, schema, object;
+      LocalLiteRocksDBStore store;
+      std::string error;
+      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+          !store.dropSynonym(catalog, schema, object, ifExists, &error))
+        *retcode = reportError(sqlciEnv, error.empty()
+            ? "invalid local-lite synonym name" : error);
+      else
+        *retcode = 0;
       return true;
     }
   if (startsWithWord(sql, "CREATE EXTERNAL TABLE") ||
@@ -92,14 +213,24 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       *retcode = reportError(sqlciEnv, "native HBase/Hive/volatile table DDL is not supported in local-lite");
       return true;
     }
-  if (startsWithWord(sql, "ALTER TABLE"))
-    {
-      *retcode = reportError(sqlciEnv, "ALTER TABLE is not supported in local-lite");
-      return true;
-    }
   if (startsWithWord(sql, "TRUNCATE TABLE"))
     {
-      *retcode = reportError(sqlciEnv, "TRUNCATE TABLE is not supported in local-lite");
+      std::string catalog;
+      std::string schema;
+      std::string object;
+      std::string error;
+      LocalLiteRocksDBStore store;
+      LocalLiteTableDef table;
+      std::vector<LocalLiteRow> rows;
+      if (!parseObjectName(sql.substr(strlen("TRUNCATE TABLE")),
+                           &catalog, &schema, &object) ||
+          !store.loadTable(catalog, schema, object, &table, &error) ||
+          !store.scanRows(table, &rows, &error) ||
+          !store.deleteRows(table, rows, &error))
+        *retcode = reportError(sqlciEnv, error.empty()
+            ? "invalid local-lite table name" : error);
+      else
+        *retcode = 0;
       return true;
     }
   if (startsWithWord(sql, "UPSERT USING LOAD"))

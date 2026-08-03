@@ -9,21 +9,17 @@
 *** ERROR[16001] No message found for SQLCODE -3242. local-lite table already exists: TRAFODION.SEABASE.LLREG009_BASE <MXID>
 --- SQL operation failed with errors.
 >>CREATE TABLE LLREG009_CHECK (id INT CHECK (id > 0));
-*** ERROR[3242]
-*** ERROR[16001] No message found for SQLCODE -3242. local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported <MXID>
---- SQL operation failed with errors.
+--- SQL operation complete.
 >>CREATE TABLE LLREG009_DEFAULT (id INT DEFAULT 1);
-*** ERROR[3242]
-*** ERROR[16001] No message found for SQLCODE -3242. local-lite table constraints other than PRIMARY KEY or UNIQUE are not supported <MXID>
---- SQL operation failed with errors.
+--- SQL operation complete.
 >>CREATE TABLE LLREG009_LOB (payload BLOB(100));
 *** ERROR[3242]
 *** ERROR[16001] No message found for SQLCODE -3242. unsupported local-lite column type: BLOB <MXID>
 --- SQL operation failed with errors.
->>DROP TABLE LLREG009_BASE CASCADE;
-*** ERROR[3242]
-*** ERROR[16001] No message found for SQLCODE -3242. DROP TABLE CASCADE is not supported in local-lite <MXID>
---- SQL operation failed with errors.
+>>CREATE TABLE LLREG009_CASCADE (id INT);
+--- SQL operation complete.
+>>DROP TABLE LLREG009_CASCADE CASCADE;
+--- SQL operation complete.
 >>DROP TABLE LLREG009_MISSING;
 *** ERROR[3242]
 *** ERROR[16001] No message found for SQLCODE -3242. local-lite table does not exist: TRAFODION.SEABASE.LLREG009_MISSING <MXID>
@@ -43,26 +39,45 @@
 >>CREATE INDEX LLREG009_IX ON LLREG009_BASE(id);
 --- SQL operation complete.
 >>CREATE VIEW LLREG009_VIEW AS SELECT * FROM LLREG009_BASE;
-*** ERROR[local-lite] CREATE VIEW is not supported in local-lite
+--- SQL operation complete.
 >>CREATE SEQUENCE LLREG009_SEQ;
-*** ERROR[local-lite] CREATE SEQUENCE is not supported in local-lite
+--- SQL operation complete.
 >>CREATE SCHEMA LLREG009_SCHEMA;
-*** ERROR[local-lite] CREATE SCHEMA is not supported in local-lite
 >>CREATE SYNONYM LLREG009_SYN FOR LLREG009_BASE;
-*** ERROR[local-lite] CREATE SYNONYM is not supported in local-lite
 >>CREATE EXTERNAL TABLE LLREG009_EXT (id INT);
 *** ERROR[local-lite] native HBase/Hive/volatile table DDL is not supported in local-lite
 >>ALTER TABLE LLREG009_BASE ADD COLUMN extra_col INT;
-*** ERROR[local-lite] ALTER TABLE is not supported in local-lite
->>TRUNCATE TABLE LLREG009_BASE;
-*** ERROR[local-lite] TRUNCATE TABLE is not supported in local-lite
->>SELECT id, label
+--- SQL operation complete.
+>>SELECT id, label, extra_col
 +>  FROM LLREG009_BASE
 +>  ORDER BY id;
+ID           LABEL                 EXTRA_COL
+-----------  --------------------  -----------
+          2  upserted                        ?
+--- 1 row(s) selected.
+>>SELECT id, label FROM LLREG009_VIEW ORDER BY id;
 ID           LABEL
 -----------  --------------------
           2  upserted
 --- 1 row(s) selected.
+>>SELECT id, label FROM LLREG009_SYN ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  upserted
+--- 1 row(s) selected.
+>>DROP SYNONYM LLREG009_SYN;
+>>DROP VIEW LLREG009_VIEW;
+--- SQL operation complete.
+>>DROP SEQUENCE LLREG009_SEQ;
+--- SQL operation complete.
+>>DROP SCHEMA LLREG009_SCHEMA;
+>>DROP TABLE LLREG009_CHECK;
+--- SQL operation complete.
+>>DROP TABLE LLREG009_DEFAULT;
+--- SQL operation complete.
+>>TRUNCATE TABLE LLREG009_BASE;
+>>SELECT id, label FROM LLREG009_BASE ORDER BY id;
+--- 0 row(s) selected.
 >>DROP TABLE LLREG009_BASE;
 --- SQL operation complete.
 >>exit;

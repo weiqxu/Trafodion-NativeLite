@@ -977,6 +977,16 @@ short HbaseDelete::codeGen(Generator * generator)
       for (CollIndex i = 0; i < getScanIndexDesc()->getIndexColumns().entries(); i++)
 	{
 	  ValueId scanIndexDescVID = getScanIndexDesc()->getIndexColumns()[i];
+#ifdef TRAF_LOCAL_LITE
+          // A local-lite scan may use an explicit secondary index while the
+          // update target remains the base/primary index. Their descriptor
+          // column lists are not required to have the same length; the
+          // RocksDB executor reconstructs the canonical row and maintains all
+          // indexes in its own WriteBatch. Do not index past the target list
+          // while copying generator attributes.
+          if (i >= getIndexDesc()->getIndexColumns().entries())
+            continue;
+#endif
 	  const ValueId indexDescVID = getIndexDesc()->getIndexColumns()[i];
 	  
 	  CollIndex pos = 0;
@@ -1657,6 +1667,10 @@ short HbaseUpdate::codeGen(Generator * generator)
       for (CollIndex i = 0; i < getScanIndexDesc()->getIndexColumns().entries(); i++)
 	{
 	  ValueId scanIndexDescVID = getScanIndexDesc()->getIndexColumns()[i];
+#ifdef TRAF_LOCAL_LITE
+          if (i >= getIndexDesc()->getIndexColumns().entries())
+            continue;
+#endif
 	  const ValueId indexDescVID = getIndexDesc()->getIndexColumns()[i];
 
 #ifdef TRAF_LOCAL_LITE

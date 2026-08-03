@@ -55,6 +55,12 @@
 #include "ExExeUtilCli.h"
 #include "Generator.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#include <time.h>
+#include <unistd.h>
+#endif
+
 // for privilege checking
 #include "PrivMgrCommands.h"
 #include "PrivMgrDefs.h"
@@ -70,6 +76,108 @@ static bool checkAccessPrivileges(
    Int32 userID,
    PrivMgrBitmap & privilegesBitmap,
    PrivMgrBitmap & grantableBitmap);
+
+#ifdef TRAF_LOCAL_LITE
+static uint64_t localLiteViewUid()
+{
+  uint64_t uid = static_cast<uint64_t>(time(NULL));
+  uid = (uid << 24) ^ static_cast<uint64_t>(getpid() & 0xffff);
+  uid = (uid << 8) ^ static_cast<uint64_t>(rand() & 0xff);
+  return uid ? uid : 1;
+}
+
+static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
+                                          const NAString &catalog,
+                                          const NAString &schema,
+                                          const NAString &object,
+                                          const NAString &viewText,
+                                          const ElemDDLColDefArray &columns)
+{
+  LocalLiteTableDef view;
+  view.catalog = catalog.data();
+  view.schema = schema.data();
+  view.name = object.data();
+  view.objectUid = localLiteViewUid();
+  view.view = true;
+
+  view.viewText = viewText.data();
+  const ParTableUsageList &usedTables =
+      node->getViewUsages().getViewTableUsageList();
+  for (CollIndex i = 0; i < usedTables.entries(); i++)
+    {
+      ComObjectName usedName(
+          usedTables[i].getQualifiedNameObj().getQualifiedNameAsAnsiString(),
+          usedTables[i].getAnsiNameSpace());
+      LocalLiteObjectRef dependency;
+      dependency.catalog =
+          usedName.getCatalogNamePartAsAnsiString().data();
+      dependency.schema =
+          usedName.getSchemaNamePartAsAnsiString(TRUE).data();
+      dependency.name =
+          usedName.getObjectNamePartAsAnsiString(TRUE).data();
+      if (!dependency.catalog.empty() && !dependency.schema.empty() &&
+          !dependency.name.empty())
+        view.dependencies.push_back(dependency);
+    }
+  for (CollIndex i = 0; i < columns.entries(); i++)
+    {
+      ElemDDLColDef *column = columns[i];
+      if (!column || !column->getColumnDataType())
+        return false;
+      LocalLiteColumnDef localColumn;
+      localColumn.name = column->getColumnName().data();
+      NAString typeText;
+      column->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
+      localColumn.type = typeText.data();
+      localColumn.nullable = column->getColumnDataType()->supportsSQLnull();
+      localColumn.defaultClass = localColumn.nullable
+        ? COM_NULL_DEFAULT : COM_NO_DEFAULT;
+      view.columns.push_back(localColumn);
+    }
+
+  LocalLiteRocksDBStore store;
+  std::string error;
+  bool exists = false;
+  if (!store.tableExists(view.catalog, view.schema, view.name, &exists, &error))
+    return false;
+  if (exists)
+    {
+      if (node->createIfNotExists())
+        return true;
+      if (!(node->isCreateOrReplaceViewCascade() || node->isCreateOrReplaceView()))
+        {
+          *CmpCommon::diags() << DgSqlCode(-1390)
+                              << DgString0(node->getViewName());
+          return false;
+        }
+      LocalLiteTableDef oldView;
+      if (!store.loadTable(view.catalog, view.schema, view.name,
+                           &oldView, &error) || !oldView.view)
+        return false;
+      view.objectUid = oldView.objectUid;
+      std::vector<int> mapping(view.columns.size(), -1);
+      std::vector<std::string> added(view.columns.size());
+      if (!store.alterTable(oldView, view, mapping, added, &error))
+        {
+          *CmpCommon::diags() << DgSqlCode(-3242)
+                              << DgString0((char *)error.c_str());
+          return false;
+        }
+      ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+      ActiveSchemaDB()->getNATableDB()->setCachingON();
+      return true;
+    }
+  if (!store.createTable(view, &error))
+    {
+      *CmpCommon::diags() << DgSqlCode(-3242)
+                          << DgString0((char *)error.c_str());
+      return false;
+    }
+  ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+  ActiveSchemaDB()->getNATableDB()->setCachingON();
+  return true;
+}
+#endif
 
 
 short CmpSeabaseDDL::buildViewText(StmtDDLCreateView * createViewParseNode,
@@ -700,6 +808,18 @@ void CmpSeabaseDDL::createSeabaseView(
   const NAString objectNamePart = viewName.getObjectNamePartAsAnsiString(TRUE);
   const NAString extViewName = viewName.getExternalName(TRUE);
   const NAString extNameForHbase = catalogNamePart + "." + schemaNamePart + "." + objectNamePart;
+
+#ifdef TRAF_LOCAL_LITE
+  CmpCommon::diags()->clear();
+  NAString localViewText;
+  ElemDDLColDefArray localColumns(STMTHEAP);
+  if (buildViewText(createViewNode, localViewText) == 0 &&
+      buildViewColInfo(createViewNode, &localColumns) == 0)
+    localLiteCreateViewDefinition(createViewNode, catalogNamePart,
+                                  schemaNamePart, objectNamePart,
+                                  localViewText, localColumns);
+  return;
+#endif
   
   ExeCliInterface cliInterface(STMTHEAP, 0, NULL, 
   CmpCommon::context()->sqlSession()->getParentQid());
@@ -1141,6 +1261,93 @@ void CmpSeabaseDDL::dropSeabaseView(
 				    StmtDDLDropView * dropViewNode,
 				    NAString &currCatName, NAString &currSchName)
 {
+#ifdef TRAF_LOCAL_LITE
+  CmpCommon::diags()->clear();
+  ComObjectName localName(dropViewNode->getViewName());
+  ComAnsiNamePart localCatalog(currCatName);
+  ComAnsiNamePart localSchema(currSchName);
+  localName.applyDefaults(localCatalog, localSchema);
+  LocalLiteRocksDBStore localStore;
+  std::string localError;
+  bool localExists = false;
+  const std::string catalog = localName.getCatalogNamePartAsAnsiString().data();
+  const std::string schema = localName.getSchemaNamePartAsAnsiString(TRUE).data();
+  const std::string object = localName.getObjectNamePartAsAnsiString(TRUE).data();
+  if (!localStore.tableExists(catalog, schema, object, &localExists, &localError))
+    *CmpCommon::diags() << DgSqlCode(-3242)
+                        << DgString0((char *)localError.c_str());
+  else if (!localExists && !dropViewNode->dropIfExists())
+    *CmpCommon::diags() << DgSqlCode(-1389)
+                        << DgString0(dropViewNode->getViewName());
+  else if (localExists)
+    {
+      std::vector<LocalLiteTableDef> tables;
+      if (!localStore.listTables("", "", &tables, &localError))
+        {
+          *CmpCommon::diags() << DgSqlCode(-3242)
+                              << DgString0((char *)localError.c_str());
+          return;
+        }
+      std::vector<LocalLiteObjectRef> targets;
+      std::vector<size_t> dependents;
+      LocalLiteObjectRef root;
+      root.catalog = catalog;
+      root.schema = schema;
+      root.name = object;
+      targets.push_back(root);
+      for (size_t target = 0; target < targets.size(); target++)
+        for (size_t i = 0; i < tables.size(); i++)
+          {
+            if (!tables[i].view) continue;
+            bool alreadyAdded = false;
+            for (size_t d = 0; d < dependents.size(); d++)
+              if (dependents[d] == i) alreadyAdded = true;
+            if (alreadyAdded) continue;
+            for (size_t d = 0; d < tables[i].dependencies.size(); d++)
+              if (tables[i].dependencies[d].catalog == targets[target].catalog &&
+                  tables[i].dependencies[d].schema == targets[target].schema &&
+                  tables[i].dependencies[d].name == targets[target].name)
+                {
+                  if (dropViewNode->getDropBehavior() !=
+                      COM_CASCADE_DROP_BEHAVIOR)
+                    {
+                      localError = "local-lite view is referenced by " +
+                          tables[i].catalog + "." + tables[i].schema + "." +
+                          tables[i].name;
+                      *CmpCommon::diags() << DgSqlCode(-3242)
+                          << DgString0((char *)localError.c_str());
+                      return;
+                    }
+                  dependents.push_back(i);
+                  LocalLiteObjectRef next;
+                  next.catalog = tables[i].catalog;
+                  next.schema = tables[i].schema;
+                  next.name = tables[i].name;
+                  targets.push_back(next);
+                  break;
+                }
+          }
+      for (size_t d = dependents.size(); d > 0; d--)
+        if (!localStore.dropTable(tables[dependents[d - 1]].catalog,
+                                  tables[dependents[d - 1]].schema,
+                                  tables[dependents[d - 1]].name,
+                                  &localError))
+          {
+            *CmpCommon::diags() << DgSqlCode(-3242)
+                                << DgString0((char *)localError.c_str());
+            return;
+          }
+      if (!localStore.dropTable(catalog, schema, object, &localError))
+        {
+          *CmpCommon::diags() << DgSqlCode(-3242)
+                              << DgString0((char *)localError.c_str());
+          return;
+        }
+      ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+      ActiveSchemaDB()->getNATableDB()->setCachingON();
+    }
+  return;
+#endif
   Lng32 cliRC = 0;
   Lng32 retcode = 0;
 

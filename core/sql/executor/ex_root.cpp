@@ -914,7 +914,14 @@ Int32 ex_root_tcb::execute(CliGlobals *cliGlobals,
 	  ExecuteId *uniqueExecuteId = (ExecuteId *)
 		  (entry->getAtp()->getTupp(2).getDataPointer() + root_tdb().getUniqueExecuteIdOffset());
 
+#ifdef TRAF_LOCAL_LITE
+          // There is no Guardian process handle in the standalone runtime.
+          // PID plus root TCB address is sufficient to distinguish concurrent
+          // local executions within the single local-lite node.
+          uniqueExecuteId->cpuNum = 0;
+#else
 	  uniqueExecuteId->cpuNum = glob->castToExExeStmtGlobals()->getIpcEnvironment()->getMyOwnProcessId(IPC_DOM_GUA_PHANDLE).getCpuNum();
+#endif
 	  uniqueExecuteId->pid = getpid();
 	  uniqueExecuteId->rootTcbAddress = this;
 

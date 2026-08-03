@@ -1085,6 +1085,116 @@ bool LocalLiteApplyBinaryUpdate(
   return true;
 }
 
+bool LocalLiteRebuildBinaryRow(
+    const LocalLiteTableDef &oldTable,
+    const LocalLiteTableDef &newTable,
+    const std::string &original,
+    const std::vector<int> &newToOldColumn,
+    const std::vector<std::string> &addedValues,
+    std::string *encoded,
+    std::string *error)
+{
+  const size_t magicLen = sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1;
+  if (!encoded || newToOldColumn.size() != newTable.columns.size() ||
+      addedValues.size() != newTable.columns.size())
+    {
+      setError(error, "invalid local-lite ALTER row mapping");
+      return false;
+    }
+  if (original.size() < magicLen ||
+      memcmp(original.data(), LOCAL_LITE_BINARY_ROW_MAGIC, magicLen) != 0)
+    {
+      setError(error, "invalid local-lite binary row payload");
+      return false;
+    }
+
+  std::vector<LocalLiteStoredColumn> oldColumns;
+  std::vector<LocalLiteStoredColumn> newColumns;
+  size_t oldRowLen = 0;
+  size_t newRowLen = 0;
+  if (!computeLayout(oldTable, &oldColumns, &oldRowLen, error) ||
+      !computeLayout(newTable, &newColumns, &newRowLen, error))
+    return false;
+  if (original.size() - magicLen < oldRowLen)
+    {
+      setError(error, "truncated local-lite binary row payload");
+      return false;
+    }
+
+  const char *oldRow = original.data() + magicLen;
+  std::string newRow(newRowLen, '\0');
+  initializeCanonicalRow(newColumns, &newRow[0], newRow.size());
+  for (size_t i = 0; i < newColumns.size(); i++)
+    {
+      int oldIndex = newToOldColumn[i];
+      if (oldIndex < 0)
+        {
+          if (!writeValue(&newRow[0], newColumns[i], addedValues[i], error))
+            return false;
+          continue;
+        }
+      if (static_cast<size_t>(oldIndex) >= oldColumns.size())
+        {
+          setError(error, "local-lite ALTER row mapping is out of range");
+          return false;
+        }
+      const LocalLiteStoredColumn &src = oldColumns[oldIndex];
+      const LocalLiteStoredColumn &dest = newColumns[i];
+      if (src.type != dest.type || src.length != dest.length ||
+          src.precision != dest.precision || src.scale != dest.scale)
+        {
+          setError(error,
+                   "local-lite ALTER COLUMN type conversion is not supported");
+          return false;
+        }
+
+      bool isNull = src.nullable && ExpTupleDesc::isNullValue(
+          const_cast<char *>(oldRow) + src.nullIndOffset,
+          src.nullBitIndex, ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
+      if (isNull)
+        {
+          if (!dest.nullable)
+            {
+              setError(error,
+                       "NULL is not allowed for local-lite NOT NULL column");
+              return false;
+            }
+          ExpTupleDesc::setNullValue(&newRow[0] + dest.nullIndOffset,
+                                     dest.nullBitIndex,
+                                     ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
+          continue;
+        }
+      if (dest.nullable)
+        ExpTupleDesc::clearNullValue(&newRow[0] + dest.nullIndOffset,
+                                     dest.nullBitIndex,
+                                     ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
+      if (src.type == LL_TYPE_VARCHAR)
+        {
+          UInt32 len = ExpAlignedFormat::getVarLength(
+              const_cast<char *>(oldRow) + src.vcLenIndOffset);
+          if (len > src.length)
+            {
+              setError(error, "invalid local-lite VARCHAR row payload");
+              return false;
+            }
+          ExpAlignedFormat::setVarLength(&newRow[0] + dest.vcLenIndOffset,
+                                         len);
+          if (len)
+            str_cpy_all(&newRow[0] + dest.offset, oldRow + src.offset, len);
+        }
+      else
+        str_cpy_all(&newRow[0] + dest.offset, oldRow + src.offset, src.length);
+    }
+
+  UInt32 adjustedLen = ExpAlignedFormat::adjustDataLength(
+      &newRow[0], static_cast<UInt32>(newRow.size()),
+      ExpAlignedFormat::ALIGNMENT, TRUE);
+  newRow.resize(adjustedLen);
+  encoded->assign(LOCAL_LITE_BINARY_ROW_MAGIC, magicLen);
+  encoded->append(newRow);
+  return true;
+}
+
 static bool storedColumnIsNull(const std::string &row,
                                const LocalLiteStoredColumn &col)
 {
@@ -1390,6 +1500,82 @@ bool LocalLiteBuildUniqueKeyFromTextFields(
   encoded.append(row);
   return LocalLiteBuildUniqueKey(table, encoded, keyColumns, keyOrdinal,
                                  key, hasKey, error);
+}
+
+bool LocalLiteBuildConstraintKey(
+    const LocalLiteTableDef &table, const std::string &encoded,
+    const std::vector<size_t> &keyColumns, std::string *key,
+    bool *hasKey, std::string *error)
+{
+  if (!key || !hasKey || keyColumns.empty())
+    {
+      setError(error, "invalid local-lite constraint key output");
+      return false;
+    }
+  if (encoded.size() < sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1 ||
+      memcmp(encoded.data(), LOCAL_LITE_BINARY_ROW_MAGIC,
+             sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1) != 0)
+    {
+      setError(error, "invalid local-lite binary row payload");
+      return false;
+    }
+  std::vector<LocalLiteStoredColumn> columns;
+  size_t fullRowLen = 0;
+  if (!computeLayout(table, &columns, &fullRowLen, error))
+    return false;
+  std::string storedRow =
+      encoded.substr(sizeof(LOCAL_LITE_BINARY_ROW_MAGIC) - 1);
+  key->clear();
+  appendKeyUint64(key, static_cast<uint64_t>(keyColumns.size()));
+  for (size_t i = 0; i < keyColumns.size(); i++)
+    {
+      size_t sourceIndex = keyColumns[i];
+      if (sourceIndex >= columns.size())
+        {
+          setError(error, "local-lite constraint column index out of range");
+          return false;
+        }
+      const LocalLiteStoredColumn &col = columns[sourceIndex];
+      if (storedColumnIsNull(storedRow, col))
+        {
+          *hasKey = false;
+          key->clear();
+          return true;
+        }
+      const char *src = NULL;
+      size_t len = 0;
+      if (col.type == LL_TYPE_VARCHAR)
+        {
+          if (!hasRange(storedRow, col.vcLenIndOffset,
+                        ExpAlignedFormat::VARIABLE_LEN_SIZE))
+            {
+              setError(error, "truncated local-lite binary row payload");
+              return false;
+            }
+          len = ExpAlignedFormat::getVarLength(
+              const_cast<char *>(storedRow.data()) + col.vcLenIndOffset);
+          if (!hasRange(storedRow, col.offset, len))
+            {
+              setError(error, "truncated local-lite binary row payload");
+              return false;
+            }
+          src = storedRow.data() + col.offset;
+        }
+      else
+        {
+          len = col.length;
+          if (!hasRange(storedRow, col.offset, len))
+            {
+              setError(error, "truncated local-lite binary row payload");
+              return false;
+            }
+          src = storedRow.data() + col.offset;
+        }
+      appendKeyUint64(key, static_cast<uint64_t>(len));
+      if (len) key->append(src, len);
+    }
+  *hasKey = true;
+  return true;
 }
 
 bool LocalLiteBuildSecondaryIndexPrefixFromTextFields(

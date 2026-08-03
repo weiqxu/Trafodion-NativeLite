@@ -62,6 +62,8 @@
 
 #include "StmtDDLCreateView.h"
 #include "StmtDDLDropView.h"
+#include "StmtDDLCreateTrigger.h"
+#include "StmtDDLDropTrigger.h"
 #include "StmtDDLCreateTable.h"
 #include "StmtDDLDropTable.h"
 #include "StmtDDLCreateIndex.h"
@@ -4066,6 +4068,7 @@ RelExpr * DDLExpr::bindNode(BindWA *bindWA)
   NABoolean isRegister = FALSE;
   NABoolean isCommentOn = FALSE;
   NABoolean isHive = FALSE;
+  NABoolean isTrigger = FALSE;
 
 
   NABoolean specialType = FALSE;
@@ -4367,6 +4370,20 @@ RelExpr * DDLExpr::bindNode(BindWA *bindWA)
         getDDLNode()->castToStmtDDLNode()->castToStmtDDLDropView()->
         getViewNameAsQualifiedName();
     }
+    else if (getExprNode()->castToStmtDDLNode()->castToStmtDDLCreateTrigger())
+    {
+      isCreate_ = TRUE;
+      isTrigger = TRUE;
+      qualObjName_ = getExprNode()->castToStmtDDLNode()->
+        castToStmtDDLCreateTrigger()->getTriggerNameAsQualifiedName();
+    }
+    else if (getExprNode()->castToStmtDDLNode()->castToStmtDDLDropTrigger())
+    {
+      isDrop_ = TRUE;
+      isTrigger = TRUE;
+      qualObjName_ = getExprNode()->castToStmtDDLNode()->
+        castToStmtDDLDropTrigger()->getTriggerNameAsQualifiedName();
+    }
     else if (getExprNode()->castToStmtDDLNode()->castToStmtDDLCreateSequence())
     {
       StmtDDLCreateSequence * createSeq =
@@ -4562,7 +4579,8 @@ RelExpr * DDLExpr::bindNode(BindWA *bindWA)
       }
 
     if ((isCreateSchema || isDropSchema || isAlterSchema) || isRegister || isCommentOn ||
-        ((isTable_ || isIndex_ || isView_ || isRoutine_ || isLibrary_ || isSeq || isHive) &&
+        ((isTable_ || isIndex_ || isView_ || isRoutine_ || isLibrary_ ||
+          isSeq || isHive || isTrigger) &&
          (isCreate_ || isDrop_ || purgedata() || 
           (isAlter_ && (alterAddCol || alterDropCol || alterDisableIndex || alterEnableIndex || 
 			alterAddConstr || alterDropConstr || alterRenameTable ||
@@ -6995,5 +7013,3 @@ short ExeUtilHBaseBulkUnLoad::setOptions(NAList<UnloadOption*>  *
 
   return 0;
 };
-
-

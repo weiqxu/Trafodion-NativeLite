@@ -37,6 +37,9 @@
 
 
 #include "CmpSeabaseDDLincludes.h"
+#ifdef TRAF_LOCAL_LITE
+#include "LocalLiteRocksDBStore.h"
+#endif
 #include "StmtDDLCreateSchema.h"
 #include "StmtDDLDropSchema.h"
 #include "StmtDDLAlterSchema.h"
@@ -242,6 +245,17 @@ void CmpSeabaseDDL::createSeabaseSchema(
    NAString catName = schemaName.getCatalogNamePartAsAnsiString();
    ComAnsiNamePart schNameAsComAnsi = schemaName.getSchemaNamePart();
    NAString schName = schNameAsComAnsi.getInternalName();
+
+#ifdef TRAF_LOCAL_LITE
+   LocalLiteRocksDBStore localStore;
+   std::string localError;
+   if (!localStore.createSchema(catName.data(), schName.data(),
+                                createSchemaNode->createIfNotExists(),
+                                &localError))
+     *CmpCommon::diags() << DgSqlCode(-3242)
+                         << DgString0((char *)localError.c_str());
+   return;
+#endif
 
    ExeCliInterface cliInterface(STMTHEAP, 0, NULL,
    CmpCommon::context()->sqlSession()->getParentQid());
@@ -511,6 +525,23 @@ void CmpSeabaseDDL::dropSeabaseSchema(StmtDDLDropSchema * dropSchemaNode)
    ComAnsiNamePart schNameAsComAnsi = schemaName.getSchemaNamePart();
    NAString schName = schNameAsComAnsi.getInternalName();
    ComObjectName objName(catName,schName,NAString("dummy"),COM_TABLE_NAME,TRUE);
+
+#ifdef TRAF_LOCAL_LITE
+   LocalLiteRocksDBStore localStore;
+   std::string localError;
+   if (!localStore.dropSchema(
+           catName.data(), schName.data(), dropSchemaNode->dropIfExists(),
+           dropSchemaNode->getDropBehavior() == COM_CASCADE_DROP_BEHAVIOR,
+           &localError))
+     *CmpCommon::diags() << DgSqlCode(-3242)
+                         << DgString0((char *)localError.c_str());
+   else
+     {
+       ActiveSchemaDB()->getNATableDB()->setCachingOFF();
+       ActiveSchemaDB()->getNATableDB()->setCachingON();
+     }
+   return;
+#endif
 
    ExeCliInterface cliInterface(STMTHEAP, 0, NULL, 
                                 CmpCommon::context()->sqlSession()->getParentQid());

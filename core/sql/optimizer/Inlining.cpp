@@ -868,6 +868,13 @@ static ItemExpr *addCheckForTriggerEnabled(BindWA    *bindWA,
 					   Trigger   *triggerObj,
 					   CollHeap  *heap)
 {
+#ifdef TRAF_LOCAL_LITE
+  // Local-lite currently has no ENABLE/DISABLE TRIGGER state. Avoid the
+  // executor trigger-status vector (which is populated from Seabase
+  // metadata) and treat every RocksDB catalog trigger as enabled.
+  if (getenv("TRAF_LOCAL_LITE"))
+    return whenClause ? whenClause : new(heap) BoolVal(ITM_RETURN_TRUE);
+#endif
   // Register the trigger timestamp in the list managed by bindWA. The
   // returned value is the index into the trigger array for this RelExpr
   CollIndex triggerIndex = bindWA->addTrigger(triggerObj->getTimeStamp());
@@ -4215,6 +4222,15 @@ RelExpr * GenericUpdate::handleInlining(BindWA *bindWA, RelExpr *boundExpr)
   RefConstraintList *riConstraints = 
     getRIs(bindWA, getTableDesc()->getNATable());
 #endif
+#ifdef TRAF_LOCAL_LITE
+  const NABoolean localLiteNativeStore = getenv("TRAF_LOCAL_LITE") != NULL;
+  // RocksDB validates RI and maintains physical secondary indexes in the
+  // storage mutation itself. Only user triggers need the legacy inliner.
+  if (localLiteNativeStore)
+    riConstraints = NULL;
+#else
+  const NABoolean localLiteNativeStore = FALSE;
+#endif
 
   if (riConstraints) 
     getInliningInfo().setFlags(II_hasRI);
@@ -4301,7 +4317,8 @@ RelExpr * GenericUpdate::handleInlining(BindWA *bindWA, RelExpr *boundExpr)
     }
   // Now that we know the final set of columns updated in the query, we
   // can determine whether the update of the MVs is direct or indirect.
-  allTriggers = getTriggeredMvs(bindWA, allTriggers, columns);
+  if (!localLiteNativeStore)
+    allTriggers = getTriggeredMvs(bindWA, allTriggers, columns);
   if (bindWA->errStatus())
     return this;
 #endif
@@ -4309,7 +4326,7 @@ RelExpr * GenericUpdate::handleInlining(BindWA *bindWA, RelExpr *boundExpr)
   if ((allTriggers   == NULL) && 
       (riConstraints == NULL) && 
       !isMVLoggingRequired    &&
-      !getTableDesc()->hasSecondaryIndexes())
+      (localLiteNativeStore || !getTableDesc()->hasSecondaryIndexes()))
   {
     InliningFinale(bindWA, boundExpr, origScopeRETDesc);
     bindWA->resetUniqueIudNum(prevIudNum); // restore the saved IudNum
@@ -4427,7 +4444,7 @@ RelExpr * GenericUpdate::handleInlining(BindWA *bindWA, RelExpr *boundExpr)
       }
   }
 
-  NABoolean needIM = isIMNeeded(columns);
+  NABoolean needIM = localLiteNativeStore ? FALSE : isIMNeeded(columns);
 
   if (needIM) {
     if ((isNoRollback() || 
@@ -4926,4 +4943,3 @@ RelExpr *Update::transformUpdatePrimaryKey(BindWA *bindWA)
    boundExpr = insNode->bindNode(bindWA);
    return boundExpr;
 }
-

@@ -57,7 +57,7 @@ LSRC := sqlci_lex.ll
 YACC_VAR_PREFIX := sqlci
 LEX_PREFIX := sqlci
 
-SRCPATH := sqlci exp
+SRCPATH := sqlci exp localstore
 
 $(TARGOBJDIR)/$(LEX_PREFIX)/sqlci_lex.$(OBJSUFFIX) : $(TARGOBJDIR)/sqlci_yacc.h
 $(TARGOBJDIR)/SqlCmd.$(OBJSUFFIX): tdm_sqlmxmsg_intl/$(TARGTYPE)/$(ARCHBITS)/$(FLAVOR)/sqlmxmsg_msg.h

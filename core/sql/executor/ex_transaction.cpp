@@ -73,6 +73,7 @@ static int64_t localLiteExecutorTxnId(ExTransaction *ta)
 
   return static_cast<int64_t>(reinterpret_cast<intptr_t>(ta));
 }
+
 #endif
 
 ExTransaction::ExTransaction(CliGlobals * cliGlob, CollHeap *heap)
@@ -1175,6 +1176,11 @@ short ExTransTcb::work()
 	        if (!LocalLiteTxnManager::commitForExecutor(
 	                localLiteExecutorTxnId(ta), &localLiteError))
 	          {
+	            // The local transaction manager discards the pending image
+	            // when commit validation fails. Restore the session state as
+	            // well so the next statement does not remain in a phantom
+	            // manual transaction.
+	            ta->enableAutoCommit();
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
 	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)

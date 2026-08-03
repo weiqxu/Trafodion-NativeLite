@@ -2472,6 +2472,12 @@ const NAType *RaiseError::synthesizeType()
           *CmpCommon::diags() << DgSqlCode(-3185);
           return NULL;
 	}
+
+      // SIGNAL has a boolean result regardless of the optional result type
+      // used by the constraint-error constructor. Keeping these two paths
+      // separate also prevents an unrelated type pointer from being used for
+      // the string-expression form.
+      return new HEAP SQLBooleanRelat(FALSE);
     }
 
   if (type_)
