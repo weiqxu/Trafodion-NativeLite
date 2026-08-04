@@ -1,0 +1,272 @@
+>>create table t014t1s (a int, b int not null);
+--- SQL operation complete.
+>>insert into t014t1s values (1,1), (2,2);
+--- 2 row(s) inserted.
+>>create table t014t1t as select * from t014t1s;
+--- 2 row(s) inserted.
+>>log;
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" INT,
+  "B" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+A            B
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t(a,b) as select * from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" INT,
+  "B" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+A            B
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t(a,b) as select a*a*a*a, b ** b from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" LARGEINT,
+  "B" FLOAT(54) NOT NULL
+)
+;
+>>select * from t014t1t;
+A                     B
+--------------------  -------------------------
+                   1   1.00000000000000000E+000
+                  16   4.00000000000000000E+000
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t(c,d) as select * from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "C" INT,
+  "D" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+C            D
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t as select a c, b d from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "C" INT,
+  "D" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+C            D
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t as select a+1 c, b+1 d from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "C" NUMERIC(11, 0),
+  "D" NUMERIC(11, 0) NOT NULL
+)
+;
+>>select * from t014t1t;
+C                     D
+--------------------  --------------------
+                   2                     2
+                   3                     3
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t(c,d) as select a+1, b+1 from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "C" NUMERIC(11, 0),
+  "D" NUMERIC(11, 0) NOT NULL
+)
+;
+>>select * from t014t1t;
+C                     D
+--------------------  --------------------
+                   2                     2
+                   3                     3
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t(a int, b int not null) as select a+1, b+1 from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" INT,
+  "B" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+A            B
+-----------  -----------
+          2            2
+          3            3
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>#ifndef SEABASE_REGRESS
+>>begin work;
+--- SQL operation complete.
+>>#endif
+>>create table t014t1t(a int, b int not null) as select a+1, b+1 from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" INT,
+  "B" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+A            B
+-----------  -----------
+          2            2
+          3            3
+--- 2 row(s) selected.
+>>#ifndef SEABASE_REGRESS
+>>commit work;
+--- SQL operation complete.
+>>#endif
+>>#ifndef SEABASE_REGRESS
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create volatile table t014t1t(a int, b int not null) as select a+1, b+1 from t014t1s;
+--- 2 row(s) inserted.
+>>invoke t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" INT,
+  "B" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+A            B
+-----------  -----------
+          2            2
+          3            3
+--- 2 row(s) selected.
+>>#endif
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t store by (b) as select a,b from t014t1s;
+--- 2 row(s) inserted.
+>>showddl t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" INT,
+  "B" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+A            B
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t(c,d) store by (d) as select a,b from t014t1s;
+--- 2 row(s) inserted.
+>>showddl t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "C" INT,
+  "D" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+C            D
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t(c int,d int not null) store by (d) as select a,b from t014t1s;
+--- 2 row(s) inserted.
+>>showddl t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "C" INT,
+  "D" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+C            D
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t (a, b int not null) as select * from t014t1s;
+--- 2 row(s) inserted.
+>>showddl t014t1t;
+CREATE TABLE "TRAFODION"."SEABASE"."T014T1T"
+(
+  "A" INT,
+  "B" INT NOT NULL
+)
+;
+>>select * from t014t1t;
+A            B
+-----------  -----------
+          1            1
+          2            2
+--- 2 row(s) selected.
+>>drop table t014t1t;
+--- SQL operation complete.
+>>create table t014t1t (a) as select * from t014t1s;
+*** ERROR[4023]
+*** ERROR[16001] No message found for SQLCODE -4023.      2 1 <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+--- 0 row(s) inserted.
+>>create table t014t1t as select a+1, b+1 from t014t1s;
+*** ERROR[1099]
+*** ERROR[16001] No message found for SQLCODE -1099.      1 <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>create table t014t1t (a char(10), b date) as select * from t014t1s;
+*** ERROR[4035]
+*** ERROR[16001] No message found for SQLCODE -4035. INTEGER DATE <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+--- 0 row(s) inserted.
+>>create schema tempsch create table t014t1 as select * from t014t1s;
+>>log;

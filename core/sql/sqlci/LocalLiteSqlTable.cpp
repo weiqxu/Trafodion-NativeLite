@@ -667,10 +667,9 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       return true;
     }
   if (startsWithWord(sql, "CREATE EXTERNAL TABLE") ||
-      startsWithWord(sql, "CREATE HBASE TABLE") ||
-      startsWithWord(sql, "CREATE VOLATILE TABLE"))
+      startsWithWord(sql, "CREATE HBASE TABLE"))
     {
-      *retcode = reportError(sqlciEnv, "native HBase/Hive/volatile table DDL is not supported in local-lite");
+      *retcode = reportError(sqlciEnv, "native HBase/Hive table DDL is not supported in local-lite");
       return true;
     }
   if (startsWithWord(sql, "TRUNCATE TABLE"))

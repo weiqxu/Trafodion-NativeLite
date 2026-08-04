@@ -327,15 +327,40 @@ Status: the bounded convergence gate is implemented, but the full legacy
 portable suite is not yet complete.  `scripts/test-local-lite-legacy-convergence.sh`
 now validates the manifest, runs every currently allowlisted portable entry,
 and reruns the native `TEST001-TEST042` lane.  The current allowlist is
-`charsets/TEST003`, `charsets/TEST316`, `core/TEST163`, and `executor/TEST101`,
-all passing; the native lane remains 42/42.  `charsets/TEST003` validates UCS2
-column storage, literal assignment, UPDATE/DELETE, supported translation, and
-the expected rejection of unsupported character-set and translation names.
-Its `EXPECTED003.LOCALLITE` records the local SQLCI diagnostic and DDL display
-contract without changing the legacy source files.  This prevents a legacy
-expected-file mismatch or a skipped entry from being reported as M10 success.
+`charsets/TEST003`, `charsets/TEST316`, `core/TEST018`, `core/TEST163`,
+`executor/TEST014`, and `executor/TEST101`, all passing; the native lane remains
+42/42.
+`charsets/TEST003` validates UCS2 column storage, literal assignment,
+UPDATE/DELETE, supported translation, and the expected rejection of unsupported
+character-set and translation names.  `executor/TEST014` validates CTAS,
+volatile CTAS, STORE BY compatibility, INVOKE, and CTAS diagnostics on ordinary
+RocksDB tables.  The LocalLite EXPECTED files record the local SQLCI
+diagnostic/DDL display contract without changing legacy source files.  This
+prevents a legacy expected-file mismatch or a skipped entry from being reported
+as M10 success.
+`core/TEST018` covers secondary-index maintenance across INSERT, UPDATE, DELETE,
+and transaction rollback on RocksDB tables.
 
-The remaining legacy inventory is explicit rather than silently filtered: 59
+M10 is split into six explicit gates so a suite-convergence result can be
+traced back to a storage or executor capability:
+
+| Gate | Status | RocksDB-only deliverable | Required evidence |
+| --- | --- | --- | --- |
+| M10A | bounded complete | CTAS and volatile CTAS use the ordinary local DDL path; logical PARTITION/DIVISION/STORE BY/table-attribute hints are accepted as non-physical hints; view mutability and WITH CHECK OPTION metadata are persisted and exposed to the binder | `executor/TEST014`, native `TEST009`; `core/TEST029` remains blocked because its scalar-subquery NULL update aborts after binding and needs a compiler/optimizer fix before promotion |
+| M10B | complete | RocksDB row/null statistics are persisted, UEC is computed from non-NULL encoded values, and DML/transaction publication invalidates stale statistics | native `TEST038` |
+| M10C | complete | Primary/UNIQUE DML, secondary-index maintenance, ordered/range/index-only access, and rollback remain atomic in the local store | `core/TEST018` plus native `TEST026`-`TEST035` |
+| M10D | complete | UTF8/UCS2, binary types, BOOLEAN/INTERVAL, and supported character translation use the canonical RocksDB row/key codec | `charsets/TEST003`, `charsets/TEST316`, native `TEST039` |
+| M10E | complete | Cursor, window, grouping, sorting, cancellation cleanup, and local scratch-file lifecycle run through the single-process executor | native `TEST040` |
+| M10F | complete | Catalog-backed identity/role/privilege checks and the bounded native/Java UDR adapters run without a service stack | native `TEST041` and `TEST042` |
+
+The phase gate is executable with `make local-lite-m10`; it checks the
+allowlisted legacy rows, the native 42-test lane, and every M10A-M10F evidence
+case.  “Complete” above means complete for the declared RocksDB-only surface;
+it does not promote physical HBase/Hive tests, shell-driven multi-session tests,
+or a test that still crashes in the compiler.  No HBase table or HBase metadata
+implementation is part of these gates.
+
+The remaining legacy inventory is explicit rather than silently filtered: 57
 entries are still blocked by unsupported SQL/metadata or legacy output
 contracts, 50 are unsafe because they require shell/service-stack behavior,
 and 21 are excluded for HBase/Hive/physical-storage behavior.  In particular,

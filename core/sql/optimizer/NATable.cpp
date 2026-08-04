@@ -3472,6 +3472,10 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       viewDesc->viewDesc()->viewfilename = tableDesc->tableDesc()->tablename;
       viewDesc->viewDesc()->viewtext = localLiteCopyToHeap(table.viewText, heap);
       viewDesc->viewDesc()->viewtextcharset = CharInfo::UTF8;
+      viewDesc->viewDesc()->viewchecktext = table.viewCheckText.empty()
+        ? NULL : localLiteCopyToHeap(table.viewCheckText, heap);
+      viewDesc->viewDesc()->setUpdatable(table.viewUpdatable ? TRUE : FALSE);
+      viewDesc->viewDesc()->setInsertable(table.viewInsertable ? TRUE : FALSE);
       tableDesc->tableDesc()->views_desc = viewDesc;
       tableDesc->tableDesc()->files_desc = NULL;
       return tableDesc;

@@ -101,6 +101,26 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
   view.view = true;
 
   view.viewText = viewText.data();
+  view.viewUpdatable = node->getIsUpdatable();
+  view.viewInsertable = node->getIsInsertable();
+  if (node->isWithCheckOptionSpecified())
+    {
+      switch (node->getCheckOptionLevel())
+        {
+        case COM_CASCADED_LEVEL:
+          view.viewCheckText = COM_CASCADE_CHECK_OPTION_LIT;
+          break;
+        case COM_LOCAL_LEVEL:
+          view.viewCheckText = COM_LOCAL_CHECK_OPTION_LIT;
+          break;
+        case COM_UNKNOWN_LEVEL:
+          view.viewCheckText = COM_UNKNOWN_CHECK_OPTION_LIT;
+          break;
+        default:
+          view.viewCheckText = COM_NONE_CHECK_OPTION_LIT;
+          break;
+        }
+    }
   const ParTableUsageList &usedTables =
       node->getViewUsages().getViewTableUsageList();
   for (CollIndex i = 0; i < usedTables.entries(); i++)

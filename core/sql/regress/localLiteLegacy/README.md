@@ -24,14 +24,16 @@ Default execution is restricted to `runnable` entries. `--probe` permits an
 explicit safe `blocked` or `needs-review` entry so its current first failure can
 be recorded. `unsafe` and `excluded` entries are never executed.
 
-The M10 gate is:
+The M10A-M10F convergence gate is:
 
 ```bash
 make local-lite-m10
 ```
 
 It runs the complete runnable allowlist and then the native 42-test local-lite
-lane. A blocked entry is not treated as a pass; promote it only after its
+lane. It also checks the explicit M10A-M10F evidence cases (DDL, statistics,
+DML/indexes, character sets/types, advanced executor, and authorization/UDR).
+A blocked entry is not treated as a pass; promote it only after its
 RocksDB-compatible semantics and normalized EXPECTED output have been reviewed.
 
 ## Commands

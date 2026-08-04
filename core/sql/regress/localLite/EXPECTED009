@@ -45,7 +45,7 @@
 >>CREATE SCHEMA LLREG009_SCHEMA;
 >>CREATE SYNONYM LLREG009_SYN FOR LLREG009_BASE;
 >>CREATE EXTERNAL TABLE LLREG009_EXT (id INT);
-*** ERROR[local-lite] native HBase/Hive/volatile table DDL is not supported in local-lite
+*** ERROR[local-lite] native HBase/Hive table DDL is not supported in local-lite
 >>ALTER TABLE LLREG009_BASE ADD COLUMN extra_col INT;
 --- SQL operation complete.
 >>SELECT id, label, extra_col

@@ -216,15 +216,17 @@ static bool localLiteFillTableName(const ComObjectName &objectName,
 
 static bool localLiteRejectUnsupportedCreate(StmtDDLCreateTable *createTableNode)
 {
-  if (createTableNode->isPartitionSpecified() ||
-      createTableNode->isPartitionBySpecified() ||
-      createTableNode->isDivisionClauseSpecified() ||
-      createTableNode->isStoreBySpecified() ||
-      createTableNode->isHbaseOptionsSpecified() ||
-      createTableNode->isAttributeSpecified() ||
-      createTableNode->isTableFeatureSpecified())
+  // Local-lite stores every table in a RocksDB database.  Legacy standard
+  // table DDL may still carry partition, DIVISION, STORE BY, or table
+  // attribute clauses; those clauses select a physical Trafodion layout and
+  // have no representation in the local backend.  Keep the logical table
+  // definition and intentionally ignore only those physical hints so the
+  // portable SQL remains executable.  HBase-specific options are different:
+  // accepting them would claim a storage contract that local-lite does not
+  // provide.
+  if (createTableNode->isHbaseOptionsSpecified())
     {
-      localLiteDDLDiag("local-lite table physical attributes are not supported");
+      localLiteDDLDiag("HBase table options are not supported in local-lite");
       return true;
     }
   if (!createTableNode->getHiveOptions().isNull())

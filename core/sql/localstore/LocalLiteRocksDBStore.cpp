@@ -534,7 +534,7 @@ static bool decodeSequence(const std::string &value,
 static std::string encodeTable(const LocalLiteTableDef &table)
 {
   std::string out;
-  out += "LLT11\n";
+  out += "LLT12\n";
   out += table.catalog + "\n";
   out += table.schema + "\n";
   out += table.name + "\n";
@@ -641,6 +641,13 @@ static std::string encodeTable(const LocalLiteTableDef &table)
   out.append(table.viewText);
   out += "\n";
   snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.viewCheckText.size()));
+  out += buf;
+  out.append(table.viewCheckText);
+  out += "\n";
+  out += table.viewUpdatable ? "1\n" : "0\n";
+  out += table.viewInsertable ? "1\n" : "0\n";
+  snprintf(buf, sizeof(buf), "%lu\n",
            static_cast<unsigned long>(table.riConstraints.size()));
   out += buf;
   for (size_t i = 0; i < table.riConstraints.size(); i++)
@@ -728,7 +735,7 @@ static bool decodeTable(const std::string &encoded,
       (line != "LLT1" && line != "LLT2" && line != "LLT3" &&
        line != "LLT4" && line != "LLT5" && line != "LLT6" &&
        line != "LLT7" && line != "LLT8" && line != "LLT9" &&
-       line != "LLT10" && line != "LLT11"))
+       line != "LLT10" && line != "LLT11" && line != "LLT12"))
     {
       setError(error, "invalid local-lite table metadata");
       return false;
@@ -737,31 +744,37 @@ static bool decodeTable(const std::string &encoded,
       (line == "LLT2" || line == "LLT3" || line == "LLT4" ||
        line == "LLT5" || line == "LLT6" || line == "LLT7" ||
        line == "LLT8" || line == "LLT9" || line == "LLT10" ||
-       line == "LLT11");
+       line == "LLT11" || line == "LLT12");
   const bool hasUniqueMetadata =
       (line == "LLT3" || line == "LLT4" || line == "LLT5" ||
        line == "LLT6" || line == "LLT7" || line == "LLT8" ||
-       line == "LLT9" || line == "LLT10" || line == "LLT11");
+       line == "LLT9" || line == "LLT10" || line == "LLT11" ||
+       line == "LLT12");
   const bool hasIndexMetadata = (line == "LLT4" || line == "LLT5" ||
                                  line == "LLT6" || line == "LLT7" ||
                                  line == "LLT8" || line == "LLT9" ||
-                                 line == "LLT10" || line == "LLT11");
+                                 line == "LLT10" || line == "LLT11" ||
+                                 line == "LLT12");
   const bool hasIndexEncodingMetadata = (line == "LLT5" || line == "LLT6" ||
                                          line == "LLT7" || line == "LLT8" ||
                                          line == "LLT9" || line == "LLT10" ||
-                                         line == "LLT11");
+                                         line == "LLT11" || line == "LLT12");
   const bool hasColumnDefaultMetadata = (line == "LLT6" || line == "LLT7" ||
                                          line == "LLT8" || line == "LLT9" ||
-                                         line == "LLT10" || line == "LLT11");
+                                         line == "LLT10" || line == "LLT11" ||
+                                         line == "LLT12");
   const bool hasCheckMetadata = (line == "LLT7" || line == "LLT8" ||
                                  line == "LLT9" || line == "LLT10" ||
-                                 line == "LLT11");
+                                 line == "LLT11" || line == "LLT12");
   const bool hasViewMetadata = (line == "LLT8" || line == "LLT9" ||
-                                line == "LLT10" || line == "LLT11");
+                                line == "LLT10" || line == "LLT11" ||
+                                line == "LLT12");
   const bool hasRIMetadata = (line == "LLT9" || line == "LLT10" ||
-                              line == "LLT11");
-  const bool hasDependencyMetadata = (line == "LLT10" || line == "LLT11");
-  const bool hasConstraintNameMetadata = (line == "LLT11");
+                              line == "LLT11" || line == "LLT12");
+  const bool hasDependencyMetadata = (line == "LLT10" || line == "LLT11" ||
+                                      line == "LLT12");
+  const bool hasConstraintNameMetadata = (line == "LLT11" || line == "LLT12");
+  const bool hasViewConstraintMetadata = (line == "LLT12");
   if (!nextLine(encoded, &pos, &table->catalog) ||
       !nextLine(encoded, &pos, &table->schema) ||
       !nextLine(encoded, &pos, &table->name) ||
@@ -788,6 +801,9 @@ static bool decodeTable(const std::string &encoded,
   table->dependencies.clear();
   table->view = false;
   table->viewText.clear();
+  table->viewCheckText.clear();
+  table->viewUpdatable = false;
+  table->viewInsertable = false;
   for (unsigned long i = 0; i < count; i++)
     {
       if (!nextLine(encoded, &pos, &line))
@@ -1039,6 +1055,35 @@ static bool decodeTable(const std::string &encoded,
         {
           setError(error, "invalid local-lite view definition");
           return false;
+        }
+      if (hasViewConstraintMetadata)
+        {
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite view constraint metadata");
+              return false;
+            }
+          unsigned long checkLength = strtoul(line.c_str(), NULL, 10);
+          if (pos + checkLength >= encoded.size() ||
+              encoded[pos + checkLength] != '\n')
+            {
+              setError(error, "invalid local-lite view constraint metadata");
+              return false;
+            }
+          table->viewCheckText.assign(encoded, pos, checkLength);
+          pos += checkLength + 1;
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite view constraint metadata");
+              return false;
+            }
+          table->viewUpdatable = (line == "1");
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite view constraint metadata");
+              return false;
+            }
+          table->viewInsertable = (line == "1");
         }
     }
   if (hasRIMetadata)
@@ -6330,7 +6375,26 @@ bool LocalLiteRocksDBStore::collectTableStats(
     {
       collected.columns[i].columnName = table.columns[i].name;
       collected.columns[i].rowCount = rows.size();
-      collected.columns[i].distinctCount = 0;
+      std::set<std::string> distinctValues;
+      for (size_t r = 0; r < rows.size(); r++)
+        {
+          bool isNull = false;
+          if (!LocalLiteBinaryRowIsNull(table, rows[r].value, i, &isNull,
+                                        error))
+            return false;
+          if (isNull)
+            continue;
+          std::string valueKey;
+          bool hasKey = false;
+          std::vector<size_t> columnOnly(1, i);
+          if (!LocalLiteBuildConstraintKey(table, rows[r].value,
+                                           columnOnly, &valueKey, &hasKey,
+                                           error))
+            return false;
+          if (hasKey)
+            distinctValues.insert(valueKey);
+        }
+      collected.columns[i].distinctCount = distinctValues.size();
     }
   for (size_t r = 0; r < rows.size(); r++)
     for (size_t c = 0; c < table.columns.size(); c++)

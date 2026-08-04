@@ -998,10 +998,17 @@ static bool initializeCanonicalRow(const std::vector<LocalLiteStoredColumn> &col
   return true;
 }
 
-static bool attrIsNull(const char *row, Attributes *attr,
+static bool attrIsNull(const char *row, size_t rowLen, Attributes *attr,
                        ExpTupleDesc *td)
 {
   if (!attr || !attr->getNullFlag())
+    return false;
+  // A malformed expression result must be reported as a conversion error
+  // by the caller, never interpreted as an address (ExpOffsetMax) and
+  // dereferenced.  Scalar-subquery NULL results are one path that can expose
+  // an incomplete temporary tuple descriptor here.
+  if (attr->getNullIndOffset() < 0 ||
+      static_cast<size_t>(attr->getNullIndOffset()) >= rowLen)
     return false;
   return ExpTupleDesc::isNullValue(
       const_cast<char *>(row) + attr->getNullIndOffset(),
@@ -1023,7 +1030,7 @@ static bool copyAttrToCanonical(const char *srcRow,
       return false;
     }
 
-  if (attrIsNull(srcRow, srcAttr, srcTd))
+  if (attrIsNull(srcRow, srcRowLen, srcAttr, srcTd))
     {
       if (!destCol.nullable)
         {

@@ -14,35 +14,35 @@ CREATE TABLE "TRAFODION"."SEABASE"."LLREG038_T"
 >>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
 Table: TRAFODION.SEABASE.LLREG038_T
 Rows: 3
-Column ID: rows=3 nulls=0 uec=0
-Column V: rows=3 nulls=1 uec=0
+Column ID: rows=3 nulls=0 uec=3
+Column V: rows=3 nulls=1 uec=2
 >>UPDATE STATISTICS FOR TABLE LLREG038_T ON EVERY COLUMN;
 >>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
 Table: TRAFODION.SEABASE.LLREG038_T
 Rows: 3
-Column ID: rows=3 nulls=0 uec=0
-Column V: rows=3 nulls=1 uec=0
+Column ID: rows=3 nulls=0 uec=3
+Column V: rows=3 nulls=1 uec=2
 >>INSERT INTO LLREG038_T VALUES (4, 'four');
 --- 1 row(s) inserted.
 >>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
 Table: TRAFODION.SEABASE.LLREG038_T
 Rows: 4
-Column ID: rows=4 nulls=0 uec=0
-Column V: rows=4 nulls=1 uec=0
+Column ID: rows=4 nulls=0 uec=4
+Column V: rows=4 nulls=1 uec=3
 >>UPDATE LLREG038_T SET v = NULL WHERE id = 4;
 --- 1 row(s) updated.
 >>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
 Table: TRAFODION.SEABASE.LLREG038_T
 Rows: 4
-Column ID: rows=4 nulls=0 uec=0
-Column V: rows=4 nulls=2 uec=0
+Column ID: rows=4 nulls=0 uec=4
+Column V: rows=4 nulls=2 uec=2
 >>DELETE FROM LLREG038_T WHERE id = 2;
 --- 1 row(s) deleted.
 >>SHOWSTATS FOR TABLE LLREG038_T ON EVERY COLUMN;
 Table: TRAFODION.SEABASE.LLREG038_T
 Rows: 3
-Column ID: rows=3 nulls=0 uec=0
-Column V: rows=3 nulls=1 uec=0
+Column ID: rows=3 nulls=0 uec=3
+Column V: rows=3 nulls=1 uec=2
 >>DROP TABLE LLREG038_T;
 --- SQL operation complete.
 >>exit;

@@ -66,7 +66,9 @@ struct LocalLiteObjectRef
 
 struct LocalLiteTableDef
 {
-  LocalLiteTableDef() : objectUid(0), nextRowId(1), view(false) {}
+  LocalLiteTableDef()
+    : objectUid(0), nextRowId(1), view(false),
+      viewUpdatable(false), viewInsertable(false) {}
 
   std::string catalog;
   std::string schema;
@@ -83,6 +85,11 @@ struct LocalLiteTableDef
   std::vector<LocalLiteRIDef> riConstraints;
   bool view;
   std::string viewText;
+  // The binder needs the check-option level and the view mutability flags
+  // when it expands a local-lite view.
+  std::string viewCheckText;
+  bool viewUpdatable;
+  bool viewInsertable;
   std::vector<LocalLiteObjectRef> dependencies;
 };
 

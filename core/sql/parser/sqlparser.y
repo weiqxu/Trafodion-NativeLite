@@ -14889,6 +14889,7 @@ interactive_query_expression:
 			 PARSERHEAP());
 		      $$ = finalize(eue);
 		    }
+#ifndef TRAF_LOCAL_LITE
 		  else if (($1->castToStmtDDLNode()) &&
 			   ($1->castToStmtDDLNode()->isVolatile()) &&
 			   ($1->castToStmtDDLNode()->processAsExeUtil()))
@@ -14903,6 +14904,7 @@ interactive_query_expression:
 			 PARSERHEAP());
 		      $$ = finalize(eue);
 		    }
+#endif
 		  else if (($1->castToStmtDDLNode()) &&
 			   ($1->castToStmtDDLNode()->castToStmtDDLCreateExceptionTable()) &&
 			   ($1->castToStmtDDLNode()->processAsExeUtil()))

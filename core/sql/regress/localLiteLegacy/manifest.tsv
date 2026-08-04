@@ -42,7 +42,7 @@ core	TEST002	all	portable	M2	blocked	DELETE-prerequisite-and-diagnostic-output;3
 core	TEST005	all	portable	M3	blocked	secondary-indexes;also-M2-M5-M6-INTERVAL	core/sql/regress/core/TEST005:114
 core	TEST008	all	portable	M7	blocked	complex-join-executor-ESP-error-2013	core/sql/regress/core/TEST008:196
 core	TEST010	all	portable	M4	blocked	CREATE-VIEW;also-M5-executor-stats-M6-UCS2	core/sql/regress/core/TEST010:71
-core	TEST018	all	portable	M3	blocked	index-maintenance;also-M1-UPDATE-M2-DELETE	core/sql/regress/core/TEST018:52
+core	TEST018	all	portable	M10	runnable	none	core/sql/regress/core/TEST018:52
 core	TEST019	all	portable	M7	blocked	hash-join-scratch-error-8427;also-M1-M2-M3-M5	core/sql/regress/core/TEST019:261
 core	TEST020	all	portable	M7	blocked	forced-hash-join-partition-access-shape-error-2105	core/sql/regress/core/TEST020:81
 core	TEST027	all	portable	M4	blocked	CREATE-VIEW-prerequisite;also-M6-INTERVAL-M7-ESP	core/sql/regress/core/TEST027:88
@@ -63,7 +63,7 @@ executor	TEST001	all	portable	M6	blocked	SJIS-collation-validation-and-NCHAR;als
 executor	TEST002	all	portable	M4	blocked	CREATE-VIEW-LIKE-prerequisites;also-M1-M2-M7-cancel;30s-timeout	core/sql/regress/executor/TEST002:101
 executor	TEST012	all	portable	M6	blocked	NCHAR-string-functions-and-result-semantics;30s-timeout	core/sql/regress/executor/TEST012:54
 executor	TEST013	all	service-stack	M7	unsafe	cleanup-obsolete-volatile-tables-sqlci-segfault-139	core/sql/regress/executor/TEST013:57
-executor	TEST014	all	portable	M4	blocked	CTAS-catalog-path-and-SHOWDDL	core/sql/regress/executor/TEST014:43
+executor	TEST014	all	portable	M10	runnable	none	core/sql/regress/executor/TEST014:43
 executor	TEST015	all	compiler-tool	M2	unsafe	MERGE-test-inseparable-from-external-embedded-SQL-C-build-and-run	core/sql/regress/executor/TEST015:534
 executor	TEST016	all	service-stack	M7	unsafe	external-java-helper	core/sql/regress/executor/TEST016
 executor	TEST020	all	service-stack	M7	unsafe	AQR-requires-external-concurrent-sqlci-session	core/sql/regress/executor/TEST020:99
