@@ -257,6 +257,10 @@ public:
                     LocalLiteSequenceDef *sequence,
                     bool *found,
                     std::string *error);
+  bool listSequences(const std::string &catalog,
+                     const std::string &schema,
+                     std::vector<LocalLiteSequenceDef> *sequences,
+                     std::string *error);
   bool allocateSequence(uint64_t objectUid,
                         int64_t requestedCount,
                         int64_t *nextValue,

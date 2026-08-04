@@ -1353,13 +1353,30 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
         {
           ElemDDLConstraintCheck *check = columnConstraints[c]
             ? columnConstraints[c]->castToElemDDLConstraintCheck() : NULL;
-          if (!check)
+          if (check)
+            {
+              if (!localLiteAppendCheck(&table, check))
+                return false;
+              continue;
+            }
+
+          ElemDDLConstraintUnique *unique = columnConstraints[c]
+            ? columnConstraints[c]->castToElemDDLConstraintUnique() : NULL;
+          if (unique)
+            {
+              std::vector<size_t> keyColumns(1, table.columns.size() - 1);
+              table.uniqueKeyColumns.push_back(keyColumns);
+              table.uniqueKeyNames.push_back(localLiteQualifiedConstraintName(
+                  table, unique->getConstraintName(),
+                  "_UK_" + std::to_string(table.uniqueKeyColumns.size())));
+              continue;
+            }
+
+          if (!check && !unique)
             {
               localLiteDDLDiag("unsupported local-lite column constraint");
               return false;
             }
-          if (!localLiteAppendCheck(&table, check))
-            return false;
         }
     }
 

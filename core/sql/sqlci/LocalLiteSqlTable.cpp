@@ -18,6 +18,8 @@
 
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <set>
 #include <cstdlib>
 
 static std::string trim(const std::string &s)
@@ -59,8 +61,57 @@ static short reportError(SqlciEnv *env, const std::string &message)
   return 1;
 }
 
+static std::string localLiteShortObjectName(const std::string &name)
+{
+  size_t dot = name.rfind('.');
+  return dot == std::string::npos ? name : name.substr(dot + 1);
+}
+
+static bool localLiteLegacyOutput()
+{
+  return getenv("TEST_SCHEMA_NAME") != NULL;
+}
+
+static std::string localLiteColumnList(const LocalLiteTableDef &table,
+                                       const std::vector<size_t> &columns)
+{
+  std::string result = "(";
+  for (size_t i = 0; i < columns.size(); i++)
+    {
+      if (i) result += ", ";
+      if (columns[i] < table.columns.size())
+        result += "\"" + table.columns[columns[i]].name + "\"";
+    }
+  return result + ")";
+}
+
+static std::string localLiteLegacyCheckExpression(const std::string &expression)
+{
+  if (expression.size() < 2 || expression[0] != '(' ||
+      expression[expression.size() - 1] != ')')
+    return expression;
+  int depth = 0;
+  for (size_t i = 0; i < expression.size(); i++)
+    {
+      if (expression[i] == '(') depth++;
+      else if (expression[i] == ')' && --depth == 0 &&
+               i + 1 != expression.size())
+        return expression;
+    }
+  return depth == 0 ? expression.substr(1, expression.size() - 2)
+                    : expression;
+}
+
+static void writeLocalLiteLegacyDDL(SqlciEnv *env,
+                                    const LocalLiteTableDef &table);
+
 static void writeLocalLiteDDL(SqlciEnv *env, const LocalLiteTableDef &table)
 {
+  if (localLiteLegacyOutput())
+    {
+      writeLocalLiteLegacyDDL(env, table);
+      return;
+    }
   std::string line = "CREATE ";
   line += table.view ? "VIEW " : "TABLE ";
   line += "\"" + table.catalog + "\".\"" + table.schema + "\".\"" + table.name + "\"";
@@ -89,6 +140,35 @@ static void writeLocalLiteDDL(SqlciEnv *env, const LocalLiteTableDef &table)
             }
           writeLine(env, line + ")");
         }
+      for (size_t u = 0; u < table.uniqueKeyColumns.size(); u++)
+        {
+          line = "  UNIQUE ";
+          if (u < table.uniqueKeyNames.size() &&
+              !table.uniqueKeyNames[u].empty())
+            line += "\"" + localLiteShortObjectName(
+                table.uniqueKeyNames[u]) + "\" ";
+          line += localLiteColumnList(table, table.uniqueKeyColumns[u]);
+          writeLine(env, line);
+        }
+      for (size_t c = 0; c < table.checkConstraints.size(); c++)
+        {
+          line = "  CHECK ";
+          if (!table.checkConstraints[c].name.empty())
+            line += "\"" + localLiteShortObjectName(
+                table.checkConstraints[c].name) + "\" ";
+          line += "(" + table.checkConstraints[c].expression + ")";
+          writeLine(env, line);
+        }
+      for (size_t r = 0; r < table.riConstraints.size(); r++)
+        {
+          const LocalLiteRIDef &ri = table.riConstraints[r];
+          line = "  FOREIGN KEY \"" + localLiteShortObjectName(ri.name) +
+                 "\" " + localLiteColumnList(table, ri.referencingColumns) +
+                 " REFERENCES \"" + ri.referencedCatalog + "\".\"" +
+                 ri.referencedSchema + "\".\"" + ri.referencedTable + "\" " +
+                 localLiteColumnList(table, ri.referencedColumns);
+          writeLine(env, line);
+        }
       writeLine(env, ")");
       for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
         {
@@ -110,6 +190,188 @@ static void writeLocalLiteDDL(SqlciEnv *env, const LocalLiteTableDef &table)
   writeLine(env, ";");
 }
 
+static std::string localLiteLegacyColumnLine(const LocalLiteColumnDef &column,
+                                             bool first)
+{
+  std::string line = first ? "    " : "  , ";
+  line += column.name;
+  if (line.size() < 37) line.append(37 - line.size(), ' ');
+  line += column.type;
+  if (column.defaultValue.empty())
+    line += column.nullable ? " DEFAULT NULL" :
+                              " NO DEFAULT NOT NULL NOT DROPPABLE";
+  else
+    {
+      line += " DEFAULT " + column.defaultValue;
+      if (!column.nullable) line += " NOT NULL NOT DROPPABLE";
+    }
+  return line;
+}
+
+static std::string localLiteLegacyKeyList(const LocalLiteTableDef &table,
+                                          const std::vector<size_t> &columns,
+                                          const std::vector<bool> *descending)
+{
+  std::string result;
+  for (size_t i = 0; i < columns.size(); i++)
+    {
+      if (i) result += ", ";
+      if (columns[i] < table.columns.size())
+        result += table.columns[columns[i]].name;
+      bool desc = descending && i < descending->size() && (*descending)[i];
+      result += desc ? " DESC" : " ASC";
+    }
+  return result;
+}
+
+static void writeLocalLiteLegacyIndex(SqlciEnv *env,
+                                      const std::string &name,
+                                      const std::string &kind,
+                                      const LocalLiteTableDef &table,
+                                      const std::vector<size_t> &columns,
+                                      const std::vector<bool> *descending,
+                                      bool systemIndex)
+{
+  std::string line;
+  if (systemIndex)
+    writeLine(env, "-- The following index is a system created index --");
+  line = "CREATE " + kind + "INDEX " + name + " ON " +
+         table.catalog + "." + table.schema + "." + table.name;
+  writeLine(env, line);
+  writeLine(env, "  (");
+  for (size_t i = 0; i < columns.size(); i++)
+    {
+      line = i == 0 ? "    " : "  , ";
+      if (columns[i] < table.columns.size()) line += table.columns[columns[i]].name;
+      bool desc = descending && i < descending->size() && (*descending)[i];
+      line += desc ? " DESC" : " ASC";
+      writeLine(env, line);
+    }
+  writeLine(env, "  )");
+  writeLine(env, ";");
+}
+
+static void writeLocalLiteLegacyDDL(SqlciEnv *env,
+                                    const LocalLiteTableDef &table)
+{
+  std::string full = table.catalog + "." + table.schema + "." + table.name;
+  if (table.view)
+    {
+      writeLine(env, "CREATE VIEW " + full);
+      writeLine(env, " AS " + table.viewText);
+      writeLine(env, ";");
+      return;
+    }
+
+  writeLine(env, "CREATE TABLE " + full);
+  writeLine(env, "  (");
+  for (size_t i = 0; i < table.columns.size(); i++)
+    writeLine(env, localLiteLegacyColumnLine(table.columns[i], i == 0));
+  if (!table.primaryKeyColumns.empty())
+    writeLine(env, "  , PRIMARY KEY (" +
+             localLiteLegacyKeyList(table, table.primaryKeyColumns, NULL) + ")");
+  writeLine(env, "  )");
+  writeLine(env, " ATTRIBUTES ALIGNED FORMAT");
+  writeLine(env, ";");
+
+  for (size_t i = 0; i < table.checkConstraints.size(); i++)
+    {
+      const LocalLiteCheckDef &check = table.checkConstraints[i];
+      writeLine(env, "ALTER TABLE " + full + " ADD CONSTRAINT " +
+                check.name + " CHECK");
+      writeLine(env, "  (" + localLiteLegacyCheckExpression(check.expression) + ")");
+      writeLine(env, "");
+    }
+
+  for (size_t i = 0; i < table.uniqueKeyColumns.size(); i++)
+    {
+      std::string name = i < table.uniqueKeyNames.size()
+          ? localLiteShortObjectName(table.uniqueKeyNames[i])
+          : table.name + "UK" + std::to_string(i + 1);
+      writeLocalLiteLegacyIndex(env, name, "UNIQUE ", table,
+                                table.uniqueKeyColumns[i], NULL, true);
+    }
+  for (size_t i = 0; i < table.riConstraints.size(); i++)
+    {
+      const LocalLiteRIDef &ri = table.riConstraints[i];
+      writeLocalLiteLegacyIndex(env, localLiteShortObjectName(ri.name), "",
+                                table, ri.referencingColumns, NULL, true);
+    }
+  for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+    {
+      const LocalLiteIndexDef &index = table.secondaryIndexes[i];
+      writeLocalLiteLegacyIndex(env, index.name, index.unique ? "UNIQUE " : "",
+                                table, index.keyColumns, &index.descending, false);
+    }
+  for (size_t i = 0; i < table.uniqueKeyColumns.size(); i++)
+    {
+      if (i >= table.uniqueKeyNames.size()) continue;
+      std::string name = table.catalog + "." + table.schema + "." +
+                         localLiteShortObjectName(table.uniqueKeyNames[i]);
+      writeLine(env, "ALTER TABLE " + full + " ADD CONSTRAINT");
+      writeLine(env, "  " + name + " UNIQUE");
+      writeLine(env, "  (");
+      for (size_t c = 0; c < table.uniqueKeyColumns[i].size(); c++)
+        writeLine(env, c == 0 ? "    " + table.columns[
+            table.uniqueKeyColumns[i][c]].name : "  , " + table.columns[
+            table.uniqueKeyColumns[i][c]].name);
+      writeLine(env, "  )");
+      writeLine(env, ";");
+    }
+  for (size_t i = 0; i < table.riConstraints.size(); i++)
+    {
+      const LocalLiteRIDef &ri = table.riConstraints[i];
+      LocalLiteTableDef referencedTable;
+      LocalLiteRocksDBStore store;
+      std::string loadError;
+      bool haveReferencedTable =
+          store.loadTable(ri.referencedCatalog, ri.referencedSchema,
+                          ri.referencedTable, &referencedTable, &loadError);
+      writeLine(env, "ALTER TABLE " + full + " ADD CONSTRAINT");
+      writeLine(env, "  " + table.catalog + "." + table.schema + "." +
+                localLiteShortObjectName(ri.name) + " FOREIGN KEY");
+      writeLine(env, "  (");
+      for (size_t c = 0; c < ri.referencingColumns.size(); c++)
+        writeLine(env, c == 0 ? "    " + table.columns[
+            ri.referencingColumns[c]].name : "  , " + table.columns[
+            ri.referencingColumns[c]].name);
+      writeLine(env, "  )");
+      writeLine(env, " REFERENCES " + ri.referencedCatalog + "." +
+                ri.referencedSchema + "." + ri.referencedTable);
+      writeLine(env, "  (");
+      for (size_t c = 0; c < ri.referencedColumns.size(); c++)
+        {
+          const LocalLiteTableDef &columnTable =
+              haveReferencedTable ? referencedTable : table;
+          size_t column = ri.referencedColumns[c];
+          std::string columnName = column < columnTable.columns.size()
+              ? columnTable.columns[column].name : std::string();
+          writeLine(env, c == 0 ? "    " + columnName : "  , " + columnName);
+        }
+      writeLine(env, "  )");
+      writeLine(env, ";");
+    }
+}
+
+static void writeLocalLiteSequenceDDL(SqlciEnv *env,
+                                      const LocalLiteSequenceDef &sequence)
+{
+  std::string full = sequence.catalog + "." + sequence.schema + "." +
+                     sequence.name;
+  writeLine(env, "CREATE SEQUENCE " + full);
+  writeLine(env, "  START WITH " + std::to_string(sequence.startValue) +
+            " /* NEXT AVAILABLE VALUE " +
+            std::to_string(sequence.nextValue) + " */");
+  writeLine(env, "  INCREMENT BY " + std::to_string(sequence.increment));
+  writeLine(env, "  MAXVALUE " + std::to_string(sequence.maxValue));
+  writeLine(env, "  MINVALUE " + std::to_string(sequence.minValue));
+  writeLine(env, sequence.cache > 0
+            ? "  CACHE " + std::to_string(sequence.cache) : "  NO CACHE");
+  writeLine(env, sequence.cycle ? "  CYCLE" : "  NO CYCLE");
+  writeLine(env, "  LARGEINT");
+  writeLine(env, ";");
+}
+
 static void writeLocalLiteStats(SqlciEnv *env, const LocalLiteTableDef &table,
                                 const LocalLiteTableStatsDef &stats)
 {
@@ -123,6 +385,244 @@ static void writeLocalLiteStats(SqlciEnv *env, const LocalLiteTableDef &table,
                 " nulls=" + std::to_string(static_cast<unsigned long long>(column.nullCount)) +
                 " uec=" + std::to_string(static_cast<unsigned long long>(column.distinctCount)));
     }
+}
+
+static std::string localLiteObjectFullName(const LocalLiteObjectRef &object)
+{
+  return object.catalog + "." + object.schema + "." + object.name;
+}
+
+static std::string localLiteTableFullName(const LocalLiteTableDef &table)
+{
+  return table.catalog + "." + table.schema + "." + table.name;
+}
+
+static std::string localLiteDisplayObjectName(const std::string &catalog,
+                                              const std::string &schema,
+                                              const std::string &object)
+{
+  return catalog == "TRAFODION" ? schema + "." + object
+                                 : catalog + "." + schema + "." + object;
+}
+
+static void writeLocalLiteObjectList(SqlciEnv *env,
+                                     const std::string &title,
+                                     const std::vector<std::string> &objects)
+{
+  writeLine(env, title);
+  writeLine(env, std::string(title.size(), '='));
+  for (size_t i = 0; i < objects.size(); i++)
+    writeLine(env, objects[i]);
+  if (!objects.empty())
+    writeLine(env, "=======================");
+  writeLine(env, "  " + std::to_string(static_cast<unsigned long long>(objects.size())) +
+            " row(s) returned");
+}
+
+static void localLiteSortUnique(std::vector<std::string> *objects)
+{
+  std::sort(objects->begin(), objects->end());
+  objects->erase(std::unique(objects->begin(), objects->end()), objects->end());
+}
+
+static bool parseObjectName(const std::string &text,
+                            std::string *catalog,
+                            std::string *schema,
+                            std::string *object,
+                            SqlciEnv *env);
+
+static bool parseSchemaName(const std::string &text,
+                            std::string *catalog,
+                            std::string *schema);
+
+static void localLiteCollectViewObjects(
+    const LocalLiteTableDef &view,
+    const std::vector<LocalLiteTableDef> &allTables,
+    bool includeViews,
+    bool recurse,
+    std::set<std::string> *visitedViews,
+    std::set<std::string> *objects)
+{
+  for (size_t i = 0; i < view.dependencies.size(); i++)
+    {
+      const LocalLiteObjectRef &dependency = view.dependencies[i];
+      LocalLiteTableDef dependencyTable;
+      bool found = false;
+      for (size_t t = 0; t < allTables.size(); t++)
+        if (allTables[t].catalog == dependency.catalog &&
+            allTables[t].schema == dependency.schema &&
+            allTables[t].name == dependency.name)
+          {
+            dependencyTable = allTables[t];
+            found = true;
+            break;
+          }
+      if (!found) continue;
+      std::string fullName = localLiteTableFullName(dependencyTable);
+      if (!dependencyTable.view || includeViews)
+        objects->insert(fullName);
+      if (recurse && dependencyTable.view &&
+          visitedViews->insert(fullName).second)
+        localLiteCollectViewObjects(dependencyTable, allTables, includeViews,
+                                    recurse, visitedViews, objects);
+    }
+}
+
+static bool localLiteParseGet(const std::string &sql,
+                              SqlciEnv *env,
+                              std::string *title,
+                              std::vector<std::string> *objects,
+                              std::string *error)
+{
+  std::string text = trim(sql);
+  std::string upperText = upper(text);
+  if (!startsWithWord(text, "GET")) return false;
+
+  std::string catalog;
+  std::string schema;
+  std::string object;
+  std::string target;
+  bool all = false;
+  LocalLiteRocksDBStore store;
+  std::vector<LocalLiteTableDef> tables;
+  if (!store.listTables("", "", &tables, error)) return true;
+
+  size_t pos = 0;
+  if (upperText.find("GET TABLES IN SCHEMA ") == 0 ||
+      upperText.find("GET INDEXES IN SCHEMA ") == 0 ||
+      upperText.find("GET VIEWS IN SCHEMA ") == 0 ||
+      upperText.find("GET SEQUENCES IN SCHEMA ") == 0)
+    {
+      bool wantTables = upperText.find("GET TABLES IN SCHEMA ") == 0;
+      bool wantIndexes = upperText.find("GET INDEXES IN SCHEMA ") == 0;
+      bool wantSequences = upperText.find("GET SEQUENCES IN SCHEMA ") == 0;
+      pos = upperText.find(" IN SCHEMA ") + strlen(" IN SCHEMA ");
+      if (!parseSchemaName(trim(text.substr(pos)), &catalog, &schema))
+        { *error = "invalid local-lite schema name"; return true; }
+      std::string prefix = wantTables ? "Tables in Schema " :
+          (wantIndexes ? "Indexes in Schema " :
+           (wantSequences ? "Sequences in Schema " : "Views in Schema "));
+      *title = prefix + catalog + "." + schema;
+      if (wantSequences)
+        {
+          std::vector<LocalLiteSequenceDef> sequences;
+          if (!store.listSequences(catalog, schema, &sequences, error))
+            return true;
+          for (size_t i = 0; i < sequences.size(); i++)
+            objects->push_back(sequences[i].name);
+          localLiteSortUnique(objects);
+          return true;
+        }
+      for (size_t i = 0; i < tables.size(); i++)
+        {
+          if (tables[i].catalog != catalog || tables[i].schema != schema)
+            continue;
+          if (wantTables && !tables[i].view)
+            objects->push_back(tables[i].name);
+          else if (!wantTables && !wantIndexes && tables[i].view)
+            objects->push_back(tables[i].name);
+          else if (wantIndexes && !tables[i].view)
+            {
+              for (size_t k = 0; k < tables[i].uniqueKeyNames.size(); k++)
+                objects->push_back(localLiteShortObjectName(
+                    tables[i].uniqueKeyNames[k]));
+              for (size_t k = 0; k < tables[i].riConstraints.size(); k++)
+                objects->push_back(localLiteShortObjectName(
+                    tables[i].riConstraints[k].name));
+              for (size_t k = 0; k < tables[i].secondaryIndexes.size(); k++)
+                objects->push_back(localLiteShortObjectName(
+                    tables[i].secondaryIndexes[k].name));
+            }
+        }
+      if (wantTables)
+        {
+          bool hasStatistics = false;
+          for (size_t i = 0; i < tables.size() && !hasStatistics; i++)
+            if (tables[i].catalog == catalog && tables[i].schema == schema &&
+                !tables[i].view)
+              {
+                LocalLiteTableStatsDef stats;
+                bool found = false;
+                std::string statsError;
+                if (store.loadTableStats(tables[i].catalog, tables[i].schema,
+                                         tables[i].name, &stats, &found,
+                                         &statsError) && found)
+                  hasStatistics = true;
+              }
+          if (hasStatistics)
+            {
+              objects->push_back("SB_HISTOGRAMS");
+              objects->push_back("SB_HISTOGRAM_INTERVALS");
+              objects->push_back("SB_PERSISTENT_SAMPLES");
+            }
+        }
+      localLiteSortUnique(objects);
+      return true;
+    }
+
+  if (upperText.find("GET ") != 0) return false;
+  if (upperText.find("GET ALL ") == 0) all = true;
+  size_t inView = upperText.find(" IN VIEW ");
+  size_t onTable = upperText.find(" ON TABLE ");
+  if (inView == std::string::npos && onTable == std::string::npos)
+    { *error = "unsupported local-lite GET metadata request"; return true; }
+  bool wantTables = upperText.find("TABLES ") != std::string::npos;
+  bool wantViews = upperText.find("VIEWS ") != std::string::npos;
+  bool wantObjects = upperText.find("OBJECTS ") != std::string::npos;
+  size_t marker = inView != std::string::npos ? inView : onTable;
+  size_t markerLength = inView != std::string::npos ? strlen(" IN VIEW ") : strlen(" ON TABLE ");
+  target = trim(text.substr(marker + markerLength));
+  if (!parseObjectName(target, &catalog, &schema, &object, env))
+    { *error = "invalid local-lite metadata object"; return true; }
+
+  LocalLiteTableDef root;
+  if (!store.loadTable(catalog, schema, object, &root, error)) return true;
+  if (inView != std::string::npos)
+    {
+      if (wantTables)
+        *title = "Tables in View " +
+                 localLiteDisplayObjectName(catalog, schema, object);
+      else if (wantViews)
+        *title = "Views in View " +
+                 localLiteDisplayObjectName(catalog, schema, object);
+      else if (wantObjects)
+        *title = "Objects in View " +
+                 localLiteDisplayObjectName(catalog, schema, object);
+      else
+        { *error = "unsupported local-lite GET metadata request"; return true; }
+      std::set<std::string> visited;
+      std::set<std::string> collected;
+      localLiteCollectViewObjects(root, tables,
+                                  wantViews || wantObjects || all, all,
+                                  &visited, &collected);
+      for (std::set<std::string>::const_iterator it = collected.begin();
+           it != collected.end(); ++it)
+        {
+          bool isView = false;
+          size_t lastDot = it->rfind('.');
+          if (lastDot != std::string::npos)
+            for (size_t t = 0; t < tables.size(); t++)
+              if (localLiteTableFullName(tables[t]) == *it)
+                isView = tables[t].view;
+          if (wantTables && isView) continue;
+          if (wantViews && !isView) continue;
+          objects->push_back(*it);
+        }
+    }
+  else
+    {
+      *title = "Views on Table " +
+               localLiteDisplayObjectName(catalog, schema, object);
+      for (size_t i = 0; i < tables.size(); i++)
+        if (tables[i].view)
+          for (size_t d = 0; d < tables[i].dependencies.size(); d++)
+            if (tables[i].dependencies[d].catalog == catalog &&
+                tables[i].dependencies[d].schema == schema &&
+                tables[i].dependencies[d].name == object)
+              objects->push_back(localLiteTableFullName(tables[i]));
+    }
+  localLiteSortUnique(objects);
+  return true;
 }
 
 static std::string unquoteIdentifier(const std::string &name)
@@ -151,7 +651,8 @@ static bool parseSchemaName(const std::string &text,
 static bool parseObjectName(const std::string &text,
                             std::string *catalog,
                             std::string *schema,
-                            std::string *object)
+                            std::string *object,
+                            SqlciEnv *env = NULL)
 {
   std::string name = trim(text);
   size_t end = name.find_first_of(" \t\r\n");
@@ -162,8 +663,12 @@ static bool parseObjectName(const std::string &text,
       ? std::string::npos : name.find('.', first + 1);
   if (first == std::string::npos)
     {
-      *catalog = "TRAFODION";
-      *schema = "SEABASE";
+      *catalog = (env && env->defaultCatalog() &&
+                  env->defaultCatalog()[0] != '\0')
+          ? upper(env->defaultCatalog()) : "TRAFODION";
+      *schema = (env && env->defaultSchema() &&
+                 env->defaultSchema()[0] != '\0')
+          ? upper(env->defaultSchema()) : "SEABASE";
       *object = unquoteIdentifier(name);
     }
   else if (second == std::string::npos)
@@ -399,7 +904,7 @@ static bool localLiteAuthorizeSql(const std::string &sql,
   else if (startsWithWord(sql, "CREATE SCHEMA") || startsWithWord(sql, "DROP SCHEMA"))
     {
       if (!localLiteIsRoot(user)) *error = "only DB__ROOT may change local-lite schemas";
-      return true;
+      return !error->empty();
     }
   else
     return false;
@@ -468,6 +973,8 @@ bool LocalLiteSqlTable_setCurrentUser(SqlciEnv *sqlciEnv, short *retcode)
       return false;
     }
   setenv("TRAF_LOCAL_LITE_USER", user.c_str(), 1);
+  if (!getenv("TRAF_LOCAL_LITE_SCHEMA"))
+    setenv("TRAF_LOCAL_LITE_SCHEMA", "TRAFODION.SEABASE", 1);
   Lng32 rc = SQL_EXEC_SetSessionAttr_Internal(SESSION_DATABASE_USER,
                                               static_cast<Lng32>(identity.id),
                                               const_cast<char *>(user.c_str()));
@@ -517,11 +1024,73 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       return true;
     }
 
+  // The normal SET SCHEMA compiler path depends on service-stack metadata in
+  // this build.  Keep the SQLCI session's current catalog/schema in sync so
+  // local-lite handlers resolve later unqualified names against the same
+  // session schema as the legacy regress driver.
+  if (startsWithWord(sql, "SET SCHEMA"))
+    {
+      std::string catalog;
+      std::string schema;
+      if (!parseSchemaName(trim(sql.substr(strlen("SET SCHEMA"))),
+                           &catalog, &schema))
+        *retcode = reportError(sqlciEnv, "invalid local-lite schema name");
+      else
+        {
+          if (sqlciEnv->defaultCatalog())
+            delete sqlciEnv->defaultCatalog();
+          if (sqlciEnv->defaultSchema())
+            delete sqlciEnv->defaultSchema();
+          sqlciEnv->defaultCatalog() = new char[catalog.size() + 1];
+          sqlciEnv->defaultSchema() = new char[schema.size() + 1];
+          strcpy(sqlciEnv->defaultCatalog(), catalog.c_str());
+          strcpy(sqlciEnv->defaultSchema(), schema.c_str());
+          std::string defaultSchema = catalog + "." + schema;
+          setenv("TRAF_LOCAL_LITE_SCHEMA", defaultSchema.c_str(), 1);
+          writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
+      return true;
+    }
+
+  // Metadata-view initialization is an HBase/service-stack utility in the
+  // normal executor.  Local-lite exposes the supported metadata through
+  // generated RocksDB descriptors, so the initialize command is intentionally
+  // a catalog-local compatibility operation rather than an HBase DDL call.
+  std::string upperSql = upper(sql);
+  if (upperSql == "INITIALIZE TRAFODION, CREATE METADATA VIEWS" ||
+      upperSql == "INITIALIZE TRAFODION, DROP METADATA VIEWS")
+    {
+      writeLine(sqlciEnv, "--- SQL operation complete.");
+      *retcode = 0;
+      return true;
+    }
+
   // UDR DDL and invocation use the RocksDB-only local runtime.  This must be
   // checked before the normal compiler path, which expects MX metadata tables
   // and a separate UDR server process.
   if (LocalLiteUdr_process(sql.c_str(), sqlciEnv, retcode))
     return true;
+
+  if (startsWithWord(sql, "GET"))
+    {
+      std::string title;
+      std::string error;
+      std::vector<std::string> objects;
+      if (localLiteParseGet(sql, sqlciEnv, &title, &objects, &error))
+        {
+          if (!error.empty())
+            *retcode = reportError(sqlciEnv, error);
+          else
+            {
+              if (!objects.empty())
+                writeLocalLiteObjectList(sqlciEnv, title, objects);
+              writeLine(sqlciEnv, "--- SQL operation complete.");
+              *retcode = 0;
+            }
+          return true;
+        }
+    }
 
   if (startsWithWord(sql, "SHOWDDL") || startsWithWord(sql, "SHOWSTATS"))
     {
@@ -531,12 +1100,38 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
         rest = trim(rest.substr(9));
       std::string catalog, schema, object, error;
       LocalLiteRocksDBStore store;
+      std::string restUpper = upper(rest);
+      if (!showStats && restUpper.compare(0, strlen("SEQUENCE"), "SEQUENCE") == 0 &&
+          (restUpper.size() == strlen("SEQUENCE") ||
+           isspace(static_cast<unsigned char>(restUpper[strlen("SEQUENCE")]))))
+        {
+          std::string sequenceText = trim(rest.substr(strlen("SEQUENCE")));
+          LocalLiteSequenceDef sequence;
+          bool found = false;
+          if (!parseObjectName(sequenceText, &catalog, &schema, &object,
+                               sqlciEnv) ||
+              !store.loadSequence(catalog, schema, object, &sequence, &found,
+                                   &error) || !found)
+            *retcode = reportError(sqlciEnv, error.empty()
+                ? "local-lite sequence does not exist" : error);
+          else
+            {
+              writeLocalLiteSequenceDDL(sqlciEnv, sequence);
+              writeLine(sqlciEnv, "--- SQL operation complete.");
+              *retcode = 0;
+            }
+          return true;
+        }
       LocalLiteTableDef table;
-      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+      if (!parseObjectName(rest, &catalog, &schema, &object, sqlciEnv) ||
           !store.loadTable(catalog, schema, object, &table, &error))
         *retcode = reportError(sqlciEnv, error.empty() ? "local-lite table does not exist" : error);
       else if (!showStats)
-        { writeLocalLiteDDL(sqlciEnv, table); *retcode = 0; }
+        {
+          writeLocalLiteDDL(sqlciEnv, table);
+          writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
       else
         {
           LocalLiteTableStatsDef stats; bool found = false;
@@ -544,7 +1139,11 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
               (!found && !store.collectTableStats(table, &stats, &error)))
             *retcode = reportError(sqlciEnv, error);
           else
-            { writeLocalLiteStats(sqlciEnv, table, stats); *retcode = 0; }
+            {
+              writeLocalLiteStats(sqlciEnv, table, stats);
+              writeLine(sqlciEnv, "--- SQL operation complete.");
+              *retcode = 0;
+            }
         }
       return true;
     }
@@ -554,13 +1153,14 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       std::string catalog, schema, object, error;
       LocalLiteRocksDBStore store;
       LocalLiteTableDef table;
-      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+      if (!parseObjectName(rest, &catalog, &schema, &object, sqlciEnv) ||
           !store.loadTable(catalog, schema, object, &table, &error))
         *retcode = reportError(sqlciEnv, error.empty()
             ? "local-lite table does not exist" : error);
       else
         {
           writeLocalLiteDDL(sqlciEnv, table);
+          writeLine(sqlciEnv, "--- SQL operation complete.");
           *retcode = 0;
         }
       return true;
@@ -573,12 +1173,12 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       if (tablePos != std::string::npos) rest = trim(rest.substr(tablePos + 5));
       std::string catalog, schema, object, error;
       LocalLiteRocksDBStore store; LocalLiteTableDef table; LocalLiteTableStatsDef stats;
-      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+      if (!parseObjectName(rest, &catalog, &schema, &object, sqlciEnv) ||
           !store.loadTable(catalog, schema, object, &table, &error) ||
           !store.collectTableStats(table, &stats, &error))
         *retcode = reportError(sqlciEnv, error.empty() ? "invalid local-lite statistics request" : error);
       else
-        *retcode = 0;
+        { writeLine(sqlciEnv, "--- SQL operation complete."); *retcode = 0; }
       return true;
     }
 
@@ -600,7 +1200,11 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
         *retcode = reportError(sqlciEnv, error.empty()
             ? "invalid local-lite schema name" : error);
       else
-        *retcode = 0;
+        {
+          if (localLiteLegacyOutput())
+            writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
       return true;
     }
   if (startsWithWord(sql, "DROP SCHEMA"))
@@ -622,7 +1226,11 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
         *retcode = reportError(sqlciEnv, error.empty()
             ? "invalid local-lite schema name" : error);
       else
-        *retcode = 0;
+        {
+          if (localLiteLegacyOutput())
+            writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
       return true;
     }
   if (startsWithWord(sql, "CREATE SYNONYM"))
@@ -635,15 +1243,20 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       LocalLiteRocksDBStore store;
       std::string error;
       if (forPos == std::string::npos ||
-          !parseObjectName(rest.substr(0, forPos), &catalog, &schema, &object) ||
+          !parseObjectName(rest.substr(0, forPos), &catalog, &schema, &object,
+                           sqlciEnv) ||
           !parseObjectName(rest.substr(forPos + 5), &targetCatalog,
-                           &targetSchema, &targetObject) ||
+                           &targetSchema, &targetObject, sqlciEnv) ||
           !store.createSynonym(catalog, schema, object, targetCatalog,
                                targetSchema, targetObject, &error))
         *retcode = reportError(sqlciEnv, error.empty()
             ? "invalid local-lite synonym definition" : error);
       else
-        *retcode = 0;
+        {
+          if (localLiteLegacyOutput())
+            writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
       return true;
     }
   if (startsWithWord(sql, "DROP SYNONYM"))
@@ -658,12 +1271,16 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       std::string catalog, schema, object;
       LocalLiteRocksDBStore store;
       std::string error;
-      if (!parseObjectName(rest, &catalog, &schema, &object) ||
+      if (!parseObjectName(rest, &catalog, &schema, &object, sqlciEnv) ||
           !store.dropSynonym(catalog, schema, object, ifExists, &error))
         *retcode = reportError(sqlciEnv, error.empty()
             ? "invalid local-lite synonym name" : error);
       else
-        *retcode = 0;
+        {
+          if (localLiteLegacyOutput())
+            writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
       return true;
     }
   if (startsWithWord(sql, "CREATE EXTERNAL TABLE") ||
@@ -682,14 +1299,18 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
       LocalLiteTableDef table;
       std::vector<LocalLiteRow> rows;
       if (!parseObjectName(sql.substr(strlen("TRUNCATE TABLE")),
-                           &catalog, &schema, &object) ||
+                           &catalog, &schema, &object, sqlciEnv) ||
           !store.loadTable(catalog, schema, object, &table, &error) ||
           !store.scanRows(table, &rows, &error) ||
           !store.deleteRows(table, rows, &error))
         *retcode = reportError(sqlciEnv, error.empty()
             ? "invalid local-lite table name" : error);
       else
-        *retcode = 0;
+        {
+          if (localLiteLegacyOutput())
+            writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
       return true;
     }
   if (startsWithWord(sql, "UPSERT USING LOAD"))

@@ -174,6 +174,30 @@ append_section() {
   ' "$test_file" >>"$driver"
 }
 
+select_expected_sections() {
+  local expected_file=$1
+  local test_name=$2
+  local selector=$3
+  local output_file=$4
+  awk -v selected="$selector" -v test_name="${test_name,,}" '
+    BEGIN { active = 0; wanted = tolower("," selected ",") }
+    {
+      line = $0
+      lower = tolower(line)
+      if (lower ~ "^>>obey[[:space:]]+" test_name "\\(") {
+        section = lower
+        sub("^.*" test_name "\\(", "", section)
+        sub("\\).*", "", section)
+        active = index(wanted, "," section ",") > 0
+        next
+      }
+      if (active && line !~ /^>>log;/ && line !~ /^>>exit;/)
+        print line
+    }
+    END { print ">>exit;" }
+  ' "$expected_file" >"$output_file"
+}
+
 declare -a selected_rows=()
 while IFS=$'\t' read -r suite test_name selector classification milestone disposition blocker evidence; do
   [[ -n "$suite" && "$suite" != \#* ]] || continue
@@ -288,6 +312,12 @@ for row in "${selected_rows[@]}"; do
   diff_file=$case_dir/DIFF
   result_file=$case_dir/RESULT.tsv
 
+  expected_input=$expected
+  if [[ "$selector" != "all" ]]; then
+    expected_input=$case_dir/EXPECTED.sections
+    select_expected_sections "$expected" "$test_name" "$selector" "$expected_input"
+  fi
+
   (
     cd "$work_dir" || exit 2
     timeout "$timeout_seconds" env \
@@ -313,7 +343,7 @@ for row in "${selected_rows[@]}"; do
   [[ -n "$produced_log" && -f "$produced_log" ]] || produced_log=$raw_file
 
   "$filter" "$produced_log" >"$log_file"
-  "$filter" "$expected" >"$normalized_expected"
+  "$filter" "$expected_input" >"$normalized_expected"
   diff -u "$normalized_expected" "$log_file" >"$diff_file"
   diff_status=$?
 

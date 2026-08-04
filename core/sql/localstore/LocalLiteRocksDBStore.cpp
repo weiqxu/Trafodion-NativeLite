@@ -18,6 +18,7 @@
 #include <sys/types.h>
 #include <time.h>
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <pthread.h>
@@ -1438,7 +1439,8 @@ static bool isLocalLiteMetadataTable(const std::string &catalog,
   if (catalog != "TRAFODION" || schema != "_MD_")
     return false;
   return name == "OBJECTS" || name == "TABLES" || name == "COLUMNS" ||
-         name == "KEYS" || name == "INDEXES";
+         name == "KEYS" || name == "INDEXES" ||
+         name == "SEQUENCES_VIEW";
 }
 
 static void addLocalLiteMetadataColumn(LocalLiteTableDef *table,
@@ -1529,7 +1531,7 @@ static bool localLiteMetadataTableDefinition(const std::string &catalog,
       addLocalLiteMetadataColumn(table, "FLAGS", "VARCHAR(32)");
       table->primaryKeyColumns = {0, 2};
     }
-  else
+  else if (name == "INDEXES")
     {
       table->objectUid++;
       addLocalLiteMetadataColumn(table, "BASE_TABLE_UID", "VARCHAR(32)");
@@ -1541,6 +1543,25 @@ static bool localLiteMetadataTableDefinition(const std::string &catalog,
       addLocalLiteMetadataColumn(table, "INDEX_UID", "VARCHAR(32)");
       addLocalLiteMetadataColumn(table, "FLAGS", "VARCHAR(32)");
       table->primaryKeyColumns = {0, 6};
+    }
+  else if (name == "SEQUENCES_VIEW")
+    {
+      const char *columns[][2] = {
+        {"CATALOG_NAME", "VARCHAR(256)"},
+        {"SCHEMA_NAME", "VARCHAR(256)"},
+        {"SEQ_NAME", "VARCHAR(256)"},
+        {"START_VALUE", "VARCHAR(32)"},
+        {"INCREMENT", "VARCHAR(32)"},
+        {"MAX_VALUE", "VARCHAR(32)"},
+        {"MIN_VALUE", "VARCHAR(32)"},
+        {"CYCLE_OPTION", "VARCHAR(32)"},
+        {"CACHE_OPTION", "VARCHAR(32)"},
+        {"CACHE_SIZE", "VARCHAR(32)"},
+        {"NEXT_VALUE", "VARCHAR(32)"},
+        {"NUM_CALLS", "VARCHAR(32)"}
+      };
+      for (size_t i = 0; i < sizeof(columns) / sizeof(columns[0]); i++)
+        addLocalLiteMetadataColumn(table, columns[i][0], columns[i][1]);
     }
   table->primaryKeyName = catalog + "." + schema + "." + name + "_PK";
   // Metadata rows are exposed through a generated full-scan descriptor.  The
@@ -1579,6 +1600,34 @@ static bool localLiteBuildMetadataRows(
 {
   uint64_t rowId = 1;
   rows->clear();
+  if (metadataTable.name == "SEQUENCES_VIEW")
+    {
+      LocalLiteRocksDBStore store;
+      std::vector<LocalLiteSequenceDef> sequences;
+      if (!store.listSequences("", "", &sequences, error))
+        return false;
+      for (size_t i = 0; i < sequences.size(); i++)
+        {
+          const LocalLiteSequenceDef &sequence = sequences[i];
+          if (sequence.internal || sequence.schema == "_MD_")
+            continue;
+          if (!appendLocalLiteMetadataRow(
+                  metadataTable,
+                  {sequence.catalog, sequence.schema, sequence.name,
+                   std::to_string(sequence.startValue),
+                   std::to_string(sequence.increment),
+                   std::to_string(sequence.maxValue),
+                   std::to_string(sequence.minValue),
+                   sequence.cycle ? "Y" : "N",
+                   sequence.cache == 0 ? "N" : "Y",
+                   std::to_string(sequence.cache),
+                   std::to_string(sequence.nextValue),
+                   std::to_string(sequence.numCalls)},
+                  rowId++, rows, error))
+            return false;
+        }
+      return true;
+    }
   for (size_t t = 0; t < tables.size(); t++)
     {
       const LocalLiteTableDef &table = tables[t];
@@ -5767,6 +5816,74 @@ bool LocalLiteRocksDBStore::listTables(
   rocksdb_iter_destroy(it);
   rocksdb_readoptions_destroy(readOptions);
   return checkRocksError(err, "scan local-lite table metadata", error);
+}
+
+bool LocalLiteRocksDBStore::listSequences(
+    const std::string &catalog,
+    const std::string &schema,
+    std::vector<LocalLiteSequenceDef> *sequences,
+    std::string *error)
+{
+  if (!sequences || !open(error)) return false;
+  sequences->clear();
+  const bool listAll = catalog.empty() && schema.empty();
+  const std::string prefix = listAll ? "sequence|" :
+      "sequence|" + catalog + "|" + schema + "|";
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek(it, prefix.data(), prefix.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      std::string key(rawKey, keyLen);
+      if (key.compare(0, prefix.size(), prefix) != 0) break;
+      std::string sequenceCatalog = catalog;
+      std::string sequenceSchema = schema;
+      std::string name;
+      if (listAll)
+        {
+          size_t catalogEnd = key.find('|', prefix.size());
+          size_t schemaEnd = catalogEnd == std::string::npos
+              ? std::string::npos : key.find('|', catalogEnd + 1);
+          if (catalogEnd == std::string::npos || schemaEnd == std::string::npos)
+            {
+              rocksdb_iter_destroy(it);
+              rocksdb_readoptions_destroy(readOptions);
+              setError(error, "invalid local-lite sequence metadata key");
+              return false;
+            }
+          sequenceCatalog = key.substr(prefix.size(), catalogEnd - prefix.size());
+          sequenceSchema = key.substr(catalogEnd + 1,
+                                      schemaEnd - catalogEnd - 1);
+          name = key.substr(schemaEnd + 1);
+        }
+      else
+        name = key.substr(prefix.size());
+      size_t valueLen = 0;
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      LocalLiteSequenceDef sequence;
+      if (!decodeSequence(std::string(rawValue, valueLen), sequenceCatalog,
+                          sequenceSchema,
+                          name, &sequence, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+      sequences->push_back(sequence);
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  std::sort(sequences->begin(), sequences->end(),
+            [](const LocalLiteSequenceDef &left,
+               const LocalLiteSequenceDef &right) {
+              return left.name < right.name;
+            });
+  return checkRocksError(err, "scan local-lite sequence metadata", error);
 }
 
 bool LocalLiteRocksDBStore::loadTable(const std::string &catalog,

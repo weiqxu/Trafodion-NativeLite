@@ -62,6 +62,11 @@
 #include "RelUpdate.h"
 #include "MvRefreshBuilder.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include <stdlib.h>
+#include "ComSchemaName.h"
+#endif
+
 
 #define   SQLPARSERGLOBALS_NADEFAULTS
 #include "SqlParserGlobalsCmn.h"
@@ -193,6 +198,25 @@ BindWA::BindWA(SchemaDB *schemaDB, CmpContext* cmpContext, NABoolean inDDL, NABo
 {
   // get current default schema, using NAMETYPE NSK or ANSI rules
   defaultSchema_ = schemaDB_->getDefaultSchema(SchemaDB::APPLY_NAMETYPE_RULES);
+
+#ifdef TRAF_LOCAL_LITE
+  // Local-lite SQLCI handles SET SCHEMA without sending the statement through
+  // the service-stack executor.  Keep the embedded compiler's per-statement
+  // default in sync with that SQLCI session state.
+  const char *localLiteSchema = getenv("TRAF_LOCAL_LITE_SCHEMA");
+  if (localLiteSchema && localLiteSchema[0] != '\0')
+    {
+      ComSchemaName configured((NAString(localLiteSchema)));
+      if (!configured.getCatalogNamePart().isEmpty() &&
+          !configured.getSchemaNamePart().isEmpty())
+        {
+          NAString catalog = configured.getCatalogNamePart().getInternalName();
+          NAString schema = configured.getSchemaNamePart().getInternalName();
+          defaultSchema_.setCatalogName(catalog);
+          defaultSchema_.setSchemaName(schema);
+        }
+    }
+#endif
 
   // create sentinel scope
   initNewScope();
