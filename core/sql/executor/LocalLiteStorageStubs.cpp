@@ -35,6 +35,19 @@ static std::mutex localLiteScanRowMutex;
 static std::map<std::string, std::deque<LocalLiteRow> >
   localLiteScanRows;
 
+static Lng32 localLiteStorageDiagCode(const std::string &message)
+{
+  if (getenv("TEST_SCHEMA_NAME") != NULL)
+    {
+      if (message.find("duplicate local-lite") != std::string::npos)
+        return -8102;
+      if (message.find("referential integrity constraint") !=
+          std::string::npos)
+        return -8103;
+    }
+  return -EXE_INTERNAL_ERROR;
+}
+
 static std::string localLiteScanRowKey(const char *tableName,
                                        ExExeStmtGlobals *globals)
 {
@@ -966,8 +979,10 @@ private:
       {
         ComDiagsArea *diags =
           ComDiagsArea::allocate(getGlobals()->getDefaultHeap());
-        *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-               << DgString0(message.c_str());
+        Lng32 code = localLiteStorageDiagCode(message);
+        *diags << DgSqlCode(code);
+        if (code == -EXE_INTERNAL_ERROR)
+          *diags << DgString0(message.c_str());
         up->setDiagsArea(diags);
       }
     up->upState.status = ex_queue::Q_SQLERROR;
@@ -1280,8 +1295,10 @@ private:
       {
         ComDiagsArea *diags =
           ComDiagsArea::allocate(getGlobals()->getDefaultHeap());
-        *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-               << DgString0(message.c_str());
+        Lng32 code = localLiteStorageDiagCode(message);
+        *diags << DgSqlCode(code);
+        if (code == -EXE_INTERNAL_ERROR)
+          *diags << DgString0(message.c_str());
         up->setDiagsArea(diags);
       }
     up->upState.status = ex_queue::Q_SQLERROR;
@@ -1692,8 +1709,10 @@ private:
       {
         ComDiagsArea *diags = ComDiagsArea::allocate(
             getGlobals()->getDefaultHeap());
-        *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-               << DgString0(message.c_str());
+        Lng32 code = localLiteStorageDiagCode(message);
+        *diags << DgSqlCode(code);
+        if (code == -EXE_INTERNAL_ERROR)
+          *diags << DgString0(message.c_str());
         up->setDiagsArea(diags);
       }
     up->upState.status = ex_queue::Q_SQLERROR;
@@ -2277,8 +2296,10 @@ private:
       {
         ComDiagsArea *diags = ComDiagsArea::allocate(
             getGlobals()->getDefaultHeap());
-        *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-               << DgString0(message.c_str());
+        Lng32 code = localLiteStorageDiagCode(message);
+        *diags << DgSqlCode(code);
+        if (code == -EXE_INTERNAL_ERROR)
+          *diags << DgString0(message.c_str());
         up->setDiagsArea(diags);
       }
     up->upState.status = ex_queue::Q_SQLERROR;

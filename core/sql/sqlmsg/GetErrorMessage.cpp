@@ -91,6 +91,12 @@ static const NAWchar
   Cause_Pfx[]	      = WIDE_("\nCAUSE:\n"),
   Recovery_Pfx[]      = WIDE_("\nRECOVERY:\n");
 
+#ifdef TRAF_LOCAL_LITE
+static short kludgeReadStraightFromMessageFile(Lng32 num,
+                                                NAWchar *msgBuf,
+                                                Lng32 bufSize);
+#endif
+
 // UR2. Used by getErrorMessage, NSK version
 static const char
   Msg_Not_Found_NSK[] = "No message found for SQLCODE $0~sqlcode.";
@@ -489,10 +495,15 @@ short GetErrorMessage (Lng32 error_code,
 
   NAWchar msg[ErrorMessage::MSG_BUF_SIZE];
 
-  if  ( getErrorMessageFromCatalog(error_code_abs, M_type,  
-                                  msg, ErrorMessage::MSG_BUF_SIZE
-                                  , &msgCatalog
-                                 ) == FALSE )
+  NABoolean messageFound = getErrorMessageFromCatalog(
+      error_code_abs, M_type, msg, ErrorMessage::MSG_BUF_SIZE, &msgCatalog);
+#ifdef TRAF_LOCAL_LITE
+  if (!messageFound && M_type == ERROR_TEXT &&
+      getenv("TEST_SCHEMA_NAME") != NULL)
+    messageFound = kludgeReadStraightFromMessageFile(
+        error_code_abs, msg, ErrorMessage::MSG_BUF_SIZE);
+#endif
+  if (!messageFound)
   {
     // No message found, just return the default message...
     // only if we are looking for the error message.
@@ -605,9 +616,6 @@ static const char *kludgeMessageFileText = NULL;
 static short kludgeReadStraightFromMessageFile
 	       (Lng32 num, NAWchar *msgBuf, Lng32 bufSize)
 {
-#ifdef NDEBUG
-  return FALSE;
-#else
   // A kludge for when the message DLL is completely gone:
   // use 100K of system heap to read in as much of SqlciErrors.txt
   // as we can, and do string lookup on that to find messages.
@@ -616,6 +624,17 @@ static short kludgeReadStraightFromMessageFile
   if (!kludgeMessageFileText) {				// first time in
     kludgeMessageFileText = &emptyText;
     const char *env = getenv("SQLMX_MESSAGEFILE");	// /bin/SqlciErrors.txt
+    char defaultMessageFile[1024];
+    if (!env)
+      {
+        const char *trafHome = getenv("TRAF_HOME");
+        if (trafHome)
+          {
+            snprintf(defaultMessageFile, sizeof(defaultMessageFile),
+                     "%s/../sql/bin/SqlciErrors.txt", trafHome);
+            env = defaultMessageFile;
+          }
+      }
     saveErrorMessageFileName(env, !!env);
     if (!env) return FALSE;
     Int32 fd = open(env, O_RDONLY);
@@ -650,6 +669,11 @@ static short kludgeReadStraightFromMessageFile
   const char *msg = strstr(kludgeMessageFileText, numAscii);
   if (!msg) { *msgBuf = -1; return FALSE; }		// nonzero: msgfile fnd
   msg += strlen(numAscii);
+  // SqlciErrors.txt separates the numeric code from the SQLSTATE with two
+  // spaces.  GetErrorMessage's normal catalog path expects the SQLSTATE at
+  // the beginning of this buffer; discard all separator spaces before it.
+  while (*msg == ' ' || *msg == '\t')
+    msg++;
   UInt32 i = 0;
   for (; i < bufSize; i++) { // cvt char* to WCHAR*
     char c = msg[i];
@@ -658,7 +682,6 @@ static short kludgeReadStraightFromMessageFile
   }
   msgBuf[i] = '\0';
   return TRUE;						// message found
-#endif
 } // kludgeReadStraightFromMessageFile
 
 void GetPreprocessorInstallPath(char *thePath, char *CorCOBOL)

@@ -40,6 +40,7 @@
 #include "CmpSeabaseDDLauth.h"
 #include "ElemDDLColDefault.h"
 #include "NumericType.h"
+#include "CharType.h"
 #include "ComUser.h"
 #include "keycolumns.h"
 #include "ElemDDLColRef.h"
@@ -303,7 +304,13 @@ static bool localLiteColumnDefault(ElemDDLColDef *col,
   if (col->getDefaultClauseStatus() == ElemDDLColDef::DEFAULT_CLAUSE_NOT_SPEC)
     {
       if (localCol->nullable)
-        localCol->defaultClass = COM_NULL_DEFAULT;
+        {
+          localCol->defaultClass = COM_NULL_DEFAULT;
+          // The binder needs a concrete expression when DEFAULT VALUES is
+          // used.  Keep the default class as the semantic source of truth,
+          // but persist NULL as the expression just like the catalog path.
+          localCol->defaultValue = "NULL";
+        }
       return true;
     }
   if (col->getDefaultClauseStatus() == ElemDDLColDef::NO_DEFAULT_CLAUSE_SPEC)
@@ -358,6 +365,7 @@ static bool localLiteColumnDefault(ElemDDLColDef *col,
   if (value->isNull())
     {
       localCol->defaultClass = COM_NULL_DEFAULT;
+      localCol->defaultValue = "NULL";
       return true;
     }
 
@@ -365,6 +373,22 @@ static bool localLiteColumnDefault(ElemDDLColDef *col,
   expr->unparse(text, PARSER_PHASE, USER_FORMAT);
   localCol->defaultClass = COM_USER_DEFINED_DEFAULT;
   localCol->defaultValue = text.data();
+  // The parser's user-format unparse omits the type introducer for temporal
+  // literals (DATE '2000-01-01' becomes 2000-01-01).  Keep it in the
+  // local-lite catalog so a later bind does not reinterpret the value as
+  // NUMERIC(6) before assigning it to a DATE column.
+  if (col->getColumnDataType()->getTypeQualifier() == NA_DATETIME_TYPE)
+    {
+      NAString sqlType = col->getColumnDataType()->getTypeSQLname(TRUE);
+      std::string typeName = localLiteUpper(sqlType.data());
+      std::string keyword;
+      if (localLiteStartsWithWord(typeName, "DATE")) keyword = "DATE";
+      else if (localLiteStartsWithWord(typeName, "TIME")) keyword = "TIME";
+      else if (localLiteStartsWithWord(typeName, "TIMESTAMP"))
+        keyword = "TIMESTAMP";
+      if (!keyword.empty())
+        localCol->defaultValue = keyword + " '" + localCol->defaultValue + "'";
+    }
   return true;
 }
 
@@ -1320,6 +1344,9 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
       localCol.name = col->getColumnName().data();
       localCol.type = type;
       localCol.nullable = !col->isNotNullConstraintSpecified();
+      if (col->getColumnDataType()->getTypeQualifier() == NA_CHARACTER_TYPE)
+        localCol.upshifted =
+          static_cast<CharType *>(col->getColumnDataType())->isUpshifted();
       if (col->getSGOptions())
         {
           col->getSGOptions()->setFSDataType(

@@ -2991,29 +2991,31 @@ static bool localLiteMapType(const std::string &typeText,
   else if (type.find("CHARACTER SET UCS2") != std::string::npos)
     *charset = SQLCHARSETCODE_UCS2;
 
+  bool isUnsigned = localLiteTypeIsUnsigned(type);
+
   if (localLiteStartsWithWord(type, "TINYINT"))
     {
-      *datatype = REC_BIN8_SIGNED;
+      *datatype = isUnsigned ? REC_BIN8_UNSIGNED : REC_BIN8_SIGNED;
       *length = 1;
       return true;
     }
   if (localLiteStartsWithWord(type, "SMALLINT"))
     {
-      *datatype = REC_BIN16_SIGNED;
+      *datatype = isUnsigned ? REC_BIN16_UNSIGNED : REC_BIN16_SIGNED;
       *length = 2;
       return true;
     }
   if (localLiteStartsWithWord(type, "INT") ||
       localLiteStartsWithWord(type, "INTEGER"))
     {
-      *datatype = REC_BIN32_SIGNED;
+      *datatype = isUnsigned ? REC_BIN32_UNSIGNED : REC_BIN32_SIGNED;
       *length = 4;
       return true;
     }
   if (localLiteStartsWithWord(type, "LARGEINT") ||
       localLiteStartsWithWord(type, "BIGINT"))
     {
-      *datatype = REC_BIN64_SIGNED;
+      *datatype = isUnsigned ? REC_BIN64_UNSIGNED : REC_BIN64_SIGNED;
       *length = 8;
       return true;
     }
@@ -3401,6 +3403,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       columnDesc->columnsDesc()->character_set = static_cast<CharInfo::CharSet>(charset);
       columnDesc->columnsDesc()->encoding_charset = static_cast<CharInfo::CharSet>(charset);
       columnDesc->columnsDesc()->collation_sequence = CharInfo::DefaultCollation;
+      columnDesc->columnsDesc()->setUpshifted(table.columns[i].upshifted);
       columnDesc->columnsDesc()->setDefaultClass(
           static_cast<ComColumnDefaultClass>(table.columns[i].defaultClass));
       if (!table.columns[i].defaultValue.empty())

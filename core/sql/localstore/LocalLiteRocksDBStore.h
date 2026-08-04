@@ -17,11 +17,12 @@
 struct LocalLiteColumnDef
 {
   LocalLiteColumnDef()
-    : nullable(true), defaultClass(0), added(false) {}
+    : nullable(true), upshifted(false), defaultClass(0), added(false) {}
 
   std::string name;
   std::string type;
   bool nullable;
+  bool upshifted;
   int defaultClass;
   std::string defaultValue;
   bool added;

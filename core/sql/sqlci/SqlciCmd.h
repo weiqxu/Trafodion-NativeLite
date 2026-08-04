@@ -263,8 +263,9 @@ public:
   enum error_type {BRIEF_, DETAIL_, ENVCMD_};
 private:
   error_type type;
+  NABoolean emitCompletion;
 public:
-  Error(char *, Lng32 arglen_, error_type type_);
+  Error(char *, Lng32 arglen_, error_type type_, NABoolean emitCompletion_ = FALSE);
   ~Error(){};
   short process(SqlciEnv * sqlci_env);
 };

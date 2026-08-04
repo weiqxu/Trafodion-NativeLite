@@ -13424,23 +13424,23 @@ ItemExpr *SequenceValue::bindNode(BindWA *bindWA)
   if (nodeIsBound())
     return getValueId().getItemExpr();
 
-  // Binds self; Binds children; SequenceValue::synthesize();
-  boundExpr = Function::bindNode(bindWA);
-  if (bindWA->errStatus()) 
-    return NULL;
-
   ULng32 savedParserFlags = Get_SqlParser_Flags (0xFFFFFFFF);
   Set_SqlParser_Flags(ALLOW_VOLATILE_SCHEMA_IN_TABLE_NAME);
 
   // Obtain the NATable for the seq object.
   naTable_ = bindWA->getNATable(seqCorrName_);
+  Assign_SqlParser_Flags (savedParserFlags);
   if (bindWA->errStatus())
     return this;
 
+  // Binds self; Binds children; SequenceValue::synthesize().  Resolve the
+  // sequence first so synthesizeType() can expose its unsigned identity type.
+  boundExpr = Function::bindNode(bindWA);
+  if (bindWA->errStatus())
+    return NULL;
+
   // BindWA keeps list of sequence generators used, so privileges can be checked.
   bindWA->insertSeqVal(this);
-
-  Assign_SqlParser_Flags (savedParserFlags);
 
   return boundExpr;
 }

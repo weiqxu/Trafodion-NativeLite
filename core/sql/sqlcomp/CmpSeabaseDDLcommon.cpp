@@ -147,6 +147,32 @@ static bool localLiteValidTriggerTransition(
     }
   return true;
 }
+
+static void localLiteSequenceDiag(const ComObjectName &name,
+                                  const std::string &error)
+{
+  if (getenv("TEST_SCHEMA_NAME") == NULL)
+    {
+      *CmpCommon::diags() << DgSqlCode(-3242)
+                          << DgString0((char *)error.c_str());
+      return;
+    }
+  NAString externalName = name.getExternalName(TRUE);
+  if (error.find("local-lite object already exists:") == 0)
+    {
+      *CmpCommon::diags() << DgSqlCode(-1390)
+                          << DgString0(externalName);
+      return;
+    }
+  if (error.find("local-lite sequence does not exist:") == 0)
+    {
+      *CmpCommon::diags() << DgSqlCode(-1389)
+                          << DgString0(externalName);
+      return;
+    }
+  *CmpCommon::diags() << DgSqlCode(-3242)
+                      << DgString0((char *)error.c_str());
+}
 #endif
 
 void cleanupLOBDataDescFiles(const char*, int, const char *);
@@ -7591,8 +7617,7 @@ void  CmpSeabaseDDL::createSeabaseSequence(StmtDDLCreateSequence  * createSequen
   std::string localError;
   LocalLiteRocksDBStore localStore;
   if (!localStore.createSequence(localSequence, &localError))
-    *CmpCommon::diags() << DgSqlCode(-3242)
-                        << DgString0((char *)localError.c_str());
+    localLiteSequenceDiag(localName, localError);
   ActiveSchemaDB()->getNATableDB()->setCachingOFF();
   ActiveSchemaDB()->getNATableDB()->setCachingON();
   processReturn();
@@ -7758,8 +7783,7 @@ void  CmpSeabaseDDL::alterSeabaseSequence(StmtDDLCreateSequence  * alterSequence
           &localSequence, &localFound, &localError) || !localFound)
     {
       if (localError.empty()) localError = "local-lite sequence does not exist";
-      *CmpCommon::diags() << DgSqlCode(-3242)
-                          << DgString0((char *)localError.c_str());
+      localLiteSequenceDiag(localName, localError);
       processReturn();
       return;
     }
@@ -7780,8 +7804,7 @@ void  CmpSeabaseDDL::alterSeabaseSequence(StmtDDLCreateSequence  * alterSequence
       localSequence.numCalls = 0;
     }
   if (!localStore.alterSequence(localSequence, &localError))
-    *CmpCommon::diags() << DgSqlCode(-3242)
-                        << DgString0((char *)localError.c_str());
+    localLiteSequenceDiag(localName, localError);
   ActiveSchemaDB()->getNATableDB()->setCachingOFF();
   ActiveSchemaDB()->getNATableDB()->setCachingON();
   processReturn();
@@ -7950,8 +7973,7 @@ void  CmpSeabaseDDL::dropSeabaseSequence(StmtDDLDropSequence  * dropSequenceNode
           localName.getSchemaNamePartAsAnsiString(TRUE).data(),
           localName.getObjectNamePartAsAnsiString(TRUE).data(),
           false, &localError))
-    *CmpCommon::diags() << DgSqlCode(-3242)
-                        << DgString0((char *)localError.c_str());
+    localLiteSequenceDiag(localName, localError);
   ActiveSchemaDB()->getNATableDB()->setCachingOFF();
   ActiveSchemaDB()->getNATableDB()->setCachingON();
   processReturn();

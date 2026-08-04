@@ -6822,7 +6822,27 @@ const NAType * SequenceValue::synthesizeType()
 {
   NAType * type = NULL;
 
-  type = new HEAP SQLLargeInt(HEAP, TRUE, FALSE);
+  // SEQNUM is also the expression used for IDENTITY columns.  Its result
+  // type must follow the sequence descriptor; returning LARGEINT for an
+  // unsigned SMALLINT/INT identity makes values near the unsigned range
+  // overflow before they reach the target column.
+  if (naTable_ && naTable_->getSGAttributes())
+    {
+      switch (naTable_->getSGAttributes()->getSGFSDataType())
+        {
+        case COM_UNSIGNED_BIN16_FSDT:
+          type = new HEAP SQLSmall(HEAP, FALSE, FALSE);
+          break;
+        case COM_UNSIGNED_BIN32_FSDT:
+          type = new HEAP SQLInt(HEAP, FALSE, FALSE);
+          break;
+        default:
+          type = new HEAP SQLLargeInt(HEAP, TRUE, FALSE);
+          break;
+        }
+    }
+  else
+    type = new HEAP SQLLargeInt(HEAP, TRUE, FALSE);
 
   return type;
 }

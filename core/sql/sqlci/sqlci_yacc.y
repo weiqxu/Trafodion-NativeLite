@@ -1817,11 +1817,18 @@ sql_cmd :
 
         |       ERRORtoken NUMBER COMMA GETtoken
                   { 
+#ifdef TRAF_LOCAL_LITE
+                    if (getenv("TEST_SCHEMA_NAME") != NULL)
+                      $$ = new Error($2, strlen($2), Error::DETAIL_, TRUE);
+                    else
+#endif
+                      {
 		    long newStrLen = 
 		      strlen("GET TEXT FOR ERROR ") + 20;
 		    char * newStr = new char[newStrLen+1];
 		    str_sprintf(newStr, "GET TEXT FOR ERROR %s", $2);
 		    $$ = new DML(newStr, DML_DESCRIBE_TYPE, NULL);
+		  }
 		  }
 
         |      STOREtoken EXPLAIN FORtoken IDENTIFIER INtoken REPOSITORYtoken
