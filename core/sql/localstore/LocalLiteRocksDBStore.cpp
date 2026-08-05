@@ -535,7 +535,7 @@ static bool decodeSequence(const std::string &value,
 static std::string encodeTable(const LocalLiteTableDef &table)
 {
   std::string out;
-  out += "LLT13\n";
+  out += "LLT16\n";
   out += table.catalog + "\n";
   out += table.schema + "\n";
   out += table.name + "\n";
@@ -571,6 +571,16 @@ static std::string encodeTable(const LocalLiteTableDef &table)
       out += table.columns[i].added ? "1" : "0";
       out += "\t";
       out += table.columns[i].upshifted ? "1" : "0";
+      out += "\t";
+      out += table.columns[i].division ? "1" : "0";
+      out += "\t";
+      for (size_t j = 0; j < table.columns[i].computedText.size(); j++)
+        {
+          static const char hex[] = "0123456789ABCDEF";
+          unsigned char c = static_cast<unsigned char>(table.columns[i].computedText[j]);
+          out += hex[c >> 4];
+          out += hex[c & 15];
+        }
       out += "\n";
     }
   snprintf(buf, sizeof(buf), "%lu\n",
@@ -580,6 +590,15 @@ static std::string encodeTable(const LocalLiteTableDef &table)
     {
       snprintf(buf, sizeof(buf), "%lu\n",
                static_cast<unsigned long>(table.primaryKeyColumns[i]));
+      out += buf;
+    }
+  snprintf(buf, sizeof(buf), "%lu\n",
+           static_cast<unsigned long>(table.storeByColumns.size()));
+  out += buf;
+  for (size_t i = 0; i < table.storeByColumns.size(); i++)
+    {
+      snprintf(buf, sizeof(buf), "%lu\n",
+               static_cast<unsigned long>(table.storeByColumns[i]));
       out += buf;
     }
   snprintf(buf, sizeof(buf), "%lu\n",
@@ -713,6 +732,7 @@ static std::string encodeTable(const LocalLiteTableDef &table)
       out.append(table.uniqueKeyNames[i]);
       out += "\n";
     }
+  out += table.noSyskey ? "1\n" : "0\n";
   return out;
 }
 
@@ -739,53 +759,28 @@ static bool decodeTable(const std::string &encoded,
        line != "LLT4" && line != "LLT5" && line != "LLT6" &&
        line != "LLT7" && line != "LLT8" && line != "LLT9" &&
        line != "LLT10" && line != "LLT11" && line != "LLT12" &&
-       line != "LLT13"))
+       line != "LLT13" && line != "LLT14" && line != "LLT15" &&
+       line != "LLT16"))
     {
       setError(error, "invalid local-lite table metadata");
       return false;
     }
-  const bool hasKeyMetadata =
-      (line == "LLT2" || line == "LLT3" || line == "LLT4" ||
-       line == "LLT5" || line == "LLT6" || line == "LLT7" ||
-       line == "LLT8" || line == "LLT9" || line == "LLT10" ||
-       line == "LLT11" || line == "LLT12" || line == "LLT13");
-  const bool hasUniqueMetadata =
-      (line == "LLT3" || line == "LLT4" || line == "LLT5" ||
-       line == "LLT6" || line == "LLT7" || line == "LLT8" ||
-       line == "LLT9" || line == "LLT10" || line == "LLT11" ||
-       line == "LLT12" || line == "LLT13");
-  const bool hasIndexMetadata = (line == "LLT4" || line == "LLT5" ||
-                                 line == "LLT6" || line == "LLT7" ||
-                                 line == "LLT8" || line == "LLT9" ||
-                                 line == "LLT10" || line == "LLT11" ||
-                                 line == "LLT12" || line == "LLT13");
-  const bool hasIndexEncodingMetadata = (line == "LLT5" || line == "LLT6" ||
-                                         line == "LLT7" || line == "LLT8" ||
-                                         line == "LLT9" || line == "LLT10" ||
-                                         line == "LLT11" || line == "LLT12" ||
-                                         line == "LLT13");
-  const bool hasColumnDefaultMetadata = (line == "LLT6" || line == "LLT7" ||
-                                         line == "LLT8" || line == "LLT9" ||
-                                         line == "LLT10" || line == "LLT11" ||
-                                         line == "LLT12" || line == "LLT13");
-  const bool hasCheckMetadata = (line == "LLT7" || line == "LLT8" ||
-                                 line == "LLT9" || line == "LLT10" ||
-                                 line == "LLT11" || line == "LLT12" ||
-                                 line == "LLT13");
-  const bool hasViewMetadata = (line == "LLT8" || line == "LLT9" ||
-                                line == "LLT10" || line == "LLT11" ||
-                                line == "LLT12" || line == "LLT13");
-  const bool hasRIMetadata = (line == "LLT9" || line == "LLT10" ||
-                              line == "LLT11" || line == "LLT12" ||
-                              line == "LLT13");
-  const bool hasDependencyMetadata = (line == "LLT10" || line == "LLT11" ||
-                                      line == "LLT12" || line == "LLT13");
-  const bool hasConstraintNameMetadata = (line == "LLT11" ||
-                                          line == "LLT12" ||
-                                          line == "LLT13");
-  const bool hasViewConstraintMetadata = (line == "LLT12" ||
-                                          line == "LLT13");
-  const bool hasUpshiftMetadata = (line == "LLT13");
+  const int metadataVersion = atoi(line.c_str() + 3);
+  const bool hasKeyMetadata = metadataVersion >= 2;
+  const bool hasUniqueMetadata = metadataVersion >= 3;
+  const bool hasIndexMetadata = metadataVersion >= 4;
+  const bool hasIndexEncodingMetadata = metadataVersion >= 5;
+  const bool hasColumnDefaultMetadata = metadataVersion >= 6;
+  const bool hasCheckMetadata = metadataVersion >= 7;
+  const bool hasViewMetadata = metadataVersion >= 8;
+  const bool hasRIMetadata = metadataVersion >= 9;
+  const bool hasDependencyMetadata = metadataVersion >= 10;
+  const bool hasConstraintNameMetadata = metadataVersion >= 11;
+  const bool hasViewConstraintMetadata = metadataVersion >= 12;
+  const bool hasUpshiftMetadata = metadataVersion >= 13;
+  const bool hasComputedMetadata = metadataVersion >= 14;
+  const bool hasStoreByMetadata = metadataVersion >= 15;
+  const bool hasNoSyskeyMetadata = metadataVersion >= 16;
   if (!nextLine(encoded, &pos, &table->catalog) ||
       !nextLine(encoded, &pos, &table->schema) ||
       !nextLine(encoded, &pos, &table->name) ||
@@ -803,6 +798,7 @@ static bool decodeTable(const std::string &encoded,
   unsigned long count = strtoul(line.c_str(), NULL, 10);
   table->columns.clear();
   table->primaryKeyColumns.clear();
+  table->storeByColumns.clear();
   table->primaryKeyName.clear();
   table->uniqueKeyColumns.clear();
   table->uniqueKeyNames.clear();
@@ -815,6 +811,7 @@ static bool decodeTable(const std::string &encoded,
   table->viewCheckText.clear();
   table->viewUpdatable = false;
   table->viewInsertable = false;
+  table->noSyskey = false;
   for (unsigned long i = 0; i < count; i++)
     {
       if (!nextLine(encoded, &pos, &line))
@@ -869,7 +866,40 @@ static bool decodeTable(const std::string &encoded,
           col.added = ((p6 == std::string::npos ? line.substr(p5 + 1) :
                         line.substr(p5 + 1, p6 - p5 - 1)) == "1");
           if (hasUpshiftMetadata && p6 != std::string::npos)
-            col.upshifted = (line.substr(p6 + 1) == "1");
+            {
+              size_t p7 = line.find('\t', p6 + 1);
+              col.upshifted = (line.substr(p6 + 1, p7 == std::string::npos
+                                            ? std::string::npos
+                                            : p7 - p6 - 1) == "1");
+              if (hasComputedMetadata && p7 != std::string::npos)
+                {
+                  size_t p8 = line.find('\t', p7 + 1);
+                  col.division = (line.substr(p7 + 1, p8 == std::string::npos
+                                               ? std::string::npos
+                                               : p8 - p7 - 1) == "1");
+                  if (p8 != std::string::npos)
+                    {
+                      std::string computedHex = line.substr(p8 + 1);
+                      if (computedHex.size() % 2 != 0)
+                        {
+                          setError(error, "invalid local-lite computed column metadata");
+                          return false;
+                        }
+                      for (size_t j = 0; j < computedHex.size(); j += 2)
+                        {
+                          char pair[3] = { computedHex[j], computedHex[j + 1], 0 };
+                          char *end = NULL;
+                          unsigned long value = strtoul(pair, &end, 16);
+                          if (!end || *end)
+                            {
+                              setError(error, "invalid local-lite computed column metadata");
+                              return false;
+                            }
+                          col.computedText += static_cast<char>(value);
+                        }
+                    }
+                }
+            }
         }
       table->columns.push_back(col);
     }
@@ -895,6 +925,30 @@ static bool decodeTable(const std::string &encoded,
               return false;
             }
           table->primaryKeyColumns.push_back(static_cast<size_t>(keyIndex));
+        }
+    }
+  if (hasStoreByMetadata)
+    {
+      if (!nextLine(encoded, &pos, &line))
+        {
+          setError(error, "truncated local-lite STORE BY metadata");
+          return false;
+        }
+      unsigned long storeByCount = strtoul(line.c_str(), NULL, 10);
+      for (unsigned long i = 0; i < storeByCount; i++)
+        {
+          if (!nextLine(encoded, &pos, &line))
+            {
+              setError(error, "truncated local-lite STORE BY metadata");
+              return false;
+            }
+          unsigned long keyIndex = strtoul(line.c_str(), NULL, 10);
+          if (keyIndex >= table->columns.size())
+            {
+              setError(error, "invalid local-lite STORE BY metadata");
+              return false;
+            }
+          table->storeByColumns.push_back(static_cast<size_t>(keyIndex));
         }
     }
   if (hasUniqueMetadata)
@@ -1243,6 +1297,11 @@ static bool decodeTable(const std::string &encoded,
           table->uniqueKeyNames.push_back(encoded.substr(pos, length));
           pos += length + 1;
         }
+      if (hasNoSyskeyMetadata)
+        {
+          if (!nextLine(encoded, &pos, &line)) return false;
+          table->noSyskey = (line == "1");
+        }
       if ((!table->primaryKeyColumns.empty()) != !table->primaryKeyName.empty() ||
           table->uniqueKeyNames.size() != table->uniqueKeyColumns.size())
         {
@@ -1454,7 +1513,7 @@ static bool isLocalLiteMetadataTable(const std::string &catalog,
     return false;
   return name == "OBJECTS" || name == "TABLES" || name == "COLUMNS" ||
          name == "KEYS" || name == "INDEXES" ||
-         name == "SEQUENCES_VIEW";
+         name == "SEQUENCES_VIEW" || name == "TEXT";
 }
 
 static void addLocalLiteMetadataColumn(LocalLiteTableDef *table,
@@ -1476,6 +1535,15 @@ static bool localLiteMetadataTableDefinition(const std::string &catalog,
 {
   if (!table || !isLocalLiteMetadataTable(catalog, schema, name))
     return false;
+  // A scan TCB can be reused for multiple requests.  Rebuild the virtual
+  // catalog descriptor from scratch instead of appending columns to the
+  // descriptor left by the previous request.
+  table->columns.clear();
+  table->primaryKeyColumns.clear();
+  table->storeByColumns.clear();
+  table->uniqueKeyColumns.clear();
+  table->uniqueKeyNames.clear();
+  table->secondaryIndexes.clear();
   table->catalog = catalog;
   table->schema = schema;
   table->name = name;
@@ -1577,6 +1645,16 @@ static bool localLiteMetadataTableDefinition(const std::string &catalog,
       for (size_t i = 0; i < sizeof(columns) / sizeof(columns[0]); i++)
         addLocalLiteMetadataColumn(table, columns[i][0], columns[i][1]);
     }
+  else if (name == "TEXT")
+    {
+      addLocalLiteMetadataColumn(table, "TEXT_UID", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "TEXT_TYPE", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "SUB_ID", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "SEQ_NUM", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "FLAGS", "VARCHAR(32)");
+      addLocalLiteMetadataColumn(table, "TEXT", "VARCHAR(10000)");
+      table->primaryKeyColumns = {0, 1, 2, 3};
+    }
   table->primaryKeyName = catalog + "." + schema + "." + name + "_PK";
   // Metadata rows are exposed through a generated full-scan descriptor.  The
   // physical RocksDB row key is the synthetic row id, so do not advertise the
@@ -1604,6 +1682,29 @@ static std::string localLiteMetadataCharset(const std::string &type)
   if (type.find("UCS2") != std::string::npos) return "UCS2";
   if (type.find("UTF8") != std::string::npos) return "UTF8";
   return "ISO88591";
+}
+
+static std::string localLiteMetadataColumnSize(const std::string &type)
+{
+  std::string upper = type;
+  for (size_t i = 0; i < upper.size(); i++)
+    upper[i] = static_cast<char>(toupper(static_cast<unsigned char>(upper[i])));
+  if (upper.find("CHAR(") == 0 || upper.find("VARCHAR(") == 0)
+    {
+      size_t begin = upper.find('(') + 1;
+      size_t end = upper.find_first_of(",)", begin);
+      return upper.substr(begin, end == std::string::npos
+                                   ? std::string::npos : end - begin);
+    }
+  if (upper.find("TINYINT") == 0 || upper.find("BOOLEAN") == 0) return "1";
+  if (upper.find("SMALLINT") == 0) return "2";
+  if (upper.find("INT") == 0 || upper.find("INTEGER") == 0 ||
+      upper.find("DATE") == 0) return "4";
+  if (upper.find("LARGEINT") == 0 || upper.find("BIGINT") == 0 ||
+      upper.find("DOUBLE") == 0 || upper.find("NUMERIC") == 0)
+    return "8";
+  if (upper.find("REAL") == 0) return "4";
+  return "0";
 }
 
 static bool localLiteBuildMetadataRows(
@@ -1672,14 +1773,27 @@ static bool localLiteBuildMetadataRows(
         }
       else if (metadataTable.name == "COLUMNS")
         {
+          size_t columnOffset = (!table.view && !table.noSyskey &&
+                                 table.primaryKeyColumns.empty()) ? 1 : 0;
+          if (columnOffset > 0)
+            {
+              std::vector<std::string> fields = {
+                std::to_string(table.objectUid), "SYSKEY", "0", "S", "0",
+                "LARGEINT", "8", "0", "0", "0", "0", "N", "0", "0",
+                "ISO88591", "1", " ", " ", "#1", "0", "NA", "N", "0"};
+              if (!appendLocalLiteMetadataRow(metadataTable, fields, rowId++,
+                                              rows, error)) return false;
+            }
           for (size_t i = 0; i < table.columns.size(); i++)
             {
               const LocalLiteColumnDef &column = table.columns[i];
               std::string qualifier = std::to_string(i + 1);
               std::vector<std::string> fields = {
                 std::to_string(table.objectUid), column.name,
-                std::to_string(i), "U", "0", column.type, "0", "0", "0",
-                "0", "0", column.upshifted ? "Y" : "N", "0",
+                std::to_string(i + columnOffset), column.division ? "S" :
+                  (column.added ? "A" : "U"), "0", column.type,
+                localLiteMetadataColumnSize(column.type), "0", "0", "0",
+                "0", column.upshifted ? "Y" : "N", "0",
                 column.nullable ? "1" : "0",
                 localLiteMetadataCharset(column.type),
                 std::to_string(column.defaultClass),
@@ -1691,13 +1805,56 @@ static bool localLiteBuildMetadataRows(
         }
       else if (metadataTable.name == "KEYS")
         {
+          size_t keySequence = 1;
+          const size_t columnOffset = (!table.view && !table.noSyskey &&
+                                       table.primaryKeyColumns.empty()) ? 1 : 0;
+          bool hasDivisionKey = false;
+          if (table.primaryKeyColumns.empty())
+            for (size_t i = 0; i < table.columns.size(); i++)
+              if (table.columns[i].division)
+                {
+                  hasDivisionKey = true;
+                  if (!appendLocalLiteMetadataRow(
+                          metadataTable,
+                          {std::to_string(table.objectUid),
+                           table.columns[i].name,
+                           std::to_string(keySequence++),
+                           std::to_string(i + columnOffset), "0", "0", "0"},
+                          rowId++, rows, error)) return false;
+                }
+          if (!table.view && !table.noSyskey &&
+              table.primaryKeyColumns.empty() && !hasDivisionKey)
+            {
+              if (!appendLocalLiteMetadataRow(
+                      metadataTable,
+                      {std::to_string(table.objectUid), "SYSKEY", "1", "0",
+                       "0", "0", "0"}, rowId++, rows, error)) return false;
+              keySequence++;
+            }
           for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
             if (!appendLocalLiteMetadataRow(
                     metadataTable,
                     {std::to_string(table.objectUid),
                      table.columns[table.primaryKeyColumns[i]].name,
-                     std::to_string(i + 1),
-                     std::to_string(table.primaryKeyColumns[i]), "0", "0", "0"},
+                     std::to_string(keySequence++),
+                     std::to_string(table.primaryKeyColumns[i]), "0", "0",
+                     "0"},
+                    rowId++, rows, error)) return false;
+          for (size_t i = 0; i < table.storeByColumns.size(); i++)
+            if (!appendLocalLiteMetadataRow(
+                    metadataTable,
+                    {std::to_string(table.objectUid),
+                     table.columns[table.storeByColumns[i]].name,
+                     std::to_string(keySequence++),
+                     std::to_string(table.storeByColumns[i] +
+                                    columnOffset),
+                     "0", "0", "0"}, rowId++, rows, error)) return false;
+          if (!table.view && !table.noSyskey &&
+              table.primaryKeyColumns.empty() && hasDivisionKey)
+            if (!appendLocalLiteMetadataRow(
+                    metadataTable,
+                    {std::to_string(table.objectUid), "SYSKEY",
+                     std::to_string(keySequence++), "0", "0", "0", "0"},
                     rowId++, rows, error)) return false;
           for (size_t key = 0; key < table.uniqueKeyColumns.size(); key++)
             for (size_t i = 0; i < table.uniqueKeyColumns[key].size(); i++)
@@ -1719,8 +1876,25 @@ static bool localLiteBuildMetadataRows(
                       {std::to_string(table.objectUid), std::to_string(i + 1),
                        index.unique ? "1" : "0",
                        std::to_string(index.keyColumns.size()), "0", "1",
-                       std::to_string(index.objectUid), "0"}, rowId++, rows,
+                      std::to_string(index.objectUid), "0"}, rowId++, rows,
                       error)) return false;
+            }
+        }
+      else if (metadataTable.name == "TEXT")
+        {
+          for (size_t i = 0; i < table.columns.size(); i++)
+            {
+              const LocalLiteColumnDef &column = table.columns[i];
+              if (!column.division || column.computedText.empty())
+                continue;
+              if (!appendLocalLiteMetadataRow(
+                      metadataTable,
+                      {std::to_string(table.objectUid), "4",
+                       std::to_string(i + ((!table.view && !table.noSyskey &&
+                                            table.primaryKeyColumns.empty())
+                                           ? 1 : 0)),
+                       "0", "0", column.computedText},
+                      rowId++, rows, error)) return false;
             }
         }
     }
@@ -3812,6 +3986,27 @@ public:
     LocalLiteStorageManager::instance().endStatement(this, transactionId);
     transactionStore_.close();
     return true;
+  }
+
+  bool prepareDDL(int64_t executorTxnId, std::string *error)
+  {
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (!active_)
+        return true;
+      if (!matchesExecutorTxnId(executorTxnId))
+        {
+          setError(error, "local-lite transaction context mismatch");
+          return false;
+        }
+    }
+
+    // ALTER TABLE rewrites both the row layout and the catalog definition.
+    // Commit the current DML image first so no pending mutation retains the
+    // old layout while the new definition is visible.
+    if (!commit(executorTxnId, error))
+      return false;
+    return begin(executorTxnId, error);
   }
 
   bool active()
@@ -6263,14 +6458,15 @@ bool LocalLiteRocksDBStore::alterTable(
     const std::vector<std::string> &addedValues,
     std::string *error)
 {
+  if (!LocalLiteTxnManager::prepareDDLForExecutor(
+          LocalLiteTxnManager::currentExecutorTxnId(), error))
+    return false;
   if (!open(error))
     return false;
-  if (LocalLiteTxnManager::active())
-    {
-      setError(error,
-               "local-lite ALTER TABLE is not allowed in an active transaction");
-      return false;
-    }
+  // Trafodion DDL has an independent metadata boundary.  In particular,
+  // legacy ALTER TABLE tests issue it between BEGIN WORK and COMMIT WORK;
+  // do not reject the catalog/row rewrite merely because a DML transaction
+  // is currently active.
   if (newToOldColumn.size() != newTable.columns.size() ||
       addedValues.size() != newTable.columns.size())
     {
@@ -7083,6 +7279,12 @@ bool LocalLiteTxnManager::rollbackForExecutor(int64_t executorTxnId,
                                               std::string *error)
 {
   return LocalLiteTxnState::instance().rollback(executorTxnId, error);
+}
+
+bool LocalLiteTxnManager::prepareDDLForExecutor(int64_t executorTxnId,
+                                                std::string *error)
+{
+  return LocalLiteTxnState::instance().prepareDDL(executorTxnId, error);
 }
 
 bool LocalLiteTxnManager::active()

@@ -10609,13 +10609,11 @@ Lng32 SQLCLI_SeqGenCliInterface
   std::string localError;
   Int64 localNext = 0;
   Int64 localEnd = 0;
-  // Legacy regressions expose NUM_CALLS as the number of sequence-value
-  // requests, while the native local-lite path intentionally batches cached
-  // allocations.  Keep the native batching behavior, but use one value per
-  // allocation in the legacy compatibility lane so sequence metadata and
-  // next-value observations retain the Trafodion contract.
-  Int64 localCount = getenv("TEST_SCHEMA_NAME") != NULL
-      ? 1 : (localSga->getSGCache() > 0 ? localSga->getSGCache() : 1);
+  // The legacy sequence contract persists one allocation per cache range, not
+  // one row value.  The executor consumes that range locally and exposes the
+  // persisted boundary through SHOWDDL and _MD_.SEQUENCES_VIEW.
+  Int64 localCount = localSga->getSGCache() > 0
+      ? localSga->getSGCache() : 1;
     if (!localStore.allocateSequence(
           static_cast<uint64_t>(localSga->getSGObjectUID().get_value()),
           localCount, &localNext, &localEnd, &localError))

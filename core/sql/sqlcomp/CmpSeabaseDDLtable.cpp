@@ -141,6 +141,68 @@ static long localLiteTypeArg(const std::string &type, long defaultValue)
   return value > 0 ? value : defaultValue;
 }
 
+static std::string localLiteDivisionType(
+    const std::string &expression,
+    const LocalLiteTableDef &table)
+{
+  std::string u = localLiteUpper(expression);
+  if (u.find("DATE_TRUNC") != std::string::npos)
+    return "TIMESTAMP(6)";
+
+  bool characterExpression =
+      u.find("LEFT(") != std::string::npos ||
+      u.find("SUBSTRING") != std::string::npos ||
+      u.find("SUBSTR(") != std::string::npos;
+  if (!characterExpression)
+    return "INT";
+
+  bool ucs2 = u.find("UCS2") != std::string::npos;
+  if (!ucs2)
+    for (size_t i = 0; i < table.columns.size(); i++)
+      if (u.find(localLiteUpper(table.columns[i].name)) != std::string::npos &&
+          localLiteUpper(table.columns[i].type).find("UCS2") != std::string::npos)
+        {
+          ucs2 = true;
+          break;
+        }
+
+  long length = 1;
+  size_t lengthPos = u.find(" FOR ");
+  if (lengthPos != std::string::npos)
+    {
+      const char *p = u.c_str() + lengthPos + 5;
+      while (*p && !isdigit(static_cast<unsigned char>(*p)))
+        p++;
+      length = *p ? strtol(p, NULL, 10) : 1;
+    }
+  else
+    {
+      size_t comma = u.rfind(',');
+      if (comma != std::string::npos)
+        {
+          const char *p = u.c_str() + comma + 1;
+          while (*p && !isdigit(static_cast<unsigned char>(*p)))
+            p++;
+          length = *p ? strtol(p, NULL, 10) : 1;
+        }
+      else
+        {
+          comma = u.find(',');
+          if (comma != std::string::npos)
+            {
+              const char *p = u.c_str() + comma + 1;
+              while (*p && !isdigit(static_cast<unsigned char>(*p)))
+                p++;
+              length = *p ? strtol(p, NULL, 10) : 1;
+            }
+        }
+    }
+  if (length < 1)
+    length = 1;
+  return std::string("CHAR(") + std::to_string(length) + ")" +
+      (ucs2 ? " CHARACTER SET UCS2" : "");
+}
+
 static long localLiteSecondTypeArg(const std::string &type, long defaultValue)
 {
   size_t lparen = type.find('(');
@@ -293,6 +355,229 @@ static bool localLiteFindColumn(const ElemDDLColDefArray &colArray,
         }
     }
   return false;
+}
+
+static std::string localLiteDivisionExpressionText(ItemExpr *expression,
+                                                   PhaseEnum phase)
+{
+  NAString text;
+  expression->unparse(text, phase, COMPUTED_COLUMN_FORMAT);
+  return text.data();
+}
+
+static void localLiteCollectDivisionReferences(
+    ItemExpr *expression, std::vector<std::string> *references)
+{
+  if (!expression)
+    return;
+  if (expression->getOperatorType() == ITM_REFERENCE)
+    {
+      ColReference *reference = (ColReference *)expression;
+      references->push_back(localLiteUpper(
+          reference->getColRefNameObj().getColName().data()));
+      return;
+    }
+  for (CollIndex i = 0; i < expression->getArity(); i++)
+    localLiteCollectDivisionReferences(expression->child(i), references);
+}
+
+static bool localLiteDivisionReferenceIsKey(
+    const LocalLiteTableDef &table, const std::string &name)
+{
+  for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+    if (localLiteUpper(table.columns[table.primaryKeyColumns[i]].name) == name)
+      return true;
+  for (size_t i = 0; i < table.storeByColumns.size(); i++)
+    if (localLiteUpper(table.columns[table.storeByColumns[i]].name) == name)
+      return true;
+  return false;
+}
+
+static bool localLiteValidateDivisionExpression(
+    ItemExpr *expression, const LocalLiteTableDef &table)
+{
+  if (!expression)
+    {
+      localLiteDDLDiag("invalid local-lite division expression");
+      return false;
+    }
+
+  if (expression->getOperatorType() == ITM_INVERSE)
+    expression = expression->child(0);
+
+  std::vector<std::string> references;
+  localLiteCollectDivisionReferences(expression, &references);
+  for (size_t i = 0; i < references.size(); i++)
+    if (!localLiteDivisionReferenceIsKey(table, references[i]))
+      {
+        *CmpCommon::diags() << DgSqlCode(-4240)
+                            << DgString0((char *)references[i].c_str());
+        return false;
+      }
+
+  const OperatorTypeEnum operatorType = expression->getOperatorType();
+  if (operatorType == ITM_EXTRACT || operatorType == ITM_EXTRACT_ODBC)
+    {
+      Extract *extract = (Extract *)expression;
+      enum rec_datetime_field field = extract->getExtractField();
+      if (!(field == REC_DATE_YEAR ||
+            field == REC_DATE_YEARQUARTER_EXTRACT ||
+            field == REC_DATE_YEARMONTH_EXTRACT ||
+            field == REC_DATE_YEARQUARTER_D_EXTRACT ||
+            field == REC_DATE_YEARMONTH_D_EXTRACT))
+        {
+          *CmpCommon::diags() << DgSqlCode(-4244);
+          return false;
+        }
+      if (expression->child(0)->getOperatorType() != ITM_REFERENCE)
+        {
+          std::string text = localLiteDivisionExpressionText(
+              expression->child(0), BINDER_PHASE);
+          *CmpCommon::diags() << DgSqlCode(-4242)
+                              << DgString0((char *)text.c_str());
+          return false;
+        }
+      return true;
+    }
+
+  // A top-level CAST is only accepted for the arithmetic DIVISION BY form.
+  if (operatorType == ITM_CAST)
+    {
+      if (expression->child(0)->getOperatorType() != ITM_DIVIDE)
+        {
+          std::string text = localLiteDivisionExpressionText(
+              expression, BINDER_PHASE);
+          *CmpCommon::diags() << DgSqlCode(-4243)
+                              << DgString0((char *)text.c_str());
+          return false;
+        }
+      std::string text = localLiteUpper(
+          localLiteDivisionExpressionText(expression, BINDER_PHASE));
+      if (text.find(" AS CHAR") != std::string::npos ||
+          text.find(" AS VARCHAR") != std::string::npos ||
+          text.find(" CHARACTER SET ") != std::string::npos)
+        {
+          std::string original = localLiteDivisionExpressionText(
+              expression, BINDER_PHASE);
+          *CmpCommon::diags() << DgSqlCode(-4243)
+                              << DgString0((char *)original.c_str());
+          return false;
+        }
+      expression = expression->child(0);
+    }
+
+  switch (expression->getOperatorType())
+    {
+    case ITM_YEARWEEK:
+    case ITM_YEARWEEKD:
+      if (expression->child(0)->getOperatorType() == ITM_REFERENCE)
+        return true;
+      break;
+
+    case ITM_DATE_TRUNC_MINUTE:
+    case ITM_DATE_TRUNC_SECOND:
+    case ITM_DATE_TRUNC_MONTH:
+    case ITM_DATE_TRUNC_HOUR:
+    case ITM_DATE_TRUNC_CENTURY:
+    case ITM_DATE_TRUNC_DECADE:
+    case ITM_DATE_TRUNC_YEAR:
+    case ITM_DATE_TRUNC_DAY:
+      if (expression->child(0)->getOperatorType() == ITM_REFERENCE)
+        return true;
+      break;
+
+    case ITM_DATEDIFF_YEAR:
+    case ITM_DATEDIFF_QUARTER:
+    case ITM_DATEDIFF_WEEK:
+    case ITM_DATEDIFF_MONTH:
+      if (expression->child(0)->getOperatorType() == ITM_CONSTANT &&
+          expression->child(1)->getOperatorType() == ITM_REFERENCE)
+        return true;
+      break;
+
+    case ITM_LEFT:
+      if (expression->child(0)->getOperatorType() == ITM_REFERENCE &&
+          expression->child(1)->getOperatorType() == ITM_CONSTANT)
+        return true;
+      break;
+
+    case ITM_SUBSTR:
+      if ((expression->child(0)->getOperatorType() == ITM_REFERENCE ||
+           (expression->child(0)->getOperatorType() == ITM_CAST &&
+            expression->child(0)->child(0)->getOperatorType() ==
+                ITM_REFERENCE)) &&
+          expression->getArity() == 3 &&
+          expression->child(1)->getOperatorType() == ITM_CONSTANT &&
+          expression->child(2)->getOperatorType() == ITM_CONSTANT)
+        return true;
+      break;
+
+    default:
+      break;
+    }
+
+  if (expression->getOperatorType() == ITM_DIVIDE)
+    {
+      ItemExpr *left = expression->child(0);
+      ItemExpr *right = expression->child(1);
+      if (right->getOperatorType() != ITM_CONSTANT)
+        {
+          std::string text = localLiteDivisionExpressionText(
+              right, BINDER_PHASE);
+          *CmpCommon::diags() << DgSqlCode(-4241)
+                              << DgString0((char *)text.c_str());
+          return false;
+        }
+      if (left->getOperatorType() == ITM_PLUS)
+        {
+          if (left->child(1)->getOperatorType() != ITM_CONSTANT)
+            {
+              std::string text = localLiteDivisionExpressionText(
+                  left->child(1), BINDER_PHASE);
+              *CmpCommon::diags() << DgSqlCode(-4241)
+                                  << DgString0((char *)text.c_str());
+              return false;
+            }
+          if (left->child(0)->getOperatorType() != ITM_REFERENCE)
+            {
+              std::string text = localLiteDivisionExpressionText(
+                  left, BINDER_PHASE);
+              *CmpCommon::diags() << DgSqlCode(-4242)
+                                  << DgString0((char *)text.c_str());
+              return false;
+            }
+        }
+      else if (left->getOperatorType() != ITM_REFERENCE)
+        {
+          std::string text = localLiteDivisionExpressionText(
+              left, BINDER_PHASE);
+          *CmpCommon::diags() << DgSqlCode(-4242)
+                              << DgString0((char *)text.c_str());
+          return false;
+        }
+      return true;
+    }
+
+  std::string text = localLiteDivisionExpressionText(expression, BINDER_PHASE);
+  *CmpCommon::diags() << DgSqlCode(-4243)
+                      << DgString0((char *)text.c_str());
+  if (operatorType == ITM_COS)
+    *CmpCommon::diags() << DgSqlCode(-4257);
+  return false;
+}
+
+static bool localLiteValidateDivisionExpressions(
+    StmtDDLCreateTable *createTableNode, const LocalLiteTableDef &table)
+{
+  if (!createTableNode->isDivisionClauseSpecified() ||
+      !createTableNode->getDivisionExprList())
+    return true;
+
+  ItemExprList *expressions = createTableNode->getDivisionExprList();
+  for (CollIndex i = 0; i < expressions->entries(); i++)
+    if (!localLiteValidateDivisionExpression((*expressions)[i], table))
+      return false;
+  return true;
 }
 
 static bool localLiteColumnDefault(ElemDDLColDef *col,
@@ -618,6 +903,13 @@ static std::string localLiteMigrationDefault(const LocalLiteColumnDef &column)
   return value;
 }
 
+static bool localLiteAlterKeyColumns(
+    const LocalLiteTableDef &table, ElemDDLColRefArray &keys,
+    const char *kind, std::vector<size_t> *columns);
+
+static bool localLiteConstraintNameExists(const LocalLiteTableDef &table,
+                                          const std::string &name);
+
 static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
                                     NAString &currCatName,
                                     NAString &currSchName)
@@ -640,14 +932,6 @@ static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
         localLiteDDLDiag("local-lite column already exists");
         return false;
       }
-  if (node->getAddConstraintPK() ||
-      node->getAddConstraintUniqueArray().entries() ||
-      node->getAddConstraintRIArray().entries())
-    {
-      localLiteDDLDiag("key constraints on an added local-lite column are not supported");
-      return false;
-    }
-
   LocalLiteColumnDef column;
   NAString typeText;
   def->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
@@ -677,6 +961,61 @@ static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
 
   LocalLiteTableDef newTable = oldTable;
   newTable.columns.push_back(column);
+
+  // Column-level constraints are represented by the ALTER TABLE parser as
+  // the same add-constraint nodes used by CREATE TABLE.  Materialize them in
+  // the candidate definition before rewriting existing rows, so subsequent
+  // binds see the added column and its keys/RI/check constraints atomically.
+  if (node->getAddConstraintPK())
+    {
+      if (!newTable.primaryKeyColumns.empty())
+        {
+          localLiteDDLDiag("local-lite table already has a primary key");
+          return false;
+        }
+      ElemDDLConstraintPK *pk = node->getAddConstraintPK()->getConstraint()
+        ? node->getAddConstraintPK()->getConstraint()
+            ->castToElemDDLConstraintPK() : NULL;
+      if (!pk || !localLiteAlterKeyColumns(
+              newTable, pk->getKeyColumnArray(), "primary key",
+              &newTable.primaryKeyColumns))
+        return false;
+      newTable.primaryKeyName = localLiteQualifiedConstraintName(
+          newTable, pk->getConstraintName(), "_PK");
+      if (localLiteConstraintNameExists(oldTable, newTable.primaryKeyName))
+        {
+          localLiteDDLDiag("local-lite constraint already exists");
+          return false;
+        }
+    }
+
+  StmtDDLAddConstraintUniqueArray &uniques =
+      node->getAddConstraintUniqueArray();
+  for (CollIndex i = 0; i < uniques.entries(); i++)
+    {
+      ElemDDLConstraintUnique *unique = uniques[i] && uniques[i]->getConstraint()
+        ? uniques[i]->getConstraint()->castToElemDDLConstraintUnique() : NULL;
+      if (!unique)
+        {
+          localLiteDDLDiag("invalid local-lite UNIQUE constraint");
+          return false;
+        }
+      std::vector<size_t> keyColumns;
+      if (!localLiteAlterKeyColumns(newTable, unique->getKeyColumnArray(),
+                                    "UNIQUE", &keyColumns))
+        return false;
+      std::string name = localLiteQualifiedConstraintName(
+          newTable, unique->getConstraintName(),
+          "_UK_" + std::to_string(newTable.uniqueKeyColumns.size() + 1));
+      if (localLiteConstraintNameExists(oldTable, name))
+        {
+          localLiteDDLDiag("local-lite constraint already exists");
+          return false;
+        }
+      newTable.uniqueKeyColumns.push_back(keyColumns);
+      newTable.uniqueKeyNames.push_back(name);
+    }
+
   StmtDDLAddConstraintCheckArray &checks = node->getAddConstraintCheckArray();
   for (CollIndex i = 0; i < checks.entries(); i++)
     if (!checks[i] ||
@@ -684,6 +1023,23 @@ static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
                              checks[i]->getConstraint()
                                ->castToElemDDLConstraintCheck()))
       return false;
+
+  StmtDDLAddConstraintRIArray &ris = node->getAddConstraintRIArray();
+  for (CollIndex i = 0; i < ris.entries(); i++)
+    if (!ris[i] || !ris[i]->getConstraint() ||
+        !localLiteAppendRI(&newTable, ris[i]->getConstraint()
+                                      ->castToElemDDLConstraintRI()))
+      return false;
+
+  for (size_t i = oldTable.checkConstraints.size();
+       i < newTable.checkConstraints.size(); i++)
+    if (localLiteConstraintNameExists(oldTable,
+                                      newTable.checkConstraints[i].name))
+      {
+        localLiteDDLDiag("local-lite constraint already exists");
+        return false;
+      }
+
   std::vector<int> mapping(newTable.columns.size(), -1);
   std::vector<std::string> added(newTable.columns.size());
   for (size_t i = 0; i < oldTable.columns.size(); i++)
@@ -692,6 +1048,12 @@ static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
   std::string error;
   LocalLiteRocksDBStore store;
   if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+    {
+      localLiteDDLDiag(error);
+      return false;
+    }
+  if (!newTable.riConstraints.empty() &&
+      !store.validateReferentialIntegrity(newTable, &error))
     {
       localLiteDDLDiag(error);
       return false;
@@ -1196,10 +1558,39 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
         {
           table.primaryKeyColumns.clear();
           table.primaryKeyName.clear();
+          table.noSyskey = true;
           table.uniqueKeyColumns.clear();
           table.uniqueKeyNames.clear();
           table.checkConstraints.clear();
           table.riConstraints.clear();
+        }
+      if (createTableNode->getLikeOptions().getIsWithoutDivision())
+        {
+          std::vector<size_t> remap(table.columns.size(),
+                                    static_cast<size_t>(-1));
+          std::vector<LocalLiteColumnDef> columns;
+          for (size_t i = 0; i < table.columns.size(); i++)
+            if (!table.columns[i].division)
+              {
+                remap[i] = columns.size();
+                columns.push_back(table.columns[i]);
+              }
+          table.columns.swap(columns);
+          std::vector<size_t> *keyLists[] = {&table.primaryKeyColumns,
+                                              &table.storeByColumns};
+          for (size_t list = 0; list < sizeof(keyLists) / sizeof(keyLists[0]);
+               list++)
+            for (size_t i = 0; i < keyLists[list]->size(); i++)
+              (*keyLists[list])[i] = remap[(*keyLists[list])[i]];
+          for (size_t i = 0; i < table.uniqueKeyColumns.size(); i++)
+            for (size_t j = 0; j < table.uniqueKeyColumns[i].size(); j++)
+              table.uniqueKeyColumns[i][j] =
+                remap[table.uniqueKeyColumns[i][j]];
+          for (size_t i = 0; i < table.secondaryIndexes.size(); i++)
+            for (size_t j = 0; j < table.secondaryIndexes[i].keyColumns.size();
+                 j++)
+              table.secondaryIndexes[i].keyColumns[j] =
+                remap[table.secondaryIndexes[i].keyColumns[j]];
         }
       if (!store.createTable(table, &error))
         {
@@ -1287,6 +1678,12 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
           table, pk && pk->getConstraint()
               ? pk->getConstraint()->getConstraintName() : NAString(), "_PK");
     }
+
+  if (createTableNode->getStoreOption() == COM_KEY_COLUMN_LIST_STORE_OPTION &&
+      !localLiteAppendKeyColumns(
+          colArray, createTableNode->getKeyColumnArray(), "STORE BY",
+          &table.storeByColumns))
+    return false;
 
   StmtDDLAddConstraintUniqueArray &uniqueArray =
     createTableNode->getAddConstraintUniqueArray();
@@ -1404,6 +1801,116 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
               localLiteDDLDiag("unsupported local-lite column constraint");
               return false;
             }
+      }
+    }
+
+  // Validate DIVISION BY before creating the table.  In the native path a
+  // failed semantic check leaves no catalog object behind; doing this after
+  // RocksDB creation would make the following negative cases report a
+  // duplicate-table error instead of the intended DIVISION diagnostic.
+  if (!localLiteValidateDivisionExpressions(createTableNode, table))
+    return false;
+
+  // SALT USING creates an implicit, always-computed system column in the
+  // native catalog.  Keep it in the local-lite logical schema as well so
+  // metadata, key layout, and projections expose the same leading key.
+  if (createTableNode->getSaltOptions())
+    {
+      ElemDDLColRefArray *saltRefs = createTableNode->getSaltColRefArray();
+      std::string saltExpression = "HASH2PARTFUNC(";
+      bool first = true;
+      if (saltRefs && saltRefs->entries() > 0)
+        for (CollIndex s = 0; s < saltRefs->entries(); s++)
+          {
+            std::string name = (*saltRefs)[s]->getColumnName().data();
+            for (size_t c = 0; c < table.columns.size(); c++)
+              if (table.columns[c].name == name)
+                {
+                  if (!first) saltExpression += ",";
+                  first = false;
+                  saltExpression += "CAST(\"" + name + "\" AS " +
+                      table.columns[c].type;
+                  if (!table.columns[c].nullable)
+                    saltExpression += " NOT NULL";
+                  saltExpression += ")";
+                  break;
+                }
+          }
+      if (first)
+        for (size_t k = 0; k < table.primaryKeyColumns.size(); k++)
+          {
+            const LocalLiteColumnDef &column =
+                table.columns[table.primaryKeyColumns[k]];
+            if (!first) saltExpression += ",";
+            first = false;
+            saltExpression += "CAST(\"" + column.name + "\" AS " +
+                column.type;
+            if (!column.nullable)
+              saltExpression += " NOT NULL";
+            saltExpression += ")";
+          }
+      saltExpression += " FOR " +
+          std::to_string(createTableNode->getSaltOptions()->getNumPartitions()) +
+          ")";
+
+      LocalLiteColumnDef salt;
+      salt.name = ElemDDLSaltOptionsClause::getSaltSysColName();
+      salt.type = "INT";
+      salt.nullable = false;
+      salt.defaultClass = COM_ALWAYS_COMPUTE_COMPUTED_COLUMN_DEFAULT;
+      salt.defaultValue = saltExpression;
+      salt.computedText = saltExpression;
+      salt.division = true;
+      table.columns.push_back(salt);
+      if (!table.primaryKeyColumns.empty())
+        table.primaryKeyColumns.insert(table.primaryKeyColumns.begin(),
+                                       table.columns.size() - 1);
+    }
+
+  // DIVISION BY creates an implicit, always-computed system column in the
+  // native catalog.  Keep the same column visible to the LocalLite binder so
+  // metadata queries, predicates, and row projection see the real schema.
+  if ((!table.primaryKeyColumns.empty() || !table.storeByColumns.empty()) &&
+      createTableNode->isDivisionClauseSpecified() &&
+      createTableNode->getDivisionExprList())
+    {
+      ItemExprList *divisionExprs = createTableNode->getDivisionExprList();
+      ElemDDLColRefArray *divisionNames =
+        createTableNode->getDivisionColRefArray();
+      for (CollIndex d = 0; d < divisionExprs->entries(); d++)
+        {
+          if (!(*divisionExprs)[d])
+            {
+              localLiteDDLDiag("invalid local-lite division expression");
+              return false;
+            }
+          ItemExpr *divisionExpr = (*divisionExprs)[d];
+          // The parser represents DESC division keys with an inverse wrapper.
+          // The native DDL path removes that wrapper before storing the
+          // computed expression; local-lite must do the same or CTAS tries to
+          // bind TRAFODION._UDF_.INVERSE later.
+          if (divisionExpr->getOperatorType() == ITM_INVERSE)
+            divisionExpr = divisionExpr->child(0);
+          NAString expression;
+          divisionExpr->unparse(expression, PARSER_PHASE,
+                                COMPUTED_COLUMN_FORMAT);
+          LocalLiteColumnDef division;
+          char generatedName[32];
+          snprintf(generatedName, sizeof(generatedName), "_DIVISION_%d_",
+                   static_cast<int>(d + 1));
+          division.name = generatedName;
+          if (divisionNames && divisionNames->entries() > d)
+            division.name = (*divisionNames)[d]->getColumnName().data();
+          division.type = localLiteDivisionType(expression.data(), table);
+          division.nullable = false;
+          division.defaultClass = COM_ALWAYS_COMPUTE_COMPUTED_COLUMN_DEFAULT;
+          division.defaultValue = expression.data();
+          division.computedText = expression.data();
+          division.division = true;
+          table.columns.push_back(division);
+          if (!table.primaryKeyColumns.empty())
+            table.primaryKeyColumns.insert(table.primaryKeyColumns.begin(),
+                                           table.columns.size() - 1);
         }
     }
 

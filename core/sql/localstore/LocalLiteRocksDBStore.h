@@ -17,7 +17,8 @@
 struct LocalLiteColumnDef
 {
   LocalLiteColumnDef()
-    : nullable(true), upshifted(false), defaultClass(0), added(false) {}
+    : nullable(true), upshifted(false), defaultClass(0), added(false),
+      division(false) {}
 
   std::string name;
   std::string type;
@@ -26,6 +27,8 @@ struct LocalLiteColumnDef
   int defaultClass;
   std::string defaultValue;
   bool added;
+  bool division;
+  std::string computedText;
 };
 
 struct LocalLiteIndexDef
@@ -69,7 +72,7 @@ struct LocalLiteTableDef
 {
   LocalLiteTableDef()
     : objectUid(0), nextRowId(1), view(false),
-      viewUpdatable(false), viewInsertable(false) {}
+      viewUpdatable(false), viewInsertable(false), noSyskey(false) {}
 
   std::string catalog;
   std::string schema;
@@ -78,6 +81,8 @@ struct LocalLiteTableDef
   uint64_t nextRowId;
   std::vector<LocalLiteColumnDef> columns;
   std::vector<size_t> primaryKeyColumns;
+  // STORE BY columns describe physical clustering, not a SQL primary key.
+  std::vector<size_t> storeByColumns;
   std::string primaryKeyName;
   std::vector< std::vector<size_t> > uniqueKeyColumns;
   std::vector<std::string> uniqueKeyNames;
@@ -91,6 +96,7 @@ struct LocalLiteTableDef
   std::string viewCheckText;
   bool viewUpdatable;
   bool viewInsertable;
+  bool noSyskey;
   std::vector<LocalLiteObjectRef> dependencies;
 };
 
@@ -498,6 +504,10 @@ public:
   static bool commitForExecutor(int64_t executorTxnId, std::string *error);
   static bool rollback(std::string *error);
   static bool rollbackForExecutor(int64_t executorTxnId, std::string *error);
+  // Flush the current DML image before a catalog/row-layout-changing DDL,
+  // then keep the executor transaction context usable for following DML.
+  static bool prepareDDLForExecutor(int64_t executorTxnId,
+                                    std::string *error);
   static bool active();
   static uint64_t currentLocalTxnId();
   static int64_t currentExecutorTxnId();

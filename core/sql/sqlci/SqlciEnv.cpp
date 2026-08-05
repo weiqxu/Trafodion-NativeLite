@@ -550,6 +550,13 @@ static void SqlciEnv_prologue_to_run(SqlciEnv *sqlciEnv)
   // but local-lite returns before reaching it to avoid service-stack setup.
   SqlCmd::executeQuery("SET SESSION DEFAULT INTERNAL_FORMAT_IO 'ON';", sqlciEnv);
 
+  // Keep compiler-generated explain fragments enabled in the standalone
+  // local-lite session.  The regular SQLCI prologue does this below, but the
+  // local-lite early return intentionally skips the service-stack setup.
+  sqlciEnv->setSpecialError(MXCI_DONOTISSUE_ERRMSGS, NULL);
+  sqlciEnv->generateExplain();
+  sqlciEnv->resetSpecialError();
+
   sqlciEnv->setDoneWithPrologue(TRUE);
   return;
 #endif

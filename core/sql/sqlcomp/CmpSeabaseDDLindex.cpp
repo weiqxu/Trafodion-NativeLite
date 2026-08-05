@@ -107,17 +107,17 @@ static bool localLiteCreateIndex(StmtDDLCreateIndex *node,
                                  const ComObjectName &tableName,
                                  const ComObjectName &indexName)
 {
-  if (node->isVolatile() || node->isAttributeSpecified() ||
-      node->isLocationSpecified() || node->isPartitionSpecified() ||
-      node->isPartitionBySpecified() || node->isDivisionClauseSpecified() ||
-      node->isHbaseOptionsSpecified() ||
-      node->isParallelExecutionClauseSpecified() ||
-      node->isNoPopulateOptionSpecified())
+  if (node->isVolatile())
     {
       localLiteIndexDDLDiag(
-          "local-lite RocksDB indexes do not support physical, partition, volatile, or NO POPULATE options");
+          "local-lite RocksDB indexes do not support volatile indexes");
       return false;
     }
+
+  // LOCATION, partitioning, HBase, and parallel clauses describe the native
+  // storage layout.  They are intentionally ignored by the local-lite
+  // logical index adapter; rejecting them prevents legacy DDL from reaching
+  // the same key/backfill semantics that RocksDB can provide.
 
   LocalLiteTableDef table;
   table.catalog = tableName.getCatalogNamePartAsAnsiString().data();

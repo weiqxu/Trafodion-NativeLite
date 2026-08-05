@@ -13904,6 +13904,14 @@ RelExpr * GenericUpdate::bindNode(BindWA *bindWA)
 
   // Copy the check constraints to the private memory of the GenericUpdate.
   //
+#ifdef TRAF_LOCAL_LITE
+  // Local-lite persists CHECK definitions in its catalog and validates them
+  // at the storage boundary.  Do not copy the native HBase predicate into
+  // the DML expression tree: its tuple offsets are not stable across local
+  // ALTER ADD COLUMN layouts, and date literals can fail during expression
+  // binding before the local-lite executor is entered.
+  getTableDesc()->checkConstraints().clear();
+#endif
   checkConstraints() = getTableDesc()->getCheckConstraints();
 
   // Create a key expression for the table to be updated.

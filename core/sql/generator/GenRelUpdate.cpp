@@ -1913,7 +1913,15 @@ short HbaseUpdate::codeGen(Generator * generator)
 			   ex_expr::exp_SCAN_PRED,
 			   &mergeUpdScanExpr);
     }
+#ifdef TRAF_LOCAL_LITE
+  // The local-lite IUD path validates CHECK constraints in its storage
+  // boundary.  The native HBase update constraint expression is tied to the
+  // HBase update tuple and can dereference stale offsets after ALTER ADD
+  // COLUMN, so do not generate that expression for local-lite UPDATEs.
+  else if (FALSE)
+#else
   else if (getIndexDesc()->isClusteringIndex() && getCheckConstraints().entries())
+#endif
     {
       // Generate the update and insert constraint check expressions
 
@@ -2687,7 +2695,14 @@ short HbaseInsert::codeGen(Generator *generator)
 				NULL,
 				TRUE); // handle serialization
   
+#ifdef TRAF_LOCAL_LITE
+  // CHECK predicates are validated at the local-lite storage boundary.  Do
+  // not generate the native HBase tuple predicate here; its descriptor is
+  // not stable across local-lite ALTER ADD COLUMN layouts.
+  if (FALSE)
+#else
   if (getIndexDesc()->isClusteringIndex() && getCheckConstraints().entries())
+#endif
     {
       ItemExpr *constrTree = 
 	getCheckConstraints().rebuildExprTree(ITM_AND, TRUE, TRUE);

@@ -2896,7 +2896,8 @@ static bool localLiteAppendKeyDesc(TrafDesc **firstKeyDesc,
     }
 
   size_t descriptorColNumber =
-      tableColNumber + (table.primaryKeyColumns.empty() ? 1 : 0);
+      tableColNumber + ((!table.noSyskey &&
+                         table.primaryKeyColumns.empty()) ? 1 : 0);
   TrafDesc *keyDesc = localLiteMakeKeyDesc(
       keySeqNumber, descriptorColNumber, table.columns[tableColNumber].name,
       tableColNumber, descending, heap);
@@ -3293,7 +3294,47 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
                                 &targetSchema, &targetObject, &synonym, error))
         return NULL;
       if (!synonym)
-        return NULL;
+        {
+          // A standalone sequence is not a table descriptor, but the binder
+          // still needs its generator descriptor for SEQNUM(sequence).
+          LocalLiteSequenceDef sequence;
+          bool sequenceFound = false;
+          if (!store.loadSequence(catalog, schema, object, &sequence,
+                                  &sequenceFound, error))
+            return NULL;
+          if (sequenceFound)
+            {
+              TrafDesc *tableDesc =
+                  TrafAllocateDDLdesc(DESC_TABLE_TYPE, heap);
+              tableDesc->tableDesc()->tablename =
+                  localLiteCopyToHeap(object, heap);
+              tableDesc->tableDesc()->objectUID =
+                  static_cast<Int64>(sequence.objectUid);
+              tableDesc->tableDesc()->setObjectType(
+                  COM_SEQUENCE_GENERATOR_OBJECT);
+              tableDesc->tableDesc()->setDroppable(TRUE);
+              TrafDesc *sequenceDesc =
+                  TrafAllocateDDLdesc(DESC_SEQUENCE_GENERATOR_TYPE, heap);
+              TrafSequenceGeneratorDesc *sg =
+                  sequenceDesc->sequenceGeneratorDesc();
+              sg->setSgType(sequence.internal ? COM_INTERNAL_SG :
+                                                     COM_EXTERNAL_SG);
+              sg->fsDataType = static_cast<ComFSDataType>(sequence.fsDataType);
+              sg->startValue = sequence.startValue;
+              sg->increment = sequence.increment;
+              sg->maxValue = sequence.maxValue;
+              sg->minValue = sequence.minValue;
+              sg->cycleOption = sequence.cycle ? TRUE : FALSE;
+              sg->cache = sequence.cache;
+              sg->objectUID = static_cast<Int64>(sequence.objectUid);
+              sg->nextValue = sequence.nextValue;
+              sg->redefTime = 0;
+              tableDesc->tableDesc()->sequence_generator_desc = sequenceDesc;
+              *found = true;
+              return tableDesc;
+            }
+          return NULL;
+        }
       catalog = targetCatalog;
       schema = targetSchema;
       object = targetObject;
@@ -3329,7 +3370,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   TrafDesc *firstColumnDesc = NULL;
   TrafDesc *lastColumnDesc = NULL;
 
-  if (!table.view && table.primaryKeyColumns.empty())
+  if (!table.view && !table.noSyskey && table.primaryKeyColumns.empty())
     {
       TrafDesc *syskeyDesc = TrafMakeColumnDesc(
           tableDesc->tableDesc()->tablename,
@@ -3406,9 +3447,19 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       columnDesc->columnsDesc()->setUpshifted(table.columns[i].upshifted);
       columnDesc->columnsDesc()->setDefaultClass(
           static_cast<ComColumnDefaultClass>(table.columns[i].defaultClass));
-      if (!table.columns[i].defaultValue.empty())
+      if (!table.columns[i].division && !table.columns[i].defaultValue.empty())
         columnDesc->columnsDesc()->defaultvalue =
           localLiteCopyToHeap(table.columns[i].defaultValue, heap);
+      if (table.columns[i].division)
+        {
+          columnDesc->columnsDesc()->colclass = 'S';
+          columnDesc->columnsDesc()->colFlags |= SEABASE_COLUMN_IS_DIVISION;
+          const std::string &computed = table.columns[i].computedText.empty()
+            ? table.columns[i].defaultValue : table.columns[i].computedText;
+          if (!computed.empty())
+            columnDesc->columnsDesc()->computed_column_text =
+              localLiteCopyToHeap(computed, heap);
+        }
       columnDesc->columnsDesc()->setAdded(table.columns[i].added);
       columnDesc->columnsDesc()->hbaseColFam =
         localLiteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
@@ -3501,10 +3552,22 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   size_t keyCount = table.primaryKeyColumns.size();
   if (table.primaryKeyColumns.empty())
     {
-      firstKeyDesc = localLiteMakeKeyDesc(
-          1, 0, "SYSKEY", table.columns.size(), false, heap);
-      lastKeyDesc = firstKeyDesc;
-      keyCount = 1;
+      if (!table.noSyskey)
+        {
+          firstKeyDesc = localLiteMakeKeyDesc(
+              1, 0, "SYSKEY", table.columns.size(), false, heap);
+          lastKeyDesc = firstKeyDesc;
+          keyCount = 1;
+        }
+      for (size_t i = 0; i < table.storeByColumns.size(); i++)
+        {
+          if (!localLiteAppendKeyDesc(&firstKeyDesc, &lastKeyDesc, table,
+                                      i + (table.noSyskey ? 1 : 2),
+                                      table.storeByColumns[i], false,
+                                      heap, error))
+            return NULL;
+          keyCount++;
+        }
     }
   else
     {
@@ -3579,11 +3642,14 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
             return NULL;
           keyColumnSeen[uniqueColumns[i]] = true;
         }
-      if (table.primaryKeyColumns.empty())
+      if (!table.noSyskey && table.primaryKeyColumns.empty())
         {
           TrafDesc *syskeyKeyDesc = localLiteMakeKeyDesc(
               keySeq, 0, "SYSKEY", table.columns.size(), false, heap);
-          lastUniqueKeyDesc->next = syskeyKeyDesc;
+          if (!firstUniqueKeyDesc)
+            firstUniqueKeyDesc = syskeyKeyDesc;
+          else
+            lastUniqueKeyDesc->next = syskeyKeyDesc;
           lastUniqueKeyDesc = syskeyKeyDesc;
           keySeq++;
         }
@@ -3690,11 +3756,14 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           keyColumnSeen[tableColNumber] = true;
         }
 
-      if (table.primaryKeyColumns.empty())
+      if (!table.noSyskey && table.primaryKeyColumns.empty())
         {
           TrafDesc *syskeyKeyDesc = localLiteMakeKeyDesc(
               keySeq++, 0, "SYSKEY", table.columns.size(), false, heap);
-          lastSecondaryKeyDesc->next = syskeyKeyDesc;
+          if (!firstSecondaryKeyDesc)
+            firstSecondaryKeyDesc = syskeyKeyDesc;
+          else
+            lastSecondaryKeyDesc->next = syskeyKeyDesc;
           lastSecondaryKeyDesc = syskeyKeyDesc;
         }
       else
@@ -5712,10 +5781,20 @@ NABoolean createNAFileSets(TrafDesc * table_desc       /*IN*/,
          break;
          case CHECK_CONSTRAINT:
            {
+#ifdef TRAF_LOCAL_LITE
+             // Local-lite keeps the original CHECK text in its RocksDB
+             // catalog and evaluates it at the storage boundary.  Feeding
+             // the text back through the native HBase CheckConstraint
+             // binder makes DATE predicates fail before local-lite DML is
+             // entered, and also recreates the stale-tuple-offset problem
+             // after ALTER ADD COLUMN.
+             break;
+#else
              char *constrntText = constrntHdr->check_constrnts_desc->
                                   checkConstrntsDesc()->constrnt_text;
              checkConstraints.insert(new (heap)
                CheckConstraint(constrntName, constrntText, heap));
+#endif
            }
            break;
          default:
@@ -6303,6 +6382,11 @@ NABoolean NATable::fetchObjectUIDForNativeTable(const CorrName& corrName,
        viewFileName_ = new (heap_) char[viewFileNameLength];
        memcpy(viewFileName_, view_desc->viewDesc()->viewfilename,
               viewFileNameLength);
+     }
+   else if (objectType_ == COM_SEQUENCE_GENERATOR_OBJECT)
+     {
+       // Standalone sequences have no row columns or clustering index.  Their
+       // generator descriptor is consumed below by SequenceValue binding.
      }
    else
      {
@@ -9362,7 +9446,7 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
             }
           else
             {
-#endif
+#else
 	  if (corrName.isSpecialTable() && corrName.getSpecialType() == ExtendedQualName::INDEX_TABLE)
 	    {
 	      tableDesc = 
@@ -9392,9 +9476,8 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
 
 	  isSeabase = TRUE;
 	  isSeabaseMD = TRUE;
-#ifdef TRAF_LOCAL_LITE
-            }
 #endif
+            }
 	}
       else if (! inTableDescStruct)
         {
@@ -9404,7 +9487,8 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
           bool localLiteFound = false;
           std::string localLiteError;
           if (!corrName.isSpecialTable() ||
-              corrName.getSpecialType() == ExtendedQualName::TRIGTEMP_TABLE)
+              corrName.getSpecialType() == ExtendedQualName::TRIGTEMP_TABLE ||
+              corrName.getSpecialType() == ExtendedQualName::SG_TABLE)
             tableDesc = localLiteCreateTableDescFromCatalog(
                 corrName, naTableHeap, &localLiteFound, &localLiteError);
           if (!tableDesc && !localLiteError.empty())
@@ -9417,7 +9501,7 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
             }
           if (!localLiteFound)
             {
-#endif
+#else
           if (corrName.isSpecialTable())
           {
             switch (corrName.getSpecialType())
@@ -9450,9 +9534,8 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
                                 corrName.getQualifiedNameObj().getSchemaName(),
                                 corrName.getQualifiedNameObj().getObjectName(),
                                 objectType);
-#ifdef TRAF_LOCAL_LITE
-            }
 #endif
+            }
         }
 
       if (inTableDescStruct)

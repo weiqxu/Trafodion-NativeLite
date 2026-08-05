@@ -44,6 +44,8 @@ static Lng32 localLiteStorageDiagCode(const std::string &message)
       if (message.find("referential integrity constraint") !=
           std::string::npos)
         return -8103;
+      if (message.find("check constraint") != std::string::npos)
+        return -8101;
     }
   return -EXE_INTERNAL_ERROR;
 }
@@ -1103,9 +1105,6 @@ public:
     if (tdb.convertExpr_)
       tdb.convertExpr_->fixup(0, getExpressionMode(), this, space, heap,
                               FALSE, globals);
-    if (tdb.insConstraintExpr_)
-      tdb.insConstraintExpr_->fixup(0, getExpressionMode(), this, space,
-                                    heap, FALSE, globals);
   }
 
   ~LocalLiteHbaseInsertTcb()
@@ -1248,18 +1247,6 @@ private:
     if (rowLen == 0)
       rowLen = static_cast<ULng32>(insertTdb().convertRowLen_);
 
-    if (insertTdb().insConstraintExpr_)
-      {
-        ex_expr::exp_return_type evalRetCode =
-          insertTdb().insConstraintExpr_->eval(down->getAtp(), workAtp_);
-        if (evalRetCode == ex_expr::EXPR_ERROR)
-          {
-            *error = "local-lite insert constraint evaluation failed";
-            return false;
-          }
-        if (evalRetCode == ex_expr::EXPR_FALSE)
-          return true;
-      }
 
     ExpTupleDesc *convertTd =
       insertTdb().workCriDesc_->getTupleDescriptor(insertTdb().convertTuppIndex_);
@@ -1837,12 +1824,6 @@ public:
     if (tdb.mergeUpdScanExpr_)
       tdb.mergeUpdScanExpr_->fixup(0, getExpressionMode(), this, space, heap,
                                    FALSE, globals);
-    if (tdb.insConstraintExpr_)
-      tdb.insConstraintExpr_->fixup(0, getExpressionMode(), this, space, heap,
-                                    FALSE, globals);
-    if (tdb.updConstraintExpr_)
-      tdb.updConstraintExpr_->fixup(0, getExpressionMode(), this, space, heap,
-                                    FALSE, globals);
     if (tdb.returnFetchExpr_)
       tdb.returnFetchExpr_->fixup(0, getExpressionMode(), this, space, heap,
                                   FALSE, globals);
@@ -2199,19 +2180,6 @@ private:
         if (updateLen == 0)
           updateLen = updateTdb().updateRowLen_;
 
-        if (updateTdb().updConstraintExpr_)
-          {
-            rc = updateTdb().updConstraintExpr_->eval(downEntry()->getAtp(),
-                                                       workAtp_);
-            if (rc == ex_expr::EXPR_ERROR)
-              {
-                *error = "local-lite update constraint evaluation failed";
-                return false;
-              }
-            if (rc == ex_expr::EXPR_FALSE)
-              continue;
-          }
-
         LocalLiteRowMutation mutation;
         mutation.before = sourceRow;
         if (!LocalLiteApplyBinaryUpdate(
@@ -2225,6 +2193,7 @@ private:
       return true;
     if (!txn.updateRows(table_, mutations, error))
       return false;
+
     matches_ = static_cast<Lng32>(mutations.size());
     return true;
   }
@@ -2261,18 +2230,6 @@ private:
     if (rowLen == 0)
       rowLen = updateTdb().mergeInsertRowLen_;
 
-    if (updateTdb().insConstraintExpr_)
-      {
-        rc = updateTdb().insConstraintExpr_->eval(downEntry()->getAtp(),
-                                                   workAtp_);
-        if (rc == ex_expr::EXPR_ERROR)
-          {
-            *error = "local-lite MERGE insert constraint evaluation failed";
-            return false;
-          }
-        if (rc == ex_expr::EXPR_FALSE)
-          return true;
-      }
 
     std::string encodedRow;
     if (!LocalLiteNormalizeBinaryRow(table_, insertTd, mergeInsertRow_,

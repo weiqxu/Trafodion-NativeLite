@@ -875,6 +875,95 @@ static bool writeValue(char *row,
   return false;
 }
 
+// DIVISION columns are stored in the canonical row because they participate
+// in the physical key.  The normal UPDATE expression only contains columns
+// named by the user, so refresh the small DATE_PART family here after the
+// source columns have been copied.  This keeps the row key and the projected
+// computed value in sync for UPDATE and MERGE.
+static bool refreshLocalLiteDivisionColumns(
+    const LocalLiteTableDef &table,
+    const std::vector<LocalLiteStoredColumn> &columns,
+    char *row,
+    std::string *error)
+{
+  for (size_t division = 0; division < table.columns.size(); division++)
+    {
+      const LocalLiteColumnDef &definition = table.columns[division];
+      if (!definition.division || definition.computedText.empty())
+        continue;
+
+      std::string expression = upper(definition.computedText);
+      size_t function = expression.find("DATE_PART");
+      size_t quote = expression.find('\'', function);
+      size_t endQuote = quote == std::string::npos
+        ? std::string::npos : expression.find('\'', quote + 1);
+      size_t comma = endQuote == std::string::npos
+        ? std::string::npos : expression.find(',', endQuote + 1);
+      if (function == std::string::npos || comma == std::string::npos)
+        continue;
+
+      std::string part = expression.substr(quote + 1, endQuote - quote - 1);
+      std::string source = expression.substr(comma + 1);
+      size_t close = source.find(')');
+      if (close != std::string::npos)
+        source.erase(close);
+      while (!source.empty() && isspace(static_cast<unsigned char>(source[0])))
+        source.erase(0, 1);
+      while (!source.empty() && isspace(static_cast<unsigned char>(source[source.size() - 1])))
+        source.erase(source.size() - 1);
+      if (!source.empty() && source[0] == '"' && source[source.size() - 1] == '"')
+        source = source.substr(1, source.size() - 2);
+      size_t dot = source.rfind('.');
+      if (dot != std::string::npos)
+        source = source.substr(dot + 1);
+
+      size_t sourceColumn = table.columns.size();
+      for (size_t i = 0; i < table.columns.size(); i++)
+        if (upper(table.columns[i].name) == source)
+          {
+            sourceColumn = i;
+            break;
+          }
+      if (sourceColumn >= table.columns.size() ||
+          sourceColumn >= columns.size() || division >= columns.size())
+        continue;
+
+      bool isNull = false;
+      if (columns[sourceColumn].nullable)
+        isNull = ExpTupleDesc::isNullValue(
+            row + columns[sourceColumn].nullIndOffset,
+            columns[sourceColumn].nullBitIndex,
+            ExpTupleDesc::SQLMX_ALIGNED_FORMAT);
+      if (isNull)
+        {
+          if (!writeValue(row, columns[division], "NULL", error))
+            return false;
+        }
+      else if (columns[sourceColumn].type == LL_TYPE_DATETIME &&
+               columns[sourceColumn].length >= 4)
+        {
+          unsigned short year = 0;
+          unsigned char month = 0;
+          unsigned char day = 0;
+          memcpy(&year, row + columns[sourceColumn].offset, sizeof(year));
+          memcpy(&month, row + columns[sourceColumn].offset + 2, sizeof(month));
+          memcpy(&day, row + columns[sourceColumn].offset + 3, sizeof(day));
+          Int64 value = 0;
+          if (part == "YEAR")
+            value = year;
+          else if (part == "YEARMONTH" || part == "YEARMONTHD")
+            value = static_cast<Int64>(year) * 100 + month;
+          else if (part == "YEARQUARTER")
+            value = static_cast<Int64>(year) * 10 + ((month - 1) / 3 + 1);
+          else
+            continue;
+          if (!writeValue(row, columns[division], std::to_string(value), error))
+            return false;
+        }
+    }
+  return true;
+}
+
 bool LocalLiteEncodeBinaryRow(const LocalLiteTableDef &table,
                               const std::vector<std::string> &fields,
                               std::string *encoded,
@@ -882,7 +971,12 @@ bool LocalLiteEncodeBinaryRow(const LocalLiteTableDef &table,
 {
   if (fields.size() != table.columns.size())
     {
-      setError(error, "local-lite binary row field count does not match table");
+      char message[256];
+      snprintf(message, sizeof(message),
+               "local-lite row field count does not match %s (%lu vs %lu)",
+               table.name.c_str(), static_cast<unsigned long>(fields.size()),
+               static_cast<unsigned long>(table.columns.size()));
+      setError(error, message);
       return false;
     }
 
@@ -924,6 +1018,9 @@ bool LocalLiteEncodeBinaryRow(const LocalLiteTableDef &table,
       if (!writeValue(&row[0], columns[i], fields[i], error))
         return false;
     }
+
+  if (!refreshLocalLiteDivisionColumns(table, columns, &row[0], error))
+    return false;
 
   UInt32 adjustedLen = ExpAlignedFormat::adjustDataLength(&row[0],
                                                           static_cast<UInt32>(rowLen),
@@ -1268,6 +1365,9 @@ bool LocalLiteApplyBinaryUpdate(
                                &row[0], columns[columnIndex], error))
         return false;
     }
+
+  if (!refreshLocalLiteDivisionColumns(table, columns, &row[0], error))
+    return false;
 
   UInt32 adjustedLen = ExpAlignedFormat::adjustDataLength(
       &row[0], static_cast<UInt32>(row.size()),
