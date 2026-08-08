@@ -524,6 +524,13 @@ static bool parseSchemaName(const std::string &text,
                             std::string *catalog,
                             std::string *schema);
 
+static bool parseCatalogName(const std::string &text,
+                             std::string *catalog);
+
+static void localLiteAppendMetadataTables(
+    const std::string &catalog, const std::string &schema,
+    std::vector<std::string> *objects);
+
 static void localLiteCollectViewObjects(
     const LocalLiteTableDef &view,
     const std::vector<LocalLiteTableDef> &allTables,
@@ -564,6 +571,8 @@ static bool localLiteParseGet(const std::string &sql,
                               std::string *error)
 {
   std::string text = trim(sql);
+  while (!text.empty() && text[text.size() - 1] == ';')
+    text = trim(text.substr(0, text.size() - 1));
   std::string upperText = upper(text);
   if (!startsWithWord(text, "GET")) return false;
 
@@ -577,6 +586,117 @@ static bool localLiteParseGet(const std::string &sql,
   if (!store.listTables("", "", &tables, error)) return true;
 
   size_t pos = 0;
+  if (upperText == "GET SCHEMAS" ||
+      upperText.find("GET SCHEMAS IN CATALOG ") == 0)
+    {
+      if (upperText == "GET SCHEMAS")
+        {
+          catalog = (env && env->defaultCatalog() &&
+                     env->defaultCatalog()[0] != '\0')
+              ? upper(env->defaultCatalog()) : "TRAFODION";
+        }
+      else if (!parseCatalogName(
+                   trim(text.substr(strlen("GET SCHEMAS IN CATALOG "))),
+                   &catalog))
+        {
+          *error = "invalid local-lite catalog name";
+          return true;
+        }
+
+      *title = "Schemas in Catalog " + catalog;
+      if (!store.listSchemas(catalog, objects, error))
+        return true;
+      localLiteSortUnique(objects);
+      return true;
+    }
+
+  if (upperText == "GET CATALOGS" || upperText == "GET DATABASES")
+    {
+      *title = upperText == "GET DATABASES" ? "Databases" : "Catalogs";
+      if (!store.listCatalogs(objects, error))
+        return true;
+      localLiteSortUnique(objects);
+      return true;
+    }
+
+  // The unqualified forms use the SQLCI session's current catalog and
+  // schema.  Keep the output shape identical to the existing IN SCHEMA
+  // forms so clients can use either spelling.
+  if (upperText == "GET TABLES" || upperText == "GET VIEWS" ||
+      upperText == "GET INDEXES" || upperText == "GET SEQUENCES")
+    {
+      catalog = (env && env->defaultCatalog() &&
+                 env->defaultCatalog()[0] != '\0')
+          ? upper(env->defaultCatalog()) : "TRAFODION";
+      schema = (env && env->defaultSchema() &&
+                env->defaultSchema()[0] != '\0')
+          ? upper(env->defaultSchema()) : "SEABASE";
+      bool wantTables = upperText == "GET TABLES";
+      bool wantIndexes = upperText == "GET INDEXES";
+      bool wantSequences = upperText == "GET SEQUENCES";
+      *title = wantTables ? "Tables in Schema " :
+          (wantIndexes ? "Indexes in Schema " :
+           (wantSequences ? "Sequences in Schema " : "Views in Schema "));
+      *title += catalog + "." + schema;
+
+      if (wantSequences)
+        {
+          std::vector<LocalLiteSequenceDef> sequences;
+          if (!store.listSequences(catalog, schema, &sequences, error))
+            return true;
+          for (size_t i = 0; i < sequences.size(); i++)
+            objects->push_back(sequences[i].name);
+        }
+      else
+        for (size_t i = 0; i < tables.size(); i++)
+          {
+            if (tables[i].catalog != catalog || tables[i].schema != schema)
+              continue;
+            if (wantTables && !tables[i].view)
+              objects->push_back(tables[i].name);
+            else if (!wantTables && !wantIndexes && tables[i].view)
+              objects->push_back(tables[i].name);
+            else if (wantIndexes && !tables[i].view)
+              {
+                for (size_t k = 0; k < tables[i].uniqueKeyNames.size(); k++)
+                  objects->push_back(localLiteShortObjectName(
+                      tables[i].uniqueKeyNames[k]));
+                for (size_t k = 0; k < tables[i].riConstraints.size(); k++)
+                  objects->push_back(localLiteShortObjectName(
+                      tables[i].riConstraints[k].name));
+                for (size_t k = 0; k < tables[i].secondaryIndexes.size(); k++)
+                  objects->push_back(localLiteShortObjectName(
+                      tables[i].secondaryIndexes[k].name));
+              }
+          }
+      if (wantTables)
+        localLiteAppendMetadataTables(catalog, schema, objects);
+      if (wantTables)
+        {
+          bool hasStatistics = false;
+          for (size_t i = 0; i < tables.size() && !hasStatistics; i++)
+            if (tables[i].catalog == catalog && tables[i].schema == schema &&
+                !tables[i].view)
+              {
+                LocalLiteTableStatsDef stats;
+                bool found = false;
+                std::string statsError;
+                if (store.loadTableStats(tables[i].catalog, tables[i].schema,
+                                         tables[i].name, &stats, &found,
+                                         &statsError) && found)
+                  hasStatistics = true;
+              }
+          if (hasStatistics)
+            {
+              objects->push_back("SB_HISTOGRAMS");
+              objects->push_back("SB_HISTOGRAM_INTERVALS");
+              objects->push_back("SB_PERSISTENT_SAMPLES");
+            }
+        }
+      localLiteSortUnique(objects);
+      return true;
+    }
+
   if (upperText.find("GET TABLES IN SCHEMA ") == 0 ||
       upperText.find("GET INDEXES IN SCHEMA ") == 0 ||
       upperText.find("GET VIEWS IN SCHEMA ") == 0 ||
@@ -623,6 +743,8 @@ static bool localLiteParseGet(const std::string &sql,
                     tables[i].secondaryIndexes[k].name));
             }
         }
+      if (wantTables)
+        localLiteAppendMetadataTables(catalog, schema, objects);
       if (wantTables)
         {
           bool hasStatistics = false;
@@ -726,7 +848,7 @@ static bool parseSchemaName(const std::string &text,
                             std::string *schema)
 {
   std::string name = trim(text);
-  size_t end = name.find_first_of(" \t\r\n");
+  size_t end = name.find_first_of(" \t\r\n,;");
   if (end != std::string::npos)
     name.resize(end);
   size_t dot = name.find('.');
@@ -737,6 +859,50 @@ static bool parseSchemaName(const std::string &text,
   return !catalog->empty() && !schema->empty();
 }
 
+static void localLiteSetDefaultSchema(SqlciEnv *env,
+                                      const std::string &catalog,
+                                      const std::string &schema)
+{
+  if (env->defaultCatalog())
+    delete env->defaultCatalog();
+  if (env->defaultSchema())
+    delete env->defaultSchema();
+  env->defaultCatalog() = new char[catalog.size() + 1];
+  env->defaultSchema() = new char[schema.size() + 1];
+  strcpy(env->defaultCatalog(), catalog.c_str());
+  strcpy(env->defaultSchema(), schema.c_str());
+  std::string defaultSchema = catalog + "." + schema;
+  setenv("TRAF_LOCAL_LITE_SCHEMA", defaultSchema.c_str(), 1);
+}
+
+static bool parseCatalogName(const std::string &text,
+                             std::string *catalog)
+{
+  if (!catalog)
+    return false;
+  std::string name = trim(text);
+  size_t end = name.find_first_of(" \t\r\n,;");
+  if (end != std::string::npos)
+    name.resize(end);
+  *catalog = unquoteIdentifier(name);
+  return !catalog->empty();
+}
+
+static void localLiteAppendMetadataTables(
+    const std::string &catalog, const std::string &schema,
+    std::vector<std::string> *objects)
+{
+  if (catalog != "TRAFODION" || schema != "_MD_" || !objects)
+    return;
+  const char *metadataTables[] = {
+    "OBJECTS", "TABLES", "COLUMNS", "KEYS", "INDEXES",
+    "SEQUENCES_VIEW", "TEXT"
+  };
+  for (size_t i = 0; i < sizeof(metadataTables) / sizeof(metadataTables[0]);
+       i++)
+    objects->push_back(metadataTables[i]);
+}
+
 static bool parseObjectName(const std::string &text,
                             std::string *catalog,
                             std::string *schema,
@@ -744,7 +910,7 @@ static bool parseObjectName(const std::string &text,
                             SqlciEnv *env = NULL)
 {
   std::string name = trim(text);
-  size_t end = name.find_first_of(" \t\r\n");
+  size_t end = name.find_first_of(" \t\r\n,;");
   if (end != std::string::npos)
     name.resize(end);
   size_t first = name.find('.');
@@ -1145,16 +1311,41 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
         *retcode = reportError(sqlciEnv, "invalid local-lite schema name");
       else
         {
-          if (sqlciEnv->defaultCatalog())
-            delete sqlciEnv->defaultCatalog();
-          if (sqlciEnv->defaultSchema())
-            delete sqlciEnv->defaultSchema();
-          sqlciEnv->defaultCatalog() = new char[catalog.size() + 1];
-          sqlciEnv->defaultSchema() = new char[schema.size() + 1];
-          strcpy(sqlciEnv->defaultCatalog(), catalog.c_str());
-          strcpy(sqlciEnv->defaultSchema(), schema.c_str());
-          std::string defaultSchema = catalog + "." + schema;
-          setenv("TRAF_LOCAL_LITE_SCHEMA", defaultSchema.c_str(), 1);
+          localLiteSetDefaultSchema(sqlciEnv, catalog, schema);
+          writeLine(sqlciEnv, "--- SQL operation complete.");
+          *retcode = 0;
+        }
+      return true;
+    }
+
+  if (startsWithWord(sql, "USE"))
+    {
+      std::string rest = trim(sql.substr(strlen("USE")));
+      if (upper(rest).compare(0, strlen("SCHEMA"), "SCHEMA") == 0 &&
+          (rest.size() == strlen("SCHEMA") ||
+           isspace(static_cast<unsigned char>(rest[strlen("SCHEMA")]))))
+        rest = trim(rest.substr(strlen("SCHEMA")));
+
+      std::string catalog;
+      std::string schema;
+      std::string error;
+      LocalLiteRocksDBStore store;
+      std::vector<std::string> schemas;
+      bool valid = parseSchemaName(rest, &catalog, &schema) &&
+          store.listSchemas(catalog, &schemas, &error);
+      if (valid && std::find(schemas.begin(), schemas.end(), schema) ==
+          schemas.end())
+        {
+          error = "local-lite schema does not exist: " + catalog + "." +
+              schema;
+          valid = false;
+        }
+      if (!valid)
+        *retcode = reportError(sqlciEnv, error.empty()
+            ? "invalid local-lite schema name" : error);
+      else
+        {
+          localLiteSetDefaultSchema(sqlciEnv, catalog, schema);
           writeLine(sqlciEnv, "--- SQL operation complete.");
           *retcode = 0;
         }
@@ -1166,6 +1357,13 @@ bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *r
   // generated RocksDB descriptors, so the initialize command is intentionally
   // a catalog-local compatibility operation rather than an HBase DDL call.
   std::string upperSql = upper(sql);
+  if (upperSql == "SHOW SCHEMAS")
+    {
+      // SHOW SCHEMAS is a spelling alias for the existing SQLCI GET
+      // SCHEMAS implementation. Keep one catalog enumeration path.
+      sql = "GET SCHEMAS";
+      upperSql = upper(sql);
+    }
   if (upperSql == "INITIALIZE TRAFODION, CREATE METADATA VIEWS" ||
       upperSql == "INITIALIZE TRAFODION, DROP METADATA VIEWS")
     {

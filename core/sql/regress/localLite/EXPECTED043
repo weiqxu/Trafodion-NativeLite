@@ -1,0 +1,101 @@
+>>CREATE SCHEMA LLREG043_EMPTY;
+>>CREATE SCHEMA LLREG043_DATA;
+>>SET SCHEMA LLREG043_DATA;
+--- SQL operation complete.
+>>CREATE TABLE LLREG043_T (ID INT NOT NULL PRIMARY KEY);
+--- SQL operation complete.
+>>GET TABLES;
+Tables in Schema TRAFODION.LLREG043_DATA
+========================================
+LLREG043_T
+=======================
+  1 row(s) returned
+--- SQL operation complete.
+>>GET TABLES IN SCHEMA LLREG043_DATA;
+Tables in Schema TRAFODION.LLREG043_DATA
+========================================
+LLREG043_T
+=======================
+  1 row(s) returned
+--- SQL operation complete.
+>>GET SCHEMAS;
+Schemas in Catalog TRAFODION
+============================
+LLREG043_DATA
+LLREG043_EMPTY
+_MD_
+=======================
+  3 row(s) returned
+--- SQL operation complete.
+>>GET SCHEMAS IN CATALOG TRAFODION;
+Schemas in Catalog TRAFODION
+============================
+LLREG043_DATA
+LLREG043_EMPTY
+_MD_
+=======================
+  3 row(s) returned
+--- SQL operation complete.
+>>SHOW SCHEMAS;
+Schemas in Catalog TRAFODION
+============================
+LLREG043_DATA
+LLREG043_EMPTY
+_MD_
+=======================
+  3 row(s) returned
+--- SQL operation complete.
+>>GET CATALOGS;
+Catalogs
+========
+TRAFODION
+=======================
+  1 row(s) returned
+--- SQL operation complete.
+>>GET DATABASES;
+Databases
+=========
+TRAFODION
+=======================
+  1 row(s) returned
+--- SQL operation complete.
+>>USE _MD_;
+--- SQL operation complete.
+>>GET TABLES;
+Tables in Schema TRAFODION._MD_
+===============================
+COLUMNS
+INDEXES
+KEYS
+OBJECTS
+SEQUENCES_VIEW
+TABLES
+TEXT
+=======================
+  7 row(s) returned
+--- SQL operation complete.
+>>GET TABLES IN SCHEMA _MD_;
+Tables in Schema TRAFODION._MD_
+===============================
+COLUMNS
+INDEXES
+KEYS
+OBJECTS
+SEQUENCES_VIEW
+TABLES
+TEXT
+=======================
+  7 row(s) returned
+--- SQL operation complete.
+>>USE LLREG043_DATA;
+--- SQL operation complete.
+>>GET TABLES;
+Tables in Schema TRAFODION.LLREG043_DATA
+========================================
+LLREG043_T
+=======================
+  1 row(s) returned
+--- SQL operation complete.
+>>DROP SCHEMA LLREG043_DATA CASCADE;
+>>DROP SCHEMA LLREG043_EMPTY CASCADE;
+>>exit;

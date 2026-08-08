@@ -459,6 +459,7 @@ static char * FCString (const char *idString, int isFC)
 %token SETtoken
 %token SETENV
 %token SHOW
+%token SHOWSCHEMAS
 %token SHOWCONTROL
 %token SHOWDDL
 %token SHOWPLAN
@@ -525,6 +526,7 @@ static char * FCString (const char *idString, int isFC)
 
 %token CALLToken
 %token COMMENTtoken
+%token USEtoken
 
 %union {
 	 enum ComRoutineSQLAccess sql_access_mode_type;
@@ -1920,6 +1922,8 @@ dml_type :
 	|	SHOWPLAN  		{$$ = DML_DESCRIBE_TYPE;}
         |       SHOWSHAPE               {$$ = DML_DESCRIBE_TYPE;}
         |       SHOWSET                 {$$ = DML_DESCRIBE_TYPE;}
+        |       SHOWSCHEMAS             {$$ = DML_DESCRIBE_TYPE;}
+        |       USEtoken                {$$ = DML_CONTROL_TYPE;}
 	|	LOCK    		{$$ = DML_CONTROL_TYPE;}
 	|	UNLOCK  		{$$ = DML_CONTROL_TYPE;}
 	|	TOK_BEGIN   		{$$ = DML_CONTROL_TYPE;}

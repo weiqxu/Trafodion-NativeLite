@@ -234,6 +234,7 @@ B			[ \t\n]+
 [Rr][Ee][Pp][Ee][Aa][Tt]               return_IDENT_or_TOKEN(REPEAT, -1);
 [Ss][Hh][Oo][Ww][Ss][Tt][Aa][Tt][Ss]   return_IDENT_or_TOKEN(SHOWSTATS, 0);
 [Ss][Hh][Oo][Ww][Tt][Rr][Aa][Nn][Ss][Aa][Cc][Tt][Ii][Oo][Nn]   return_IDENT_or_TOKEN(SHOWSTATS, 0);
+[Ss][Hh][Oo][Ww]{B}[Ss][Cc][Hh][Ee][Mm][Aa][Ss] return_IDENT_or_TOKEN(SHOWSCHEMAS, 0);
 [Ii][Nn][Vv][Oo][Kk][Ee]               return_IDENT_or_TOKEN(INVOKE, 0);
 [Ll][Oo][Gg]            	       {
                                          BEGIN LOGFNAME;
@@ -242,6 +243,7 @@ B			[ \t\n]+
                                       
 [Hh][Ii][Ss][Tt][Oo][Rr][Yy]	       return_IDENT_or_TOKEN(HISTORY, 0);
 [Rr][Ee][Ss][Ee][Tt]                   return_IDENT_or_TOKEN(RESET, 0);
+[Uu][Ss][Ee]                           return_IDENT_or_TOKEN(USEtoken, 0);
 [Ss][Ee][Tt]{B}[Tt][Aa][Bb][Ll][Ee] return_IDENT_or_TOKEN(SET_TABLEtoken, 0);
 [Ss][Ee][Tt]{B}[Tt][Rr][Aa][Nn][Ss][Aa][Cc][Tt][Ii][Oo][Nn] return_IDENT_or_TOKEN(SET_TRANSACTIONtoken, 0);
 [Ss][Ee][Tt]                           return_IDENT_or_TOKEN(SETtoken, 0);

@@ -6028,6 +6028,115 @@ bool LocalLiteRocksDBStore::listTables(
   return checkRocksError(err, "scan local-lite table metadata", error);
 }
 
+bool LocalLiteRocksDBStore::listSchemas(
+    const std::string &catalog, std::vector<std::string> *schemas,
+    std::string *error)
+{
+  if (!schemas || !open(error))
+    return false;
+  schemas->clear();
+
+  const std::string prefix = catalog.empty()
+      ? "schema|" : "schema|" + catalog + "|";
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  for (rocksdb_iter_seek(it, prefix.data(), prefix.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      std::string key(rawKey, keyLen);
+      if (key.compare(0, prefix.size(), prefix) != 0)
+        break;
+
+      size_t catalogEnd = key.find('|', strlen("schema|"));
+      if (catalogEnd == std::string::npos || catalogEnd + 1 >= key.size())
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          setError(error, "invalid local-lite schema metadata key");
+          return false;
+        }
+      schemas->push_back(key.substr(catalogEnd + 1));
+    }
+
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "scan local-lite schema metadata", error))
+    return false;
+
+  // Older local-lite catalogs may contain table records created before the
+  // explicit schema record was introduced.  Include those schemas as a
+  // compatibility fallback while retaining empty schemas from schema| keys.
+  std::vector<LocalLiteTableDef> tables;
+  if (!listTables(catalog, "", &tables, error))
+    return false;
+  for (size_t i = 0; i < tables.size(); i++)
+    schemas->push_back(tables[i].schema);
+
+  // _MD_ is a built-in local-lite schema. Its metadata tables are exposed
+  // through synthetic descriptors and therefore have no normal schema record.
+  if (catalog == "TRAFODION")
+    schemas->push_back("_MD_");
+
+  std::sort(schemas->begin(), schemas->end());
+  schemas->erase(std::unique(schemas->begin(), schemas->end()), schemas->end());
+  return true;
+}
+
+bool LocalLiteRocksDBStore::listCatalogs(
+    std::vector<std::string> *catalogs, std::string *error)
+{
+  if (!catalogs || !open(error))
+    return false;
+  catalogs->clear();
+
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_iterator_t *it = rocksdb_create_iterator(
+      LocalLiteStorageManager::instance().catalogDb(), readOptions);
+  const std::string prefix = "schema|";
+  for (rocksdb_iter_seek(it, prefix.data(), prefix.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      std::string key(rawKey, keyLen);
+      if (key.compare(0, prefix.size(), prefix) != 0)
+        break;
+      size_t catalogEnd = key.find('|', prefix.size());
+      if (catalogEnd == std::string::npos || catalogEnd == prefix.size())
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          setError(error, "invalid local-lite schema metadata key");
+          return false;
+        }
+      catalogs->push_back(key.substr(prefix.size(), catalogEnd - prefix.size()));
+    }
+
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "scan local-lite catalog metadata", error))
+    return false;
+
+  // Include catalogs from legacy table records as well.  This also makes the
+  // catalog enumeration useful for catalogs that contain only old tables.
+  std::vector<LocalLiteTableDef> tables;
+  if (!listTables("", "", &tables, error))
+    return false;
+  for (size_t i = 0; i < tables.size(); i++)
+    catalogs->push_back(tables[i].catalog);
+
+  std::sort(catalogs->begin(), catalogs->end());
+  catalogs->erase(std::unique(catalogs->begin(), catalogs->end()), catalogs->end());
+  return true;
+}
+
 bool LocalLiteRocksDBStore::listSequences(
     const std::string &catalog,
     const std::string &schema,

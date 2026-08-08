@@ -377,6 +377,11 @@ public:
                   const std::string &schema,
                   std::vector<LocalLiteTableDef> *tables,
                   std::string *error);
+  bool listSchemas(const std::string &catalog,
+                   std::vector<std::string> *schemas,
+                   std::string *error);
+  bool listCatalogs(std::vector<std::string> *catalogs,
+                    std::string *error);
   bool createIndex(const LocalLiteTableDef &table,
                    const LocalLiteIndexDef &index,
                    std::string *error);
