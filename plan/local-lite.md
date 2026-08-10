@@ -918,18 +918,20 @@ documented local-lite v1 boundary. Cross-process writers, cross-table atomic
 snapshots, crash-atomic catalog/table publication, multi-table atomic commit,
 and TMF coordination remain explicit post-v1 or Phase 6 work.
 
-Remaining, in suggested implementation order:
+Remaining, in suggested productization order:
 
-1. Expand portable single-byte `TRIM`/`LTRIM`/`RTRIM` coverage from the stored
-   `TRIM` projections and literal `LTRIM`/`RTRIM` expressions in
-   `TEST005`/`TEST013` to leading/trailing/both and explicit trim-character
-   forms, CHAR/VARCHAR inputs, empty/NULL values, both INSERT assignment paths,
-   concatenation, and predicates. Keep UTF8/UCS2 variants out of this
-   increment.
+1. Implement **M11 sessionized runtime and standalone server**: move local
+   transaction ownership into each `ContextCli`, prove two independent sessions
+   in one process, and then add a long-running server with two real clients.
+2. Implement **M12 transactional storage and recovery**: define a backend-neutral
+   storage/transaction contract, select the transactional backend using common
+   correctness and fault tests, and add crash-atomic multi-table/catalog commits,
+   backup, restore, migration, and integrity verification.
+3. Continue portable SQL compatibility increments, beginning with the
+   single-byte `TRIM`/`LTRIM`/`RTRIM` family, as a parallel compatibility
+   backlog rather than the productization critical path.
 
-For the portable function-only lane, the next increment remains **single-byte
-TRIM family regress coverage**. The active broader legacy-suite task is
-**Milestone 0 inventory, adapter, and baseline** in
+The authoritative milestone definitions and completion gates are in
 `plan/local-lite-legacy-regress-roadmap.md`.
 
 - [x] **Build RocksDB dependency detection and link flags.**
