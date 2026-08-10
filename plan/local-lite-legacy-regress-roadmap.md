@@ -2,9 +2,12 @@
 
 ## Purpose
 
-This roadmap tracks the work required to run the portable, non-Hive, and
-non-HBase portions of the legacy suites under `core/sql/regress` against the
-standalone local-lite SQLCI and RocksDB store.
+Milestones 0 through 10 in this roadmap track the work required to run the
+portable, non-Hive, and non-HBase portions of the legacy suites under
+`core/sql/regress` against the standalone local-lite SQLCI and RocksDB store.
+Milestones 11 and 12 extend that validated SQL surface into the session,
+service, transaction, recovery, and storage boundaries required for a
+production-oriented single-node database.
 
 The legacy suites are not a drop-in replacement for the native
 `core/sql/regress/localLite` lane. They mix portable SQL semantics with HBase
@@ -411,3 +414,125 @@ Run and converge the portable sections in this order:
 Completion means all included sections pass, all excluded sections retain an
 explicit reason, there are no unexpected diffs, and the native local-lite lane
 continues to pass in full.
+
+## Milestone Status Summary
+
+The completion labels below are scoped.  A completed M1-M9 milestone means its
+declared RocksDB-only, single-process local-lite surface is implemented and has
+the cited focused coverage; it does not imply that the full legacy suite or a
+production multi-session database is complete.
+
+| Milestone | Status | Current evidence and boundary |
+| --- | --- | --- |
+| M1 UPDATE | Complete | Native `TEST026`; UPDATE generation/execution, key changes, statement atomicity, explicit transaction behavior, and diagnostics are covered. |
+| M2 DELETE, UPSERT, MERGE | Complete | Native `TEST027`-`TEST029`; per-table publication is atomic, but cross-table commit is not. |
+| M3 secondary indexes | Complete | Native `TEST030`-`TEST035` plus RocksDB SQLCI smoke; equality, prefix, range, covering/index-only access, uniqueness, and DML maintenance are covered. |
+| M4 catalog DDL and constraints | Complete for the declared local surface | Native `TEST009`, `TEST021`, `TEST036`, `TEST037`; later metadata/DDL compatibility work and `TEST043` extend this surface. RI CASCADE and computed system columns remain outside the boundary. |
+| M5 metadata and statistics | Complete for the declared local surface | Native `TEST038`; SHOWDDL/SHOWSTATS and persisted row/NULL statistics are covered. Full histograms and unrestricted legacy physical `_MD_` behavior are not claimed. |
+| M6 character sets and data types | Complete for the declared local surface | Native `TEST039`; ISO88591/UTF8/UCS2, binary types, BOOLEAN, INTERVAL, and LONG VARCHAR are covered. LOB/ARRAY and broader collation/translation behavior remain outside the boundary. |
+| M7 advanced executor | Complete for the single-process surface | Native `TEST040`; cursors, windows, grouping, sorting, cancellation cleanup, and local scratch lifecycle are covered. There is no ESP fan-out or remote multi-session runtime. |
+| M8 authorization | Complete for the local catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
+| M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
+| M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the six allowlisted legacy entries and native `TEST001`-`TEST042`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
+| M11 sessionized runtime and standalone server | Planned | Not started. This is the next productization milestone. |
+| M12 transactional storage and recovery | Planned | Not started. It begins after the M11 session/server boundary is usable. |
+
+## Milestone 11: Sessionized Runtime And Standalone Server
+
+Status: planned; not started.  M11 is the next productization milestone.  Its
+goal is to move local-lite from a single SQLCI process into one long-running
+database service that owns the embedded store and safely hosts multiple client
+sessions.  It does not select or replace the storage engine.
+
+### M11A: Session-Owned Transaction Context
+
+- Replace the process-global `LocalLiteTxnState` singleton with a transaction
+  context owned by each `ContextCli` session.
+- Keep `LocalLiteStorageManager` process-owned so one server process owns and
+  shares the catalog/table handles.
+- Resolve the current transaction context from executor statement/session
+  state instead of implicit static access.
+- Release statement snapshots and roll back an active transaction when a
+  session disconnects, is cancelled, or is destroyed.
+- Preserve the current `LocalLiteTxn` executor-facing API boundary so scan and
+  DML TCB semantics do not depend on a future wire protocol.
+
+M11A completion requires two independent CLI contexts in one process to begin
+transactions concurrently, isolate uncommitted writes, commit or roll back
+independently, resolve same-key conflicts deterministically, and clean up after
+disconnect/cancel without poisoning the other session.
+
+### M11B: Standalone NativeLite Server
+
+- Add a long-running `nativelite-server` process that exclusively opens the
+  configured local store.
+- Create and destroy one `ContextCli` session per client connection.
+- Provide prepare, execute, fetch, close, transaction, cancellation, health,
+  and graceful-shutdown paths over an initial loopback/Unix-socket transport.
+- Keep connection handling separate from compiler/executor/storage semantics so
+  the initial transport can be replaced by the selected product protocol.
+- Add a real two-client end-to-end test and a restart/persistence test.
+
+M11B completion requires two clients to perform overlapping transactions
+through the server, observe the declared isolation boundary, disconnect without
+leaking transaction state, and read committed data after a clean or unclean
+server restart.
+
+### M11C: Product Client Protocol
+
+- Time-box a choice between a reduced Trafodion client path and a standalone
+  protocol such as PostgreSQL wire compatibility; do not restore DCS,
+  ZooKeeper, Monitor, or the full service stack by default.
+- Support authentication startup, statement lifecycle, result metadata/rows,
+  transaction status, cancellation, and stable SQLSTATE mapping.
+- Validate with a real JDBC or ODBC client.  An in-process CLI call is not
+  end-to-end protocol evidence.
+
+M11 completion does not claim production readiness.  It establishes the
+multi-session service boundary needed for M12 durability, recovery, backup,
+resource governance, and later security hardening.
+
+## Milestone 12: Transactional Storage And Recovery
+
+Status: planned; not started.  M12 makes the M11 service safe for durable
+single-node transactional use.  Storage-engine selection is an M12 decision,
+not a prerequisite baked into the executor.
+
+### M12A: Storage Contract And Atomic Transaction Domain
+
+- Introduce backend-neutral `StorageEngine`, `StorageSession`, `StorageTxn`,
+  and streaming `StorageCursor` contracts.
+- Put catalog metadata, base rows, primary/UNIQUE records, and secondary-index
+  maintenance inside one transaction domain.
+- Replace whole-table materialization at the storage API with bounded streaming
+  range cursors.
+- Define isolation, conflict, retryable error, cancellation, and synchronous
+  durability contracts before selecting the backend.
+- Preserve versioned row/key/catalog formats or provide an explicit migration.
+
+### M12B: Backend Selection And Implementation
+
+- Evaluate at least the single-database RocksDB TransactionDB layout and one
+  transactional embedded alternative against the same correctness, recovery,
+  and workload tests.
+- Select the backend using transaction correctness and crash recovery first,
+  p95/p99 stability and operational behavior second, and peak throughput after
+  those gates.
+- Do not map a successful point-get/scan prototype to production readiness.
+
+### M12C: Recovery, Backup, Migration, And Operations
+
+- Add synchronous commit/WAL policy, checkpoint, integrity verification,
+  consistent backup, restore, and on-disk format-version checks.
+- Add migration from the current per-table RocksDB layout with object, row,
+  key/index, and checksum verification plus a documented rollback window.
+- Inject process kill, restart, disk-full, interrupted checkpoint/backup,
+  commit-boundary, and metadata/data publication failures.
+- Add storage and transaction metrics, disk-watermark protection, and a
+  repeatable restore drill.
+
+M12 completion requires crash-atomic catalog/data and multi-table commits, one
+declared cross-table transaction snapshot, no visibility of aborted writes,
+successful recovery after every supported fault point, and a backup restored
+into a fresh store that passes metadata, row, key/index, and SQL validation.
+It still does not claim node-level high availability or distributed execution.
