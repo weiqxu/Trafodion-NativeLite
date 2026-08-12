@@ -19,31 +19,35 @@ core/sql/regress/localLiteLegacy/runregr --probe --suite core \
 `OBEY $$TRAF_HOME$$/sql/scripts/regrinit.sql`, so the audit and adapter safety
 checks were extended to reject macro-based external OBEY paths before SQLCI.
 
+The M2-M6 rows below were refreshed from the 2026-08-12 re-probe; every initial
+timeout was retried with a 120-second limit. See
+`reprobe-m2-m6-2026-08-12.tsv` for row-level status.
+
 ## Results
 
 | TEST | Disposition | Milestone | Observed evidence |
 | --- | --- | --- | --- |
 | TEST000 | unsafe | M7 | Depends on the external Trafodion `regrinit.sql` service-stack script |
 | TEST001 | unsafe | M7 | SQLCI terminates with status 139 after the conditional-directive test and end of session |
-| TEST002 | blocked | M2 | DELETE is a prerequisite; diagnostic differences remain and the whole test reached 30 seconds |
-| TEST005 | blocked | M3 | Secondary indexes are unsupported; INTERVAL, DELETE, and statistics also diverge |
+| TEST002 | blocked | M2 | The scalar-subquery regression still reaches the 120-second limit |
+| TEST005 | blocked | M3 | A duplicate unique-index key is rejected with local error 3242 |
 | TEST008 | blocked | M7 | A complex join reaches ESP error 2013; some unordered legacy rows also differ in order |
-| TEST010 | blocked | M4 | CREATE VIEW is unsupported; executor statistics and UCS2 are later dependencies |
-| TEST018 | blocked | M3 | Index maintenance requires secondary indexes plus UPDATE and DELETE |
+| TEST010 | blocked | M4 | Diagnostic default-schema and message text differ |
+| TEST018 | runnable | M10 | Exact normalized EXPECTED/LOG match for secondary-index DML and rollback |
 | TEST019 | blocked | M7 | Hash join execution reports scratch error 8427; UPSERT, UPDATE, indexes, and statistics also remain |
 | TEST020 | blocked | M7 | Forced hash-join/partition-access shapes fail to prepare with error 2105 |
-| TEST027 | blocked | M4 | CREATE VIEW is required before INTERVAL and ESP-dependent join coverage |
-| TEST029 | blocked | M4 | DEFAULT, CHECK, VIEW, SHOWDDL, ALTER, and view DML are unsupported |
-| TEST032 | blocked | M6 | Unsigned numeric conversion and key ordering diverge; the whole test reached 30 seconds |
-| TEST037 | blocked | M5 | INVOKE requires catalog metadata; VIEW and additional types follow |
-| TEST041 | blocked | M4 | CHECK constraints and ALTER TABLE are unsupported; the whole test reached 30 seconds |
-| TEST056 | blocked | M4 | DEFAULT/ALTER/VIEW and SHOWDDL are required; the whole test reached 30 seconds |
-| TEST061 | blocked | M5 | INVOKE/SHOWDDL metadata is required before VIEW, INDEX, and UCS2 coverage |
+| TEST027 | blocked | M4 | Control-query-shape output differs and later joins report ESP error 2013 |
+| TEST029 | blocked | M4 | The 120-second probe exits normally; SHOWDDL and view-DML diagnostics differ |
+| TEST032 | blocked | M6 | Unsigned key ordering differs and the conversion matrix reaches 120 seconds |
+| TEST037 | blocked | M5 | INVOKE/SHOWDDL output differs and a later view reports error 4001 |
+| TEST041 | blocked | M4 | Row-value CHECK ALTER requests arkcmp, reports error 2013, and reaches 120 seconds |
+| TEST056 | blocked | M4 | SHOWDDL/index rendering differs and the MDAM matrix reaches 120 seconds |
+| TEST061 | blocked | M5 | INVOKE/SHOWDDL differs and duplicate index creation reports error 3242 |
 | TEST163 | runnable | M10 | Exact normalized EXPECTED/LOG match |
 
 The status-139 result for `TEST001` is retained as an infrastructure failure,
-not converted into a semantic diff. `TEST163` joins `charsets/TEST316` in the
-default runnable allowlist.
+not converted into a semantic diff. `TEST018` and `TEST163` are both in the
+current default runnable allowlist.
 
 ## Unsafe Section Review
 
@@ -51,7 +55,7 @@ The remaining three `core` M0 entries were classified as follows:
 
 | TEST | Disposition | Milestone | Observed evidence |
 | --- | --- | --- | --- |
-| TEST038 SQL-only sequence | blocked | M4 | The isolated probe reached the 30 second ceiling while still executing the expression/DML body; DEFAULT, CTAS, SHOWDDL, UPDATE, DELETE, statistics, and additional types remain dependencies |
+| TEST038 SQL-only sequence | blocked | M4 | Section baseline extraction remains incomplete; ESP error 2013 occurs and the sequence reaches 120 seconds |
 | TEST038 `aqr` | unsafe | M7 | The AQR scenario starts a second SQLCI session from a shell command |
 | TEST116 | excluded | - | The test is built around HBase object inspection, DDL transactions, concurrent HBase sessions, and region operations |
 | TEST131 | unsafe | M8 | The authorization test coordinates multiple SQL users and sessions through shell-launched SQLCI processes; its native section also covers Hive privileges |

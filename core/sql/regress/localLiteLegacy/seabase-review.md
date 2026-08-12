@@ -18,6 +18,10 @@ core/sql/regress/localLiteLegacy/runregr --probe --suite seabase \
 execution because HBase versions/timestamps, column families, or SALT storage
 are their primary purpose.
 
+The M2-M6 rows below were refreshed from the 2026-08-12 re-probe; every initial
+timeout was retried with a 120-second limit. See
+`reprobe-m2-m6-2026-08-12.tsv` for row-level status.
+
 ## Results
 
 | TEST | Disposition | Milestone | Observed evidence |
@@ -25,13 +29,13 @@ are their primary purpose.
 | TEST001 | excluded | - | HBase versions, timestamps, and physical options are the complete test purpose |
 | TEST011 | unsafe | M7 | Mixed repository/HBase DML test terminates SQLCI with status 139 after the session |
 | TEST012 HBase sections | excluded | - | Serialization, coprocessor, and HBase filter-pushdown coverage |
-| TEST012 schema sections | blocked | M4 | Schema, INDEX, RI, VIEW, SHOWDDL, and statistics support are required |
-| TEST020 | blocked | M4 | DEFAULT, CHECK, RI, ALTER, INDEX, and SHOWDDL dominate; partition cases remain mixed in |
-| TEST024 | blocked | M4 | Schema, sequence lifecycle, SHOWDDL, and sequence metadata are unsupported |
-| TEST025 | blocked | M4 | Identity/generated columns, schema, and SHOWDDL are unsupported; probe reached 30 seconds |
+| TEST012 schema sections | runnable | M4 | `schemaDrop,getStmts` is an exact normalized EXPECTED/LOG match |
+| TEST020 | blocked | M4 | INVOKE/SHOWDDL differs and the constraint matrix reaches 120 seconds |
+| TEST024 | blocked | M4 | Sequence-list formatting, metadata, and error 1390 output differ |
+| TEST025 | blocked | M4 | Identity SHOWDDL, sequence exhaustion, and diagnostic text differ |
 | TEST027 | excluded | - | Column-family, SALT, and aligned-format physical DDL |
 | TEST030 | blocked | M6 | Datetime formatting differs, including USA timestamp AM/PM output and diagnostics |
-| TEST032 | blocked | M4 | Schema, primary-key constraint changes, VIEW, ALTER, and SHOWDDL are required |
+| TEST032 | blocked | M4 | INVOKE/SHOWDDL formatting and cast diagnostic 8413 differ |
 | TEST033 | excluded | - | Portable grouping coverage and SALT/ESP partition coverage are inseparable in the file |
 | TEST040 | excluded | - | SALT and storage-key CREATE TABLE LIKE behavior are the complete test purpose |
 
@@ -45,9 +49,9 @@ section-level treatment of entries currently marked unsafe.
 | TEST | Selected part | Disposition | Milestone | Observed evidence |
 | --- | --- | --- | --- | --- |
 | TEST002 | whole test | excluded | - | HBase flush/region/cluster statistics and Hive metadata are the test purpose |
-| TEST003 | portable type sections | blocked | M6 | TINYINT/unsigned LARGEINT/BOOLEAN coverage also needs UPDATE, DELETE, LIKE/CTAS/VIEW; the probe reached 30 seconds |
+| TEST003 | portable type sections | blocked | M6 | INVOKE formatting and TINYINT DML diagnostics differ |
 | TEST003 | Hive sections | excluded | - | Hive type integration uses an external Hive shell loader |
-| TEST004 | portable binary sections | blocked | M6 | SQLCI exits normally; BINARY/VARBINARY coverage also needs LIKE/CTAS/VIEW and UPDATE/DELETE |
+| TEST004 | portable binary sections | blocked | M6 | SQLCI exits normally; BINARY type rendering and cast diagnostics differ |
 | TEST004 | Hive section | excluded | - | Hive binary integration uses an external Hive shell loader |
 | TEST026 | whole test | excluded | - | Metadata corruption cleanup directly removes HBase objects and edits physical metadata |
 | TEST031 | whole test | excluded | - | The unsectioned file mixes portable cases with extensive Hive DDL/DML and an external Hive shell loader |

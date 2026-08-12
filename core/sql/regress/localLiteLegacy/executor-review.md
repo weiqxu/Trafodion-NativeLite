@@ -15,17 +15,21 @@ core/sql/regress/localLiteLegacy/runregr --probe --suite executor \
   TEST025 TEST050 TEST101 TEST107 TEST140
 ```
 
+The M2-M6 rows below were refreshed from the 2026-08-12 re-probe; every initial
+timeout was retried with a 120-second limit. See
+`reprobe-m2-m6-2026-08-12.tsv` for row-level status.
+
 ## Results
 
 | TEST | Disposition | Milestone | Observed evidence |
 | --- | --- | --- | --- |
-| TEST001 | blocked | M6 | SJIS collation validation differs; NCHAR plus UPDATE/DELETE and metadata remain |
-| TEST002 | blocked | M4 | VIEW and CREATE TABLE LIKE setup are unsupported before DML and cancellation coverage; probe reached 30 seconds |
-| TEST012 | blocked | M6 | NCHAR string widths and function results diverge; probe reached 30 seconds |
+| TEST001 | blocked | M6 | SQLCI exits normally; SJIS collation, INVOKE, and diagnostic output differ |
+| TEST002 | blocked | M4 | Result formatting differs and view UPDATE error 4028 precedes a 120-second timeout |
+| TEST012 | blocked | M6 | SQLCI aborts in `fbstring` while rendering a zero-length SUBSTRING result |
 | TEST013 | unsafe | M7 | `cleanup obsolete volatile tables` terminates SQLCI with status 139 |
-| TEST014 | blocked | M4 | CTAS enters an unsupported catalog/storage path and SHOWDDL metadata is absent |
-| TEST025 | blocked | M4 | NO DEFAULT table definitions fail before MDAM, statistics, and DELETE coverage |
-| TEST050 | blocked | M4 | DEFAULT columns fail; diagnostic message catalog and UPDATE are later dependencies |
+| TEST014 | runnable | M10 | Exact normalized EXPECTED/LOG match for CTAS, volatile CTAS, STORE BY, and diagnostics |
+| TEST025 | blocked | M4 | Control-query-shape selection differs and MDAM preparation reports error 2105 |
+| TEST050 | runnable | M4 | Exact normalized EXPECTED/LOG match after the M2-M6 re-probe |
 | TEST101 | runnable | M10 | The six-row NULL-scale UPDATE and ROUND behavior now match the local-lite execution contract; `EXPECTED101.LOCALLITE` records the intentional local-lite diagnostic/CQD rendering |
 | TEST107 | unsafe | M7 | Large sort setup is incomplete and SQLCI terminates with status 139 after the session |
 | TEST140 | excluded | - | Its DDL section inseparably combines HBase physical options and a Hive load |
@@ -45,7 +49,7 @@ reconsidered after the preamble is separated or migrated.
 | TEST063 SQL-only sections | blocked | M7 | Window/OLAP execution reaches ESP error 2013 and the 30 second probe ceiling; VIEW is also required |
 | TEST063 `olaptest` | unsafe | M7 | Expected rows are compared through external OBEY and shell `diff` pipelines |
 | TEST106 | unsafe | M7 | Cancellation requires background SQLCI processes, synchronization files, process inspection, and runtime statistics |
-| TEST122 `test_drop_index` | blocked | M3 | SQLCI exits normally; CREATE INDEX is the first unsupported operation, followed by cache invalidation and EXPLAIN |
+| TEST122 `test_drop_index` | blocked | M3 | SQLCI exits normally; EXPLAIN chooses a table scan instead of the index scan and a hash result differs |
 | TEST122 whole driver | unsafe | M7 | Other drop-cache cases require second SQLCI sessions, log grep, and external `sbdefs` |
 | TEST130 | unsafe | M6 | LOB coverage requires local/HDFS files, shell-generated OBEY input, and CLI test drivers |
 | TEST131 | excluded | - | HBase block-size/small-scanner behavior and a fresh-session plan are the test purpose |

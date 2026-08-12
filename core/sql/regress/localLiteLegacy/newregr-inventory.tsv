@@ -1,0 +1,11 @@
+# newregr is intentionally separate from the standard runallsb pass rate.
+suite	paired_inputs	unpaired_inputs	kind	disposition	blocker	evidence
+card	22	0	cardinality	unassessed	suite-adapter-and-baseline-normalization-not-defined	core/sql/regress/newregr/card
+mvqr	19	0	materialized-view-query-rewrite	unassessed	MVQR-services-and-suite-adapter-not-available	core/sql/regress/newregr/mvqr
+mvs	44	1	materialized-views	unassessed	TESTMV500A-has-no-EXPECTED-and-suite-adapter-not-defined	core/sql/regress/newregr/mvs
+opt	11	0	optimizer	unassessed	suite-adapter-and-plan-baseline-normalization-not-defined	core/sql/regress/newregr/opt
+parallel	6	0	distributed-parallel-execution	unassessed	requires-ESP-and-distributed-runtime	core/sql/regress/newregr/parallel
+rowsets	44	0	rowsets-client-contract	unassessed	rowset-runner-and-client-runtime-not-adapted	core/sql/regress/newregr/rowsets
+triggers	135	0	trigger-coverage	unassessed	full-trigger-suite-state-and-adapter-not-defined	core/sql/regress/newregr/triggers
+exeperf	0	0	custom-performance-workload	unassessed	not-a-static-TEST-EXPECTED-contract	core/sql/regress/newregr/exeperf
+perf	0	0	custom-performance-workload	unassessed	not-a-static-TEST-EXPECTED-contract	core/sql/regress/newregr/perf

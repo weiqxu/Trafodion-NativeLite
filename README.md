@@ -46,31 +46,36 @@ M12 transactional storage/recovery are planned and have not started.
 
 The detailed milestone evidence and boundaries are maintained in
 [`plan/local-lite-legacy-regress-roadmap.md`](plan/local-lite-legacy-regress-roadmap.md).
+The separate newregress qualification order is in
+[`plan/local-lite-newregr-roadmap.md`](plan/local-lite-newregr-roadmap.md).
 
 ### Regression snapshot
 
 | Test surface | Inventory | Current evidence |
 | --- | ---: | --- |
 | Native local-lite lane | 43 TEST/EXPECTED cases | **43/43 pass**, zero non-empty DIFF files |
-| Unmodified Trafodion legacy allowlist | 6 cases | **6/6 pass**, zero non-empty DIFF files |
-| Audited Trafodion legacy inventory | 122 unique primary TEST inputs from 9 standard suites | 6 runnable, 56 blocked, 42 unsafe, and 18 excluded |
-| Standard suites outside the audit | 14 Hive and 25 QAT cases | Not yet audited or run under local-lite |
-| `newregr` inventory | 283 statically paired baseline cases, plus custom performance workloads | No local-lite execution/convergence result yet |
+| Unmodified Trafodion legacy allowlist | 11 cases | **11/11 pass**, zero non-empty DIFF files |
+| Audited Trafodion legacy inventory | 122 unique primary TEST inputs from 9 standard suites | 11 runnable, 51 blocked, 42 unsafe, and 18 excluded |
+| Remaining standard suites | 14 Hive and 25 QAT cases | Hive explicitly excluded; QAT classified as blocked/unassessed pending a shared-state adapter |
+| Separate `newregr` inventory | 281 statically paired cases and 1 unpaired MVS input, plus custom performance workloads | No local-lite execution/convergence result yet |
 
 The standard `runallsb` surface contains 161 logical cases across 11 suites:
-the 122 audited inputs plus 14 Hive and 25 QAT cases. The six directly passing
-legacy cases are therefore about 3.7% of that unchanged upstream test surface;
+the 122 audited inputs plus 14 Hive and 25 QAT cases. The eleven directly passing
+legacy cases are therefore about 6.8% of that unchanged upstream test surface;
 this is a direct compatibility measure, **not** a feature-completion percentage.
-The native and legacy lanes together currently provide 49 passing test
+The native and legacy lanes together currently provide 54 passing test
 contracts, but they are not a one-to-one mapping onto upstream tests.
 
 The manifest contains 134 rows because mixed legacy TEST files can be split
-into independently classified sections. Its blocked entries record the first
-known dependency at audit time. Since the bounded M2-M9 functionality is now
-implemented, these entries are a re-probe backlog rather than proof that the
-named feature is still absent. Unsafe entries generally require shell commands,
-multiple SQLCI processes, helper binaries, Java, or the Trafodion service stack;
-excluded entries are predominantly physical HBase/Hive behavior.
+into independently classified sections: 11 runnable, 52 blocked, 50 unsafe,
+and 21 excluded rows. A 2026-08-12 re-probe of all 49 safe M2-M6 blocked rows
+promoted five exact matches. After rerunning all initial timeouts with a
+120-second limit, the other results were 29 output differences, 13 timeouts,
+and two SQLCI aborts. The current observations are versioned
+in [`reprobe-m2-m6-2026-08-12.tsv`](core/sql/regress/localLiteLegacy/reprobe-m2-m6-2026-08-12.tsv).
+Unsafe entries generally require shell commands, multiple SQLCI processes,
+helper binaries, Java, or the Trafodion service stack; excluded entries are
+predominantly physical HBase/Hive behavior.
 
 No current full `runallsb`, Hive, QAT, or `newregr` run is being claimed. Those
 surfaces are unassessed, not failed. See the
@@ -141,11 +146,13 @@ make local-lite-regress LOCAL_LITE_REGR_TESTS="001 003"
 ```
 
 Run the bounded M10 convergence gate (all 43 native cases plus the complete
-six-case legacy allowlist) and inspect the broader legacy inventory with:
+eleven-case legacy allowlist) and inspect both the adapted and complete upstream
+inventories with:
 
 ```bash
 make local-lite-m10
 make local-lite-legacy-audit
+make local-lite-regress-inventory
 ```
 
 The runner prints the temporary artifact directory containing `RAWnnn`,

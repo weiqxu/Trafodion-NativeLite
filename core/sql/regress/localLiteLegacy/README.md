@@ -38,6 +38,14 @@ paired TEST/EXPECTED case cannot leave this gate pinned to an obsolete total.
 A blocked entry is not treated as a pass; promote it only after its
 RocksDB-compatible semantics and normalized EXPECTED output have been reviewed.
 
+The current allowlist contains eleven entries. The 2026-08-12 M2-M6 re-probe
+executed all 49 safe blocked sections, then reran all initial timeouts with a
+120-second per-entry limit: five matched exactly and were promoted, 29 retained
+output differences, 13 timed out, and two aborted in string result rendering.
+The row-level snapshot
+is `reprobe-m2-m6-2026-08-12.tsv`; it records execution evidence, not a license
+to replace a legacy baseline with current output.
+
 ## Commands
 
 Validate inventory completeness and print the current report:
@@ -45,6 +53,28 @@ Validate inventory completeness and print the current report:
 ```bash
 make local-lite-legacy-audit
 ```
+
+Audit the complete standard `runallsb` surface and the separate `newregr`
+assets with:
+
+```bash
+make local-lite-regress-inventory
+scripts/audit-local-lite-upstream-regress.sh --list-newregr
+```
+
+`standard-extra-manifest.tsv` explicitly classifies the 14 Hive cases and 25
+QAT cases omitted from `manifest.tsv`. Hive is excluded because local-lite
+removes that runtime. QAT remains blocked/unassessed because its DDL, load, and
+DML cases share one ordered schema/data lifecycle; an adapter must preserve that
+state before any QAT result can be claimed.
+
+`newregr-inventory.tsv` is deliberately separate from the standard pass rate.
+The audit discovers 281 paired inputs, one unpaired MVS input (`TESTMV500A`),
+and the custom `perf`/`exeperf` workloads. No newregr case is runnable yet: the
+generic tools path falls back to an absent `runregr_other.ksh`, and each suite
+still needs an explicit state, dependency, and baseline-normalization adapter.
+The staged execution strategy is documented in
+`plan/local-lite-newregr-roadmap.md`.
 
 Inspect static feature and safety candidates:
 

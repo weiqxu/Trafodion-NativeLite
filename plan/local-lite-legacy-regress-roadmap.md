@@ -330,12 +330,12 @@ Status: the bounded convergence gate is implemented, but the full legacy
 portable suite is not yet complete.  `scripts/test-local-lite-legacy-convergence.sh`
 now validates the manifest, runs every currently allowlisted portable entry,
 and reruns the native `TEST001-TEST043` lane.  The current allowlist is
-`charsets/TEST003`, `charsets/TEST316`, `core/TEST018`, `core/TEST163`,
-`executor/TEST014`, and `executor/TEST101`, all passing; the native lane remains
-43/43.
-This was revalidated from a clean local-lite build on 2026-08-12; the six
-allowlisted legacy cases and all 43 native cases passed with exact normalized
-EXPECTED output.
+`charsets/TEST003`, `TEST004`, `TEST010`, `TEST314`, `TEST316`,
+`core/TEST018`, `core/TEST163`, `executor/TEST014`, `executor/TEST050`,
+`executor/TEST101`, and `seabase/TEST012[schemaDrop,getStmts]`; the native lane
+remains 43/43.
+This was revalidated on 2026-08-12; all eleven allowlisted legacy cases and all
+43 native cases passed with exact normalized EXPECTED output.
 `charsets/TEST003` validates UCS2 column storage, literal assignment,
 UPDATE/DELETE, supported translation, and the expected rejection of unsupported
 character-set and translation names.  `executor/TEST014` validates CTAS,
@@ -352,7 +352,7 @@ traced back to a storage or executor capability:
 
 | Gate | Status | RocksDB-only deliverable | Required evidence |
 | --- | --- | --- | --- |
-| M10A | bounded complete | CTAS and volatile CTAS use the ordinary local DDL path; logical PARTITION/DIVISION/STORE BY/table-attribute hints are accepted as non-physical hints; view mutability and WITH CHECK OPTION metadata are persisted and exposed to the binder | `executor/TEST014`, native `TEST009`; `core/TEST029` remains blocked because its scalar-subquery NULL update aborts after binding and needs a compiler/optimizer fix before promotion |
+| M10A | bounded complete | CTAS and volatile CTAS use the ordinary local DDL path; logical PARTITION/DIVISION/STORE BY/table-attribute hints are accepted as non-physical hints; view mutability and WITH CHECK OPTION metadata are persisted and exposed to the binder | `executor/TEST014`, native `TEST009`; the 120-second `core/TEST029` re-probe now exits normally but remains blocked on reviewed SHOWDDL and view-DML diagnostic differences |
 | M10B | complete | RocksDB row/null statistics are persisted, UEC is computed from non-NULL encoded values, and DML/transaction publication invalidates stale statistics | native `TEST038` |
 | M10C | complete | Primary/UNIQUE DML, secondary-index maintenance, ordered/range/index-only access, and rollback remain atomic in the local store | `core/TEST018` plus native `TEST026`-`TEST035` |
 | M10D | complete | UTF8/UCS2, binary types, BOOLEAN/INTERVAL, and supported character translation use the canonical RocksDB row/key codec | `charsets/TEST003`, `charsets/TEST316`, native `TEST039` |
@@ -366,10 +366,12 @@ it does not promote physical HBase/Hive tests, shell-driven multi-session tests,
 or a test that still crashes in the compiler.  No HBase table or HBase metadata
 implementation is part of these gates.
 
-The remaining legacy inventory is explicit rather than silently filtered: 57
-entries are still blocked by unsupported SQL/metadata or legacy output
-contracts, 50 are unsafe because they require shell/service-stack behavior,
-and 21 are excluded for HBase/Hive/physical-storage behavior.  In particular,
+The remaining legacy inventory is explicit rather than silently filtered: 52
+section rows are still blocked by unsupported SQL/metadata, legacy output
+contracts, adapter gaps, or bounded timeouts; 50 are unsafe because they require
+shell/service-stack behavior, and 21 are excluded for HBase/Hive/physical-
+storage behavior. Deduplicated by suite/TEST, the 122 inputs are 11 runnable,
+51 blocked, 42 unsafe, and 18 excluded. In particular,
 `executor/TEST101` now reaches its UPDATE body and pins the local diagnostic/
 CQD rendering in its LocalLite EXPECTED; the remaining blocked charset entries still require
 unsupported character-set paths or later DDL/statistics work.  The catalog now
@@ -384,6 +386,26 @@ descriptor exposes metadata scalar fields as text because the legacy metadata
 numeric/short-CHAR projection path is not available in the local executor.
 No HBase implementation will be added; remaining work must be implemented
 against RocksDB tables or retained as a concrete exclusion.
+
+The 2026-08-12 M2-M6 re-probe is recorded in
+`localLiteLegacy/reprobe-m2-m6-2026-08-12.tsv`. It executed all 49 safe blocked
+sections and reran every initial timeout with a 120-second per-entry limit. Five
+exact baseline matches were promoted (`charsets/TEST004`, `TEST010`, `TEST314`,
+`executor/TEST050`, and `seabase/TEST012[schemaDrop,getStmts]`); 29 retained
+output differences, 13 timed out, and `charsets/TEST001` plus
+`executor/TEST012` aborted in string result rendering.
+Manifest blockers now describe these observations instead of the superseded
+M2-M6 prerequisite labels. A timeout or output difference is not counted as a
+failed standard-suite execution because these rows remain explicit probes.
+
+The broader standard inventory is also explicit. `standard-extra-manifest.tsv`
+classifies all 14 Hive cases as excluded and all 25 QAT cases as blocked pending
+an adapter that preserves their ordered shared schema/data state. Together with
+the 122 adapted inputs this gives the complete 161-case `runallsb` inventory.
+The separate `newregr-inventory.tsv` currently accounts for 281 paired assets,
+one unpaired MVS input, and the custom `perf`/`exeperf` workloads. These assets
+do not contribute to the standard pass rate and have no execution result until
+suite-specific state and baseline adapters exist.
 
 ### RocksDB metadata layout
 
@@ -436,7 +458,7 @@ production multi-session database is complete.
 | M7 advanced executor | Complete for the single-process surface | Native `TEST040`; cursors, windows, grouping, sorting, cancellation cleanup, and local scratch lifecycle are covered. There is no ESP fan-out or remote multi-session runtime. |
 | M8 authorization | Complete for the local catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
 | M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
-| M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the six allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
+| M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the eleven allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
 | M11 sessionized runtime and standalone server | Planned | Not started. This is the next productization milestone. |
 | M12 transactional storage and recovery | Planned | Not started. It begins after the M11 session/server boundary is usable. |
 

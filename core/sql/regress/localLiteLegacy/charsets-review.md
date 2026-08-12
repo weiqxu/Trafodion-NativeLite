@@ -1,8 +1,8 @@
 # Charsets Legacy Review
 
-This file records the Milestone 0 manual review and baseline probes for the
-legacy `charsets` suite. The review covers the 14 entries that were initially
-classified as `needs-review`; `TEST012` had already been classified separately.
+This file records the Milestone 0 manual review and the current baseline probes
+for all 15 legacy `charsets` inputs. The initial review covered 14 entries that
+were classified as `needs-review`; `TEST012` was classified separately.
 
 ## Probe Method
 
@@ -20,28 +20,30 @@ failures: lowercase self-`OBEY` filenames and lowercase `logNNN` output names.
 The adapter now supplies lowercase TEST aliases in its isolated work directory
 and discovers LOG files case-insensitively. Source TEST files are unchanged.
 
-The large `TEST310` whole-test probe reached the 120 second limit. Its wrapper
-and test body were reviewed separately; future convergence should run its
-sections with a longer timeout or a section-aware expected baseline.
+All M2-M6 blocked entries were re-probed on 2026-08-12. Initial 30-second
+timeouts were rerun at 120 seconds. `TEST310`-`TEST313` still reached that limit;
+their current progress and output differences are retained in
+`reprobe-m2-m6-2026-08-12.tsv`.
 
 ## Results
 
 | TEST | Disposition | First roadmap dependency | Observed evidence |
 | --- | --- | --- | --- |
-| TEST001 | blocked | M4 | ALTER TABLE CHECK is unsupported; UCS2 hexadecimal assignments also diverge in M6 |
-| TEST002 | blocked | M4 | DEFAULT, CHECK, RI, VIEW, and INDEX DDL are unsupported |
-| TEST003 | blocked | M4 | UPDATE and DELETE now succeed; catalog metadata is the next dependency, with character-set differences later |
-| TEST004 | blocked | M6 | UCS2 `CHAR` assignment reports error 8690 |
-| TEST010 | blocked | M2 | DELETE is unsupported and UCS2 parameter results diverge |
-| TEST014 | blocked | M4 | DEFAULT and VIEW/schema DDL fail before INTERVAL/UCS2 convergence |
-| TEST310 | blocked | M4 | CREATE SCHEMA wrapper is unsupported; body is M6 implicit-cast coverage |
-| TEST311 | blocked | M4 | CREATE SCHEMA wrapper is unsupported; body is M6 volatile-table cast coverage |
-| TEST312 | blocked | M4 | CREATE SCHEMA wrapper is unsupported; body is M6 UTF8 cast coverage |
-| TEST313 | blocked | M4 | CREATE SCHEMA wrapper is unsupported; body is M6 UTF8/UCS2 cast coverage |
-| TEST314 | blocked | M4 | CREATE SCHEMA wrapper is unsupported; body is M6 two-byte UTF8 coverage |
-| TEST315 | blocked | M4 | CREATE SCHEMA wrapper is unsupported; body is M6 three-byte UTF8 coverage |
+| TEST001 | blocked | M4 | SQLCI aborts in `fbstring` after rendering two UCS2 sort-key rows |
+| TEST002 | blocked | M4 | Triggers now create; legacy SHOWDDL and later output contracts differ |
+| TEST003 | runnable | M10 | Exact normalized EXPECTED/LOG match |
+| TEST004 | runnable | M6 | Exact normalized EXPECTED/LOG match after the M2-M6 re-probe |
+| TEST010 | runnable | M2 | Exact normalized EXPECTED/LOG match after the M2-M6 re-probe |
+| TEST012 | blocked | M4 | INVOKE/SHOWDDL and UCS2 default-literal rendering differ |
+| TEST014 | blocked | M4 | Legacy HASH2 PARTITION BY is rejected with error 1199 |
+| TEST310 | blocked | M4 | Reaches the 120-second limit in the TRIM predicate sequence |
+| TEST311 | blocked | M4 | Reaches the 120-second limit in the RTRIM predicate sequence |
+| TEST312 | blocked | M4 | UTF8 output widths differ and the DECODE query sequence times out |
+| TEST313 | blocked | M4 | UCS2 output widths differ and the string query sequence times out |
+| TEST314 | runnable | M4 | Exact normalized EXPECTED/LOG match after the M2-M6 re-probe |
+| TEST315 | blocked | M4 | UTF8 TRIM length, padding, and row order differ |
 | TEST316 | runnable | M10 | Exact normalized EXPECTED/LOG match |
-| TEST3265 | blocked | M6 | 64K UTF8 value assignment reports error 8690 |
+| TEST3265 | blocked | M6 | 64K VARCHAR statistics reaches an unsupported GET metadata request |
 
 A clean local-lite build now installs the diagnostic message catalog, so the
 runnable baseline records the primary SQL error codes with their resolved

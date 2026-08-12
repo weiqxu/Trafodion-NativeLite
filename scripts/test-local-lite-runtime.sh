@@ -21,8 +21,12 @@ local_regress_dir="$repo_root/core/sql/regress/localLite"
 local_regress="$local_regress_dir/runregr"
 local_legacy_regress_dir="$repo_root/core/sql/regress/localLiteLegacy"
 local_legacy_manifest="$local_legacy_regress_dir/manifest.tsv"
+local_legacy_extra_manifest="$local_legacy_regress_dir/standard-extra-manifest.tsv"
+local_newregr_manifest="$local_legacy_regress_dir/newregr-inventory.tsv"
+local_m2_m6_reprobe="$local_legacy_regress_dir/reprobe-m2-m6-2026-08-12.tsv"
 local_legacy_regress="$local_legacy_regress_dir/runregr"
 local_legacy_audit="$repo_root/scripts/audit-local-lite-legacy-regress.sh"
+local_upstream_audit="$repo_root/scripts/audit-local-lite-upstream-regress.sh"
 local_legacy_m10="$repo_root/scripts/test-local-lite-legacy-convergence.sh"
 local_metadata="$repo_root/scripts/test-local-lite-metadata.sh"
 storage_stubs="$repo_root/core/sql/executor/LocalLiteStorageStubs.cpp"
@@ -168,16 +172,29 @@ grep -q 'unique conflicts advanced keyless row ids' "$local_store_concurrency" |
   fail "missing executable local-lite regress output filter"
 [[ -f "$local_legacy_manifest" ]] ||
   fail "missing local-lite legacy regress manifest"
+[[ -f "$local_legacy_extra_manifest" ]] ||
+  fail "missing Hive/QAT standard regress manifest"
+[[ -f "$local_newregr_manifest" ]] ||
+  fail "missing separate newregr inventory"
+[[ -f "$local_m2_m6_reprobe" ]] ||
+  fail "missing M2-M6 legacy re-probe snapshot"
 [[ -x "$local_legacy_regress" ]] ||
   fail "missing executable local-lite legacy regress adapter"
 [[ -x "$local_legacy_audit" ]] ||
   fail "missing executable local-lite legacy regress audit"
+[[ -x "$local_upstream_audit" ]] ||
+  fail "missing executable complete upstream regress audit"
 [[ -x "$local_legacy_m10" ]] ||
   fail "missing executable local-lite M10 convergence gate"
 [[ -x "$local_metadata" ]] ||
   fail "missing executable local-lite metadata SQL check"
 "$local_legacy_audit" --check >/dev/null ||
   fail "local-lite legacy regress manifest audit failed"
+"$local_upstream_audit" --check >/dev/null ||
+  fail "complete upstream regress inventory audit failed"
+[[ $(awk -F '\t' '!/^#/ && $1 != "suite" && $5 == "pass" { count++ }
+       END { print count + 0 }' "$local_m2_m6_reprobe") -eq 5 ]] ||
+  fail "M2-M6 re-probe snapshot must retain five exact promotions"
 grep -Fq 'native_expected=${#native_tests[@]}' "$local_legacy_m10" ||
   fail "local-lite M10 convergence gate must derive the native case count"
 grep -Fq 'Summary: $native_expected passed, 0 failed' "$local_legacy_m10" ||
@@ -211,6 +228,8 @@ grep -q 'MXID' "$local_regress_dir/FILTER" ||
   fail "local-lite regress output must normalize dynamic diagnostic ids"
 grep -q 'local-lite-regress' "$repo_root/Makefile" ||
   fail "top-level Makefile must expose the local-lite regress lane"
+grep -q 'local-lite-regress-inventory' "$repo_root/Makefile" ||
+  fail "top-level Makefile must expose the complete regress inventory audit"
 [[ -f "$localstore_header" ]] || fail "missing local store header: $localstore_header"
 [[ -f "$localstore_source" ]] || fail "missing local store source: $localstore_source"
 grep -q 'LocalLiteBuildPrimaryKeyFromTextFields' "$localstore_codec_header" ||
