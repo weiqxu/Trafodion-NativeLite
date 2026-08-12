@@ -53,5 +53,9 @@ endif
 clean: cmpdbg_qt_clean
 
 cmpdbg_qt_clean:
+ifeq ($(TRAF_LOCAL_LITE),1)
+	@echo "Skipping SqlCompilerDebugger Qt clean for local-lite"
+else
 	cd ../$(basename $(CMPGUI_OBJ)) && . ./cln.sh; \
                                    rm -f $(CMPGUI_FINAL);
+endif

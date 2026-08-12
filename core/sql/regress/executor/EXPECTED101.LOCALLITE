@@ -691,12 +691,10 @@ A            (EXPR)
           6                                       ?
 --- 6 row(s) selected.
 >>select a,round(b) from t101big where a = 5;
-*** ERROR[8411]
-*** ERROR[16001] No message found for SQLCODE -8411.  The error occurred when rounding up a value. <MXID>
+*** ERROR[8411] A numeric overflow occurred during an arithmetic computation or data conversion. The error occurred when rounding up a value.
 --- 0 row(s) selected.
 >>select a,round(c) from t101big where a = 5;
-*** ERROR[8411]
-*** ERROR[16001] No message found for SQLCODE -8411.  The error occurred when rounding up a value. <MXID>
+*** ERROR[8411] A numeric overflow occurred during an arithmetic computation or data conversion. The error occurred when rounding up a value.
 --- 0 row(s) selected.
 >>select a,round(b),round(c),round(d) from t101big where a = 6;
 A            (EXPR)                                                                                                                              (EXPR)                                                                                                                              (EXPR)
@@ -917,10 +915,8 @@ A            (EXPR)
           6                                       ?
 --- 5 row(s) selected.
 >>select a,round(b,null) from t101big;
-*** ERROR[4052]
-*** ERROR[16001] No message found for SQLCODE -4052. ROUND <MXID>
-*** ERROR[8822]
-*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+*** ERROR[4052] The second operand of function ROUND must be numeric.
+*** ERROR[8822] The statement was not prepared.
 >>update t101big set e = null;
 --- 6 row(s) updated.
 >>select a,round(b,e) from t101big;
@@ -935,15 +931,11 @@ A            (EXPR)
 --- 6 row(s) selected.
 >> -- returns null values
 >>select a,round(b,f) from t101big;
-*** ERROR[4047]
-*** ERROR[16001] No message found for SQLCODE -4047. ROUND <MXID>
-*** ERROR[8822]
-*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+*** ERROR[4047] The operands of function ROUND must have a scale of 0.
+*** ERROR[8822] The statement was not prepared.
 >>select a,round(b,129) from t101big;
-*** ERROR[4054]
-*** ERROR[16001] No message found for SQLCODE -4054. ROUND     128 <MXID>
-*** ERROR[8822]
-*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+*** ERROR[4054] The second operand of function ROUND may not be larger than 128.
+*** ERROR[8822] The statement was not prepared.
 >>select a,round(b,-129) from t101big;
 A            (EXPR)
 -----------  ----------------------------------------------------------------------------------------------------------------------------------
@@ -961,10 +953,8 @@ A            (EXPR)
 >>control query default DISABLE_READ_ONLY 'ON';
 >>#else
 >>control query default COMP_BOOL_58 'ON';
-*** ERROR[2050]
-*** ERROR[16001] No message found for SQLCODE -2050. COMP_BOOL_58 <MXID>
-*** ERROR[8822]
-*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+*** ERROR[2050] COMP_BOOL_58 is not the name of any DEFAULTS table attribute.
+*** ERROR[8822] The statement was not prepared.
 >>#endif
 >>control query default mode_special_1 'on';
 --- SQL operation complete.

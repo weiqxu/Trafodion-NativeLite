@@ -43,7 +43,7 @@ sections with a longer timeout or a section-aware expected baseline.
 | TEST316 | runnable | M10 | Exact normalized EXPECTED/LOG match |
 | TEST3265 | blocked | M6 | 64K UTF8 value assignment reports error 8690 |
 
-Legacy negative tests also expose missing diagnostic message text as additional
-`ERROR[16001]` lines. These differences are retained; the adapter does not hide
-them with a broad filter. They must be addressed deliberately during suite
-convergence without discarding the primary SQL error codes.
+A clean local-lite build now installs the diagnostic message catalog, so the
+runnable baseline records the primary SQL error codes with their resolved
+messages and no longer expects secondary `ERROR[16001]` lines. The adapter still
+does not hide diagnostic differences with a broad filter.

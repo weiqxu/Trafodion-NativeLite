@@ -30,9 +30,11 @@ The M10A-M10F convergence gate is:
 make local-lite-m10
 ```
 
-It runs the complete runnable allowlist and then the native 42-test local-lite
+It runs the complete runnable allowlist and then the complete native local-lite
 lane. It also checks the explicit M10A-M10F evidence cases (DDL, statistics,
 DML/indexes, character sets/types, advanced executor, and authorization/UDR).
+A fresh case count is derived from the checked-in `TESTnnn` files, so adding a
+paired TEST/EXPECTED case cannot leave this gate pinned to an obsolete total.
 A blocked entry is not treated as a pass; promote it only after its
 RocksDB-compatible semantics and normalized EXPECTED output have been reviewed.
 

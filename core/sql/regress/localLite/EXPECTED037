@@ -36,10 +36,10 @@
 >>INSERT INTO LLREG037_IDENTITY(label) VALUES ('first'), ('second');
 --- 2 row(s) inserted.
 >>SELECT id, label FROM LLREG037_IDENTITY ORDER BY id;
-ID           LABEL
------------  --------------------
-          1  first
-          2  second
+ID          LABEL
+----------  --------------------
+         1  first
+         2  second
 --- 2 row(s) selected.
 >>CREATE SEQUENCE LLREG037_SEQ START WITH 10 INCREMENT BY 2;
 --- SQL operation complete.

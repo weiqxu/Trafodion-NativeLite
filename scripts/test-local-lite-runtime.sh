@@ -178,8 +178,10 @@ grep -q 'unique conflicts advanced keyless row ids' "$local_store_concurrency" |
   fail "missing executable local-lite metadata SQL check"
 "$local_legacy_audit" --check >/dev/null ||
   fail "local-lite legacy regress manifest audit failed"
-grep -q 'Summary: 42 passed, 0 failed' "$local_legacy_m10" ||
-  fail "local-lite M10 convergence gate must retain the native 42-test check"
+grep -Fq 'native_expected=${#native_tests[@]}' "$local_legacy_m10" ||
+  fail "local-lite M10 convergence gate must derive the native case count"
+grep -Fq 'Summary: $native_expected passed, 0 failed' "$local_legacy_m10" ||
+  fail "local-lite M10 convergence gate must check the complete native lane"
 grep -q 'TRAF_LOCAL_STORE_DIR' "$local_legacy_regress" ||
   fail "local-lite legacy regress adapter must isolate its RocksDB store"
 grep -q 'lowercase_name=${copied_name,,}' "$local_legacy_regress" ||
@@ -194,10 +196,14 @@ grep -q '\[A-Za-z_\]\[A-Za-z0-9_\]\*' "$local_legacy_regress" ||
   fail "local-lite legacy regress adapter must reject macro-based external OBEY"
 grep -Fq 'cleanup[[:space:]]+obsolete' "$local_legacy_regress" ||
   fail "local-lite legacy regress adapter must reject crashing volatile cleanup"
-for test_number in 001 002 003 004 005 006 007 008 009 010 011 012 013 014 015 016 017 018 019 020 021 022 023 024 025; do
-  [[ -f "$local_regress_dir/TEST$test_number" &&
-     -f "$local_regress_dir/EXPECTED$test_number" ]] ||
-    fail "local-lite regress lane is missing TEST/EXPECTED$test_number"
+shopt -s nullglob
+local_regress_tests=("$local_regress_dir"/TEST[0-9][0-9][0-9])
+(( ${#local_regress_tests[@]} > 0 )) ||
+  fail "local-lite regress lane must contain TESTnnn cases"
+for test_file in "${local_regress_tests[@]}"; do
+  test_number=${test_file##*TEST}
+  [[ -f "$local_regress_dir/EXPECTED$test_number" ]] ||
+    fail "local-lite regress lane is missing EXPECTED$test_number"
 done
 grep -q 'TRAF_LOCAL_STORE_DIR' "$local_regress" ||
   fail "local-lite regress cases must use isolated RocksDB stores"

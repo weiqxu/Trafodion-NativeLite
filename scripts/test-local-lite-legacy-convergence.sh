@@ -25,8 +25,13 @@ trap 'rm -f "$legacy_output" "$native_output"' EXIT
 grep -Eq 'Summary: [1-9][0-9]* passed, 0 failed, 0 skipped' "$legacy_output" ||
   fail "legacy runnable allowlist did not converge"
 
+shopt -s nullglob
+native_tests=("$repo_root"/core/sql/regress/localLite/TEST[0-9][0-9][0-9])
+native_expected=${#native_tests[@]}
+(( native_expected > 0 )) || fail "native local-lite suite has no TESTnnn cases"
+
 "$native_runner" >"$native_output"
-grep -q 'Summary: 42 passed, 0 failed' "$native_output" ||
+grep -Fq "Summary: $native_expected passed, 0 failed" "$native_output" ||
   fail "native local-lite suite regressed"
 
 phase_case() {

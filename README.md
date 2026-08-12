@@ -5,16 +5,15 @@ Trafodion SQL engine development.
 
 `local-lite` removes Java, Maven, Hadoop, HDFS, HBase, Hive, DCS, REST, TrafCI,
 and Java client modules from the selected build path. The current supported
-runtime milestone is `sqlci` as a local single-process command-line SQL engine
-for compiler/executor-only SQL and minimal local RocksDB table smoke tests.
+runtime is `sqlci` as a single-process command-line SQL engine over an embedded
+RocksDB catalog and table store.
 
-Local-lite is not a complete standalone database. It has a narrow
-RocksDB-backed local table path reachable from `sqlci`, but supported queries
-fall through normal compiler/executor execution and use local executor scan and
-insert TCBs. It has single-process local `BEGIN`/`COMMIT`/`ROLLBACK` support,
-and autocommit `INSERT ... SELECT` tuple flows publish atomically within one
-table. It has no atomic multi-table commit, indexes, privileges, JDBC/ODBC
-service path, DCS/REST stack, or HBase/HDFS/Hive runtime.
+Local-lite is not a complete standalone database. Its bounded RocksDB-only
+surface includes transactions, DDL/DML, indexes, metadata/statistics,
+authorization, and constrained UDR execution through normal compiler/executor
+paths. It does not yet provide session-isolated transaction state, atomic
+multi-table commit/recovery, a standalone multi-client server, JDBC/ODBC, the
+DCS/REST stack, distributed execution, or an HBase/HDFS/Hive runtime.
 
 Full details are in:
 
@@ -27,6 +26,56 @@ The original Apache Trafodion project overview is preserved in:
 ```text
 plan/README.trafodion.md
 ```
+
+## Current Status (verified 2026-08-12)
+
+The bounded M1-M10 RocksDB-only, single-process scope is complete. In this
+checkout, `make local-lite`, `make local-lite-m10`, and
+`scripts/test-local-lite-runtime.sh` pass. M11 sessionization/server work and
+M12 transactional storage/recovery are planned and have not started.
+
+### Functional boundary
+
+| Area | Validated local-lite surface | Not currently claimed |
+| --- | --- | --- |
+| DML and storage | Single-process transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes and statement-level atomicity | Session-isolated transaction state, atomic multi-table commit, and crash recovery |
+| Catalog and DDL | Schemas, views, synonyms, sequences, defaults, CHECK and bounded RI constraints, identity columns, triggers, and persisted basic statistics | RI CASCADE, computed system columns, full histograms, and unrestricted physical `_MD_` behavior |
+| Types and executor | ISO88591/UTF8/UCS2, binary types, BOOLEAN, INTERVAL, LONG VARCHAR, cursors, window/grouping operations, local sort/scratch, and cancellation cleanup | LOB/ARRAY and broader collation support, ESP fan-out, and distributed execution |
+| Authorization and UDR | Local users, roles, ownership/privileges, and bounded native/Java UDR adapters | Password/external identity services, the full UDR server, and host-rowset behavior |
+| Runtime and clients | One local `sqlci` process using normal compiler/executor paths over RocksDB | A multi-client server, JDBC/ODBC, DCS/REST, and HBase/HDFS/Hive runtimes |
+
+The detailed milestone evidence and boundaries are maintained in
+[`plan/local-lite-legacy-regress-roadmap.md`](plan/local-lite-legacy-regress-roadmap.md).
+
+### Regression snapshot
+
+| Test surface | Inventory | Current evidence |
+| --- | ---: | --- |
+| Native local-lite lane | 43 TEST/EXPECTED cases | **43/43 pass**, zero non-empty DIFF files |
+| Unmodified Trafodion legacy allowlist | 6 cases | **6/6 pass**, zero non-empty DIFF files |
+| Audited Trafodion legacy inventory | 122 unique primary TEST inputs from 9 standard suites | 6 runnable, 56 blocked, 42 unsafe, and 18 excluded |
+| Standard suites outside the audit | 14 Hive and 25 QAT cases | Not yet audited or run under local-lite |
+| `newregr` inventory | 283 statically paired baseline cases, plus custom performance workloads | No local-lite execution/convergence result yet |
+
+The standard `runallsb` surface contains 161 logical cases across 11 suites:
+the 122 audited inputs plus 14 Hive and 25 QAT cases. The six directly passing
+legacy cases are therefore about 3.7% of that unchanged upstream test surface;
+this is a direct compatibility measure, **not** a feature-completion percentage.
+The native and legacy lanes together currently provide 49 passing test
+contracts, but they are not a one-to-one mapping onto upstream tests.
+
+The manifest contains 134 rows because mixed legacy TEST files can be split
+into independently classified sections. Its blocked entries record the first
+known dependency at audit time. Since the bounded M2-M9 functionality is now
+implemented, these entries are a re-probe backlog rather than proof that the
+named feature is still absent. Unsafe entries generally require shell commands,
+multiple SQLCI processes, helper binaries, Java, or the Trafodion service stack;
+excluded entries are predominantly physical HBase/Hive behavior.
+
+No current full `runallsb`, Hive, QAT, or `newregr` run is being claimed. Those
+surfaces are unassessed, not failed. See the
+[`localLiteLegacy` adapter README](core/sql/regress/localLiteLegacy/README.md)
+for the inventory, safety rules, and probe workflow.
 
 ## Quick Build
 
@@ -89,6 +138,14 @@ Run selected cases with:
 
 ```bash
 make local-lite-regress LOCAL_LITE_REGR_TESTS="001 003"
+```
+
+Run the bounded M10 convergence gate (all 43 native cases plus the complete
+six-case legacy allowlist) and inspect the broader legacy inventory with:
+
+```bash
+make local-lite-m10
+make local-lite-legacy-audit
 ```
 
 The runner prints the temporary artifact directory containing `RAWnnn`,

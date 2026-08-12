@@ -399,113 +399,25 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The storage API audit removed the legacy direct row-id allocation and row-put
-entry points from the public local store surface. Same-process writer/scan
-runtime coverage now guards the shared handle and row-id allocation path.
-Cross-process shared-store attempts now receive a local-lite diagnostic that
-names the `TRAF_LOCAL_STORE_DIR` boundary. SQLCI smoke now also covers broader
-executor INSERT/SCAN expressions, including `CASE`, string concatenation,
-`BETWEEN`, `IN`, `LIKE`, and `OR` predicates. Query-shape smoke now covers
-`ORDER BY`, self-join, inner join, and left join over local table executor scan
-TCBs. Ungrouped aggregate expression smoke now covers `COUNT`, `SUM`, `MIN`,
-`MAX`, `AVG`, aggregate arithmetic, and aggregate input filtering over NULL
-values. Grouped aggregate smoke now covers duplicate group keys, NULL group
-keys, nullable UNIQUE group keys, aggregate input filtering, and `HAVING` above
-the aggregate. Local-lite
-uses hidden `SYSKEY` NATable/NAFileSet metadata for keyless RocksDB row identity,
-so normal groupby elimination and implementation rules no longer require
-local-lite guards. SQLCI EXPLAIN smoke verifies the SYSKEY metadata and retained
-groupby operator. Statement read consistency is implemented for repeated access
-to each local table, and explicit local transactions retain that read view
-across statements. Pending transaction publication is now atomic within one
-table: COMMIT preflights every pending primary and UNIQUE key and publishes all
-base and secondary records through one RocksDB write batch. Standalone and
-SQLCI regressions verify that a later duplicate cannot partially publish an
-earlier pending row from the table. Keyless row-id metadata is restored after
-an ordinary table write failure, while the catalog/table crash-atomicity and
-multi-table atomicity gaps remain explicit.
+The bounded single-process transaction/storage phases and M1-M10 convergence
+gate are complete. The productization critical path now starts at M11A:
+session-owned transaction context. Portable SQL compatibility work such as the
+single-byte `TRIM`/`LTRIM`/`RTRIM` gap may continue independently, but it
+must not delay the session boundary.
 
-The local-lite-native SQL regress lane is now implemented under
-`core/sql/regress/localLite`. Its transaction cases cover COMMIT/ROLLBACK,
-primary-key preflight failure, UNIQUE preflight failure, absence of partial
-same-table publication, and keyless row-id recovery without starting the
-unsupported service stack. Mixed aligned executor rows now resolve indirect
-VARCHAR positions through the tuple VOA instead of treating `ExpOffsetMax` as
-a data offset. The native lane covers nullable variable fields together with
-primary/UNIQUE access, NUMERIC/DECIMAL/BigNum, and datetime fields in one wide
-row. Direct datetime result materialization is now complete: the local-lite
-SQLCI prologue enables internal datetime IO before the first user statement,
-and the native lane validates direct DATE/TIME/TIMESTAMP results from standalone
-expressions and persisted rows. Portable CASE/string/NULL expressions, outer
-join null instantiation, HAVING, and scalar aggregate subqueries are now also
-covered by native `TEST005`. Native `TEST006` adds `UNION ALL`/`UNION`,
-aggregation and joins over derived tables, and correlated
-`EXISTS`/`NOT EXISTS`/scalar aggregate subqueries. Native `TEST007` adds
-deterministic set-operation, INSERT-shape/NOT-NULL, and scalar-subquery
-cardinality diagnostics together with post-error recovery checks. Native
-`TEST008` adds aggregate/subquery binder diagnostics and executor invalid-value,
-overflow, and division-by-zero recovery coverage. Native `TEST009` locks
-compiler DDL and SQLCI pre-prepare unsupported-statement diagnostics together
-with post-error base-table verification. Native `TEST010` now covers successful
-`INSERT ... SELECT`, explicit rollback, and autocommit tuple-flow rollback when
-a late primary-key conflict follows earlier accepted source rows. Native
-`TEST011` adds repeated prepared SELECT/INSERT execution, parameter rebinding,
-fresh execution snapshots, statement-name replacement, and post-error recovery.
-`TEST012` adds base and derived `NATURAL JOIN`, general `SELECT DISTINCT`,
-ordered `FIRST`, legacy `[ANY n]`-style `LIMIT`, and correlated `FIRST` coverage.
-The correlated case also guards against remapping an outer characteristic input
-as an inner scan column. `TEST013` adds portable ASCII string functions, POSIX
-`REGEXP` predicates, NULL behavior, invalid-pattern diagnostic `8452`, and
-post-error recovery. `TEST014` adds ordered and `DISTINCT` `GROUP_CONCAT`,
-default/custom separators, an independent order key, grouped/scalar forms, and
-NULL/all-NULL/empty-input behavior, including empty-string separator placement.
-Its executor fix prevents a later NULL from erasing an accumulated result and
-tracks zero-length inputs as values, while its optimizer fix keeps an
-independent aggregate order key available below group-by. `TEST015` now covers
-portable `COALESCE`/`DECODE`/`ISNULL`/`NULLIF`/`NVL` ASCII and NULL
-semantics over stored nullable values in projections and predicates, including
-empty strings, all-NULL inputs, NULL-to-NULL `DECODE` matching, and a missing
-default. No compiler/executor change was needed. Portable single-byte
-`ASCII`/`CHAR` behavior is now covered by `TEST016`, including stored
-NULL/empty values, ISO88591 boundary round trips, scalar subqueries, predicates,
-diagnostic `8428`, and post-error recovery. No compiler/executor change was
-needed. Portable `DATEFORMAT`/`DAYNAME`/`MONTHNAME` behavior is now covered by
-`TEST017`, including all three deterministic DATEFORMAT styles, leap-day and
-year-boundary values, NULL propagation, assignment, and predicates. No
-compiler/executor change was needed. Portable single-byte `CONVERTTOHEX`
-behavior is now covered by `TEST018`, including uppercase output, ISO88591 byte
-boundaries, CHAR padding versus VARCHAR length, empty/NULL inputs, assignment,
-and predicates. No compiler/executor change was needed. Portable single-byte
-`CONVERTFROMHEX` behavior is now covered by `TEST019`, including byte-boundary
-round trips, empty/NULL inputs, assignment, predicates, invalid half-byte and
-odd-length diagnostics, legacy binder diagnostics `4043`/`4068`, and error
-recovery. Its executor fix validates both input half-bytes independently.
-Portable single-byte `TO_HEX`/`HEX` and `UNHEX`/`FROM_HEX` aliases are now
-covered by `TEST020`, including ISO88591 byte
-boundaries, empty/NULL inputs, assignment, and predicates. No
-parser/compiler/executor change was needed. Environment-independent
-`CURRENT_USER`/`SESSION_USER`/`USER` invariants are now covered by `TEST021`,
-including nonempty/equality assertions, both INSERT assignment shapes,
-concatenation, and predicates without recording the configured identity in
-EXPECTED output. No parser/compiler/executor change was needed. Portable
-single-byte `SPACE` is now covered by `TEST022`, including constant and stored
-counts, positive/zero/NULL results, both INSERT assignment paths, padded
-comparison, count-sensitive concatenation, oversized-result diagnostics, and
-post-error recovery. No parser/compiler/executor change was needed. The
-single-byte `CONCAT()` function is now covered by `TEST023`, including literal
-and stored operands, exact equivalence to `||`, empty/NULL inputs,
-embedded-space byte preservation, both INSERT assignment paths, nested use,
-and predicates. No parser/compiler/executor change was needed. The single-byte
-`INSERT()` string function is now covered by `TEST024`, including literal and
-stored VARCHAR/numeric arguments, the legacy position/length matrix,
-append-at-end, empty/NULL inputs, both INSERT assignment paths, concatenation,
-and predicates. No parser/compiler/executor change was needed. The single-byte
-`REPEAT()` function is now covered by `TEST025`, including literal and stored
-VARCHAR/count arguments, zero counts, empty/NULL values, trailing-space byte
-preservation, both INSERT assignment paths, concatenation, predicates,
-diagnostics `8432`/`4129`/`4116`, and post-error recovery. No
-parser/compiler/executor change was needed. The single-byte
-`TRIM`/`LTRIM`/`RTRIM` family is the next portable regress gap. The
-transaction-specific multi-table and catalog/table
-crash-atomicity limits
-remain unchanged.
+The first M11A implementation slice is deliberately behavior-preserving:
+
+1. Introduce a LocalLite transaction-context owner on each `ContextCli`.
+2. Route `LocalLiteTxn` and executor-root statement cleanup through the active
+   CLI context instead of `LocalLiteTxnState::instance()`.
+3. Preserve the existing autocommit, explicit COMMIT/ROLLBACK, snapshot, pending
+   write, and per-table atomic publication semantics.
+4. Add focused coverage with two independent `ContextCli` instances, proving
+   that one session cannot observe, commit, roll back, or release the other
+   session's transaction and statement snapshots.
+5. Keep `make local-lite-m10` green as the compatibility gate.
+
+M11A exits only when mutable transaction state is no longer process-global and
+session teardown deterministically releases its own snapshots and pending
+writes. Listener/protocol work belongs to M11B after this ownership boundary is
+stable; multi-table crash atomicity and recovery remain M12 work.

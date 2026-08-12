@@ -308,5 +308,7 @@ clean:
 	@rm -rf $(LOGFILE) $(LOGFILE).old
 	@echo "Removing coverage files"
 	@-find $(TOPDIR) -maxdepth 1 -name '*.gcov' -print | xargs rm -f
+ifneq ($(TRAF_LOCAL_LITE),1)
 	@cd ..; $(MAVEN) clean
+endif
 	@rm -rf $(TRAF_HOME)/export/lib/trafodion-sql-*.jar

@@ -329,10 +329,13 @@ they are not silently claimed by the RocksDB-only lane.
 Status: the bounded convergence gate is implemented, but the full legacy
 portable suite is not yet complete.  `scripts/test-local-lite-legacy-convergence.sh`
 now validates the manifest, runs every currently allowlisted portable entry,
-and reruns the native `TEST001-TEST042` lane.  The current allowlist is
+and reruns the native `TEST001-TEST043` lane.  The current allowlist is
 `charsets/TEST003`, `charsets/TEST316`, `core/TEST018`, `core/TEST163`,
 `executor/TEST014`, and `executor/TEST101`, all passing; the native lane remains
-42/42.
+43/43.
+This was revalidated from a clean local-lite build on 2026-08-12; the six
+allowlisted legacy cases and all 43 native cases passed with exact normalized
+EXPECTED output.
 `charsets/TEST003` validates UCS2 column storage, literal assignment,
 UPDATE/DELETE, supported translation, and the expected rejection of unsupported
 character-set and translation names.  `executor/TEST014` validates CTAS,
@@ -357,7 +360,7 @@ traced back to a storage or executor capability:
 | M10F | complete | Catalog-backed identity/role/privilege checks and the bounded native/Java UDR adapters run without a service stack | native `TEST041` and `TEST042` |
 
 The phase gate is executable with `make local-lite-m10`; it checks the
-allowlisted legacy rows, the native 42-test lane, and every M10A-M10F evidence
+allowlisted legacy rows, the native 43-test lane, and every M10A-M10F evidence
 case.  “Complete” above means complete for the declared RocksDB-only surface;
 it does not promote physical HBase/Hive tests, shell-driven multi-session tests,
 or a test that still crashes in the compiler.  No HBase table or HBase metadata
@@ -433,7 +436,7 @@ production multi-session database is complete.
 | M7 advanced executor | Complete for the single-process surface | Native `TEST040`; cursors, windows, grouping, sorting, cancellation cleanup, and local scratch lifecycle are covered. There is no ESP fan-out or remote multi-session runtime. |
 | M8 authorization | Complete for the local catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
 | M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
-| M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the six allowlisted legacy entries and native `TEST001`-`TEST042`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
+| M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the six allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
 | M11 sessionized runtime and standalone server | Planned | Not started. This is the next productization milestone. |
 | M12 transactional storage and recovery | Planned | Not started. It begins after the M11 session/server boundary is usable. |
 

@@ -6,17 +6,17 @@
 engine development. It removes Java, Maven, Hadoop, HDFS, HBase, Hive, DCS,
 REST, TrafCI, and Java client modules from the selected build path.
 
-The current useful runtime target is `sqlci` in local-lite mode. It can start as
-a single local process, execute SQL that stays inside the compiler/executor
-such as `SELECT` statements over `VALUES` clauses, and run a narrow
-RocksDB-backed local table smoke path.
+The current runtime target is `sqlci` in local-lite mode. It starts as one local
+process and exercises the normal compiler/executor over an embedded RocksDB
+catalog and table store. The bounded local surface now includes transactions,
+DDL/DML, primary/secondary indexes, constraints, metadata/statistics,
+authorization, and a constrained UDR adapter.
 
-Local-lite is not a complete standalone database yet. It now includes a minimal
-RocksDB-backed local table path for `sqlci` table smoke tests, but the full
-Trafodion catalog, complete table integration, transactions, indexes,
-privileges, JDBC/ODBC connectivity, and distributed execution remain outside
-the supported runtime surface. The current local NATable loader and executor
-scan TCB are intentionally narrow and only cover the v1 local table smoke path.
+Local-lite is not a complete standalone database yet. Transaction state and
+store ownership are still process-global, there is no long-running multi-session
+server or JDBC/ODBC protocol endpoint, and commit/recovery guarantees remain
+bounded to the documented RocksDB-only single-process surface. Distributed
+execution and the HBase/HDFS/Hive service stack remain outside the runtime.
 The transaction and concurrency integration plan is tracked separately in
 [`local-lite-transaction-roadmap.md`](local-lite-transaction-roadmap.md).
 
@@ -48,9 +48,10 @@ Implemented:
 - RocksDB development dependency detection for local-lite SQL builds. Missing
   headers produce an explicit build error that names `librocksdb-dev`,
   `rocksdb-devel`, and `ROCKSDB_INC_DIR`.
-- Minimal `sqlci` local table gate compiled into `libsqlcilib.so` only when
-  `TRAF_LOCAL_LITE=1`. It reports known unsupported statements before prepare;
-  supported local table queries are not executed by SQLCI.
+- A `sqlci` local control layer compiled into `libsqlcilib.so` only when
+  `TRAF_LOCAL_LITE=1`. It handles local session/catalog compatibility commands
+  and bounded metadata/authorization/UDR operations; normal table queries and
+  DML continue through compiler/executor plans.
 - Minimal RocksDB catalog and table data store under
   `TRAF_LOCAL_STORE_DIR` or `TRAF_VAR/localstore/rocksdb`.
 - Basic local table SQL in `sqlci`: compiler-routed `CREATE TABLE`,
@@ -94,8 +95,8 @@ Implemented:
 - Local-lite scalar type coverage includes integer, floating-point, character,
   date/time/timestamp, exact `NUMERIC(p,s)`, `DECIMAL(p,s)`, and BigNum
   `NUMERIC(p,s)` values.
-- Unsupported local table SQL diagnostics for `UPDATE`, `DELETE`, `MERGE`,
-  `UPSERT`, and `CREATE INDEX`.
+- RocksDB-backed `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, primary/UNIQUE and
+  secondary-index maintenance, with statement and per-table commit atomicity.
 - HBase access TDBs reached through the old executor path now build a TCB that
   emits an unsupported diagnostic instead of returning `NULL`.
 - Local-lite `make local-lite` no longer builds `make_monitor` or top-level SQF
@@ -111,12 +112,11 @@ Known limits:
 - Local-lite `sqlci` still links internal Trafodion shared libraries and a small
   Seabed baseline. Monitor-specific paths are skipped or guarded, but Seabed
   libraries remain transitive dependencies.
-- The current RocksDB DDL path uses the compiler DDL entry point for
-  `CREATE TABLE` and `DROP TABLE`, and local tables can now be loaded as
-  NATables from the local catalog. Local table inserts also fall through CLI
-  prepare and execute through the local executor insert TCB. Type coverage is
-  still intentionally narrow, but exact decimal/numeric values are now stored
-  by preserving the compiler-generated executor physical bytes.
+- The RocksDB DDL path uses the compiler DDL entry point where applicable and
+  loads local tables as NATables from the local catalog. DML uses local executor
+  TCBs and preserves compiler-generated physical row bytes. The supported type,
+  constraint, statistics, authorization, and UDR surfaces remain deliberately
+  bounded by the M4-M10 regression contracts.
 - `SELECT` over local RocksDB tables uses the local executor scan TCB. The scan
   TCB projects from persisted binary aligned rows into the compiler-generated
   executor row layout.
@@ -162,8 +162,18 @@ startup objects do not match the host C runtime.
 For a narrower SQL debug rebuild:
 
 ```bash
-TRAF_HOME=$(pwd)/core/sqf make -C core/sql/nskgmake TRAF_LOCAL_LITE=1 SQ_MTYPE=64 SQ_BTYPE=d SQ_MBTYPE=64d linuxdebug
+TRAF_HOME=$(pwd)/core/sqf make -C core/sql/nskgmake TRAF_LOCAL_LITE=1 SQ_PHANDLE_VERIFIER=1 SQ_MTYPE=64 SQ_BTYPE=d SQ_MBTYPE=64d linuxdebug
 ```
+
+Before a narrow clean rebuild, use the same ABI flags for clean and build:
+
+```bash
+TRAF_HOME=$(pwd)/core/sqf make -C core/sql/nskgmake TRAF_LOCAL_LITE=1 SQ_PHANDLE_VERIFIER=1 SQ_MTYPE=64 SQ_BTYPE=d SQ_MBTYPE=64d linuxdebugclean
+OMPI_CXX=/usr/bin/g++ make local-lite
+```
+
+Do not mix SQL objects built with and without `SQ_PHANDLE_VERIFIER`; Seabed
+process APIs have different C++ signatures in those two modes.
 
 ## Build Outputs
 
@@ -322,14 +332,14 @@ Supported local-lite `sqlci` behavior:
 
 - SQL parsing, binding, normalization, optimization, and executor startup.
 - `SELECT` queries against `VALUES` clauses.
-- Minimal RocksDB local table support: `CREATE TABLE` and `DROP TABLE` route
-  through the compiler DDL path; single-row and multi-row
-  `INSERT INTO ... VALUES (...)` and `INSERT ... SELECT` bind and execute through
-  the local RocksDB executor insert TCB; local table `SELECT` statements bind
-  through the local catalog NATable and run through the local RocksDB executor
-  scan TCB. Runtime coverage includes projection, predicates, ordering,
-  self-join, inner join, left join, ungrouped aggregate expression query shapes,
-  and grouped aggregates over duplicate and NULL group keys with `HAVING`.
+- RocksDB local tables with compiler/executor-backed SELECT/INSERT/UPDATE/
+  DELETE/MERGE/UPSERT, transactions, joins, aggregates, ordering, cursors,
+  windows, and local scratch behavior.
+- Catalog DDL for tables, views, schemas, sequences, synonyms, indexes,
+  constraints, ALTER/TRUNCATE, plus local SHOWDDL/SHOWSTATS and catalog
+  enumeration.
+- Local users, roles and object privileges, and the bounded native/Java UDR
+  adapters described by M8/M9.
 - Basic scalar expressions, arithmetic, and string operations.
 - Direct `DATE`, `TIME`, and `TIMESTAMP` result rendering for standalone
   expressions and local table columns.
@@ -337,9 +347,10 @@ Supported local-lite `sqlci` behavior:
 
 Unsupported behavior:
 
-- Local table `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, `CREATE INDEX`, broad
-  type coverage, constraints beyond local-lite primary/unique keys, privileges,
-  and distributed transactions.
+- Atomic multi-table commit, crash recovery/WAL ownership above RocksDB, and
+  production multi-session isolation.
+- RI CASCADE, computed system columns, unrestricted histogram/physical metadata,
+  LOB/ARRAY storage, and the full UDR server/host-rowset surface.
 - HBase-backed metadata/storage operations.
 - HDFS, HBase, Hive, ORC, bulk load/unload, and LOB storage access.
 - JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
@@ -386,9 +397,9 @@ Current cases are:
 - `TEST008`: aggregate/subquery binder diagnostics and executor value-evaluation
   diagnostics for invalid character conversion, numeric narrowing overflow, and
   division by zero, including successful post-error table access.
-- `TEST009`: compiler-routed local DDL diagnostics and SQLCI pre-prepare
-  diagnostics for unsupported DML, object DDL, native external-table DDL, table
-  alteration, and truncation, including post-error base-table verification.
+- `TEST009`: compiler-routed local DDL diagnostics, supported DML coexistence,
+  rejected native external-table/service-only DDL, and post-error base-table
+  verification.
 - `TEST010`: `INSERT ... SELECT` with target-column reordering, source
   expressions/predicates, a `UNION ALL` source, explicit transaction rollback,
   autocommit rollback after a late primary-key conflict, and successful
@@ -440,6 +451,20 @@ Current cases are:
   arguments, including zero counts, empty/NULL values, trailing spaces, both
   INSERT assignment paths, concatenation, predicates, count diagnostics, and
   post-error recovery.
+- `TEST026`-`TEST029`: UPDATE, DELETE, UPSERT, and MERGE semantics, including
+  key changes, explicit transactions, statement atomicity, and diagnostics.
+- `TEST030`-`TEST035`: primary/UNIQUE and secondary-index maintenance, equality,
+  prefix/range, ordered and index-only access, uniqueness, and rollback.
+- `TEST036`-`TEST037`: catalog DDL, constraints/defaults, views, ALTER/TRUNCATE,
+  generated/identity columns, sequences, and related metadata.
+- `TEST038`-`TEST039`: persisted row/NULL statistics and the bounded character,
+  binary, BOOLEAN, INTERVAL, and LONG VARCHAR storage surface.
+- `TEST040`: cursors, windows, grouping/sorting, cancellation cleanup, and local
+  scratch-file lifecycle in the single-process executor.
+- `TEST041`-`TEST042`: catalog authorization and the bounded native/Java UDR
+  metadata/invocation adapters.
+- `TEST043`: schema/catalog enumeration, `USE`/`SHOW SCHEMAS`, and synthetic
+  `_MD_` table visibility.
 
 Run all cases or a selected subset from the repository root:
 
@@ -449,10 +474,10 @@ make local-lite-regress LOCAL_LITE_REGR_TESTS="001 003"
 ```
 
 The broad legacy `core`, `executor`, and `seabase` suites are not claimed as
-compatible. They still contain unsupported UPDATE/DELETE/index/service-stack
-operations and depend on generated regress tools that are absent from this
-checkout. Portable SQL should be moved into this lane incrementally as the
-corresponding compiler/executor/storage behavior becomes supported.
+compatible. They still contain physical HBase/Hive behavior, shell-driven
+multi-session/service-stack operations, unsupported type/collation paths, and
+generated regress-tool dependencies that are absent from this checkout.
+Portable SQL should be promoted only through the reviewed adapter/manifest.
 
 The current successful set-operation surface is `UNION ALL` and `UNION`
 distinct. `INTERSECT` and `EXCEPT` remain disabled by the existing binder
@@ -489,10 +514,12 @@ unchanged in local-lite.
 | Single-byte `INSERT()` string function | Covered by `TEST024`, including literals, stored VARCHAR and numeric arguments, the legacy position/length matrix, append-at-end, empty/NULL values, both INSERT assignment paths, concatenation, and predicates | Existing binder rewrite and executor behavior were sufficient; invalid-position/negative-length diagnostics and UTF8/UCS2 variants remain outside this portable increment. |
 | Single-byte `REPEAT()` function | Covered by `TEST025`, including literal and stored VARCHAR/count arguments, zero counts, empty/NULL values, trailing-space byte preservation, both INSERT assignment paths, concatenation, predicates, diagnostics `8432`/`4129`/`4116`, and post-error recovery | Existing binder/executor behavior was sufficient; unconstrained dynamic counts retain a maximum-width result type, and UTF8/UCS2 variants remain outside this portable increment. |
 | Single-byte `TRIM`/`LTRIM`/`RTRIM` family | Stored `TRIM` projections are exercised by `TEST005`/`TEST013`, while `LTRIM`/`RTRIM` remain literal-only in `TEST013`; family-wide assignment and predicate coverage is not yet claimed | This is the next portable gap from `core/TEST038` and `charsets/TEST313`; cover leading/trailing/both and explicit trim-character forms, CHAR versus VARCHAR results, empty/NULL values, both INSERT assignment paths, concatenation, and predicates without adding UTF8/UCS2 variants. |
-| UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, broad character/collation types, plan forcing, spill, and service-stack paths | Explicitly unsupported or outside the v1 runtime | Requires a deliberate surface expansion; do not copy these cases into native EXPECTED files yet. |
+| UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, character/data types, statistics, authorization, and bounded UDR | Covered for the declared RocksDB-only surface by `TEST026`-`TEST043` and the six-case legacy allowlist | Legacy cases that require physical HBase/Hive behavior, shell-driven multi-session execution, broader collation/LOB paths, or compiler-crashing SQL remain blocked, unsafe, or excluded. |
 
-The next compatibility increment is portable single-byte
-`TRIM`/`LTRIM`/`RTRIM` family coverage over local tables.
+The next portable compatibility increment is single-byte
+`TRIM`/`LTRIM`/`RTRIM` family coverage over local tables. It is separate from
+the productization critical path, whose next milestone is M11A session-owned
+transaction state.
 
 The broader effort to run portable sections from the legacy regress suites is
 tracked separately in `plan/local-lite-legacy-regress-roadmap.md`. Milestone 0
@@ -664,24 +691,20 @@ source/target EOD, and rolls back after child errors or cancellation.
 
 `core/sql/sqlci/SqlCmd.cpp` calls
 `LocalLiteSqlTable_process()` before CLI prepare in local-lite builds. The
-handler recognizes:
-
-- `CREATE INDEX`, `CREATE VIEW`, `CREATE SEQUENCE`, `CREATE SCHEMA`,
-  `CREATE SYNONYM`, `ALTER TABLE`, `TRUNCATE TABLE`, `UPDATE`, `DELETE`,
-  `MERGE`, and `UPSERT` as explicit unsupported statements
-- Native HBase/Hive/volatile table DDL as explicit unsupported statements
-- Table constraints/default/generated/identity column definitions as explicit
-  unsupported syntax
+handler supplies local session/catalog compatibility (`SET`/`USE`,
+`GET`/`SHOW`, SHOWDDL/SHOWSTATS), schema/synonym/statistics operations,
+authorization checks, and bounded UDR handling. Native HBase/Hive table DDL and
+service-stack-only operations still receive explicit unsupported diagnostics.
 
 Unqualified table names default to `TRAFODION.SEABASE.<name>`. Unquoted
 identifiers are uppercased; quoted identifiers preserve case.
 
-`CREATE TABLE`, `DROP TABLE`, `INSERT`, and `SELECT` intentionally fall through
-this handler and use the compiler/executor paths described above.
+Normal table SELECT and DML intentionally use the compiler/executor paths
+described above; the handler must not become a second general SQL executor.
 
 All supported query execution must use executor TCBs. The SQLCI local-lite hook
-is only an early unsupported-statement gate and must not scan RocksDB rows,
-insert RocksDB rows, or materialize result rows directly.
+must not scan RocksDB rows, insert RocksDB rows, or materialize general query
+results directly.
 
 ### Executor Guard
 
@@ -806,11 +829,11 @@ Completed:
   overflow (`8411`), and division by zero (`8419`). A final ordered table scan
   confirms that the executor errors leave both the session and stored rows
   usable.
-- Native `TEST009` validates compiler-routed duplicate CREATE, unsupported
-  CHECK/DEFAULT/BLOB definitions, DROP CASCADE, and missing-table DROP through
-  the original `3242` diagnostics. It also locks the SQLCI pre-prepare messages
-  for unsupported UPDATE/DELETE/MERGE, UPSERT, object DDL, external-table DDL,
-  ALTER, and TRUNCATE, then confirms that the base table remains unchanged.
+- Native `TEST009` validates compiler-routed duplicate CREATE, supported
+  CHECK/DEFAULT definitions, rejected BLOB definitions, DROP CASCADE, and
+  missing-table diagnostics. It also exercises supported DML, index/view/
+  sequence/schema/synonym DDL, ALTER/TRUNCATE, and the explicit rejection of
+  UPSERT USING LOAD and native external-table DDL.
 - Native `TEST010` migrates the basic `INSERT ... SELECT` shapes from legacy
   executor tests. It covers column reordering, expressions, source filtering,
   a `UNION ALL` source, explicit rollback, and a late primary-key conflict that
@@ -956,10 +979,11 @@ The authoritative milestone definitions and completion gates are in
   - `INSERT` and all table `SELECT` queries were also moved out of this SQLCI
     handler and now use executor TCBs after normal CLI prepare/bind/generate.
 
-- [x] **Return explicit unsupported diagnostics for known unsupported local
-  table SQL.**
-  - Implemented for `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, and `CREATE INDEX`
-    in `core/sql/sqlci/LocalLiteSqlTable.cpp`.
+- [x] **Route supported local DML and index operations through the bounded
+  RocksDB path.**
+  - `UPDATE`, `DELETE`, `MERGE`, `UPSERT`, and `CREATE INDEX` are implemented
+    for the declared local surface and covered by native `TEST026`-`TEST035`.
+    Service-stack-only variants retain explicit unsupported diagnostics.
 
 - [x] **Prevent old HBase access TDB build from returning `NULL`.**
   - Implemented as `LocalLiteUnsupportedHbaseTcb` in
