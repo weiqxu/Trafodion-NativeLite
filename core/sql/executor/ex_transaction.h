@@ -47,6 +47,11 @@
 
 #include "Int64.h"
 
+#ifdef TRAF_LOCAL_LITE
+#include <string>
+class LocalLiteTxnContext;
+#endif
+
 struct TmfPhandle_Struct {
   short  Data[10];
 };
@@ -195,6 +200,18 @@ public:
 
   void resetXnState();
 
+#ifdef TRAF_LOCAL_LITE
+  // Local-lite uses the existing ExTransaction object as the session's
+  // transaction coordinator.  The storage transaction context is a private
+  // participant so callers have one authoritative transaction state.
+  LocalLiteTxnContext *getLocalLiteTxnContext() const
+    { return localLiteTxnContext_; }
+  bool beginLocalLiteTransaction(std::string *error);
+  bool commitLocalLiteTransaction(std::string *error);
+  bool rollbackLocalLiteTransaction(std::string *error);
+  void resetLocalLiteTransaction();
+#endif
+
 private:
 
   // pointer to executor globals. Used to get to the open
@@ -219,6 +236,10 @@ private:
   ComDiagsArea *transDiagsArea_;
   ComCondition* errorCond_;
   CollHeap* heap_;
+
+#ifdef TRAF_LOCAL_LITE
+  LocalLiteTxnContext *localLiteTxnContext_;
+#endif
   
   short local_or_encompassing_trans;
 

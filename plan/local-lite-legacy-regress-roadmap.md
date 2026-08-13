@@ -287,7 +287,9 @@ control, and GRANT/REVOKE changes are checked before compilation and again at
 prepared-statement execution so a cached plan cannot bypass a revoke.  Views
 use their persisted owner as the local-lite definer boundary; switching the
 session identity provides the invoker boundary.  Native coverage is in
-`localLite/TEST041`, and the full local-lite lane passes 41/41.
+`localLite/TEST041`, and the full local-lite lane passes 43/43. Object creation
+reads the effective identity from the current `ContextCli`, not an environment
+variable or a potentially stale compiler-session mirror.
 
 The deliberate boundary is explicit: this milestone has no LDAP/password
 authentication, external security service, column-level privilege metadata,
@@ -334,7 +336,7 @@ and reruns the native `TEST001-TEST043` lane.  The current allowlist is
 `core/TEST018`, `core/TEST163`, `executor/TEST014`, `executor/TEST050`,
 `executor/TEST101`, and `seabase/TEST012[schemaDrop,getStmts]`; the native lane
 remains 43/43.
-This was revalidated on 2026-08-12; all eleven allowlisted legacy cases and all
+This was revalidated on 2026-08-13; all eleven allowlisted legacy cases and all
 43 native cases passed with exact normalized EXPECTED output.
 `charsets/TEST003` validates UCS2 column storage, literal assignment,
 UPDATE/DELETE, supported translation, and the expected rejection of unsupported
@@ -442,10 +444,10 @@ continues to pass in full.
 
 ## Milestone Status Summary
 
-The completion labels below are scoped.  A completed M1-M9 milestone means its
-declared RocksDB-only, single-process local-lite surface is implemented and has
-the cited focused coverage; it does not imply that the full legacy suite or a
-production multi-session database is complete.
+The completion labels below are scoped. Completed M1-M10 milestones cover their
+declared RocksDB-only compatibility surface; completed M11 covers its local
+trusted multi-session service boundary. Neither label implies full legacy-suite
+convergence or a production database.
 
 | Milestone | Status | Current evidence and boundary |
 | --- | --- | --- |
@@ -459,15 +461,16 @@ production multi-session database is complete.
 | M8 authorization | Complete for the local catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
 | M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
 | M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the eleven allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
-| M11 sessionized runtime and standalone server | Planned | Not started. This is the next productization milestone. |
-| M12 transactional storage and recovery | Planned | Not started. It begins after the M11 session/server boundary is usable. |
+| M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; production recovery and security are M12/later work. |
+| M12 transactional storage and recovery | Planned; next | Not started. The completed M11 service boundary is now its input. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
-Status: planned; not started.  M11 is the next productization milestone.  Its
-goal is to move local-lite from a single SQLCI process into one long-running
-database service that owns the embedded store and safely hosts multiple client
-sessions.  It does not select or replace the storage engine.
+Status: complete for the declared local trusted surface. M11 moves local-lite
+from a single SQLCI process into one long-running database service that owns the
+embedded store and safely hosts multiple client sessions. It deliberately does
+not select or replace the storage engine, claim production recovery, or restore
+the Trafodion service stack.
 
 ### M11A: Session-Owned Transaction Context
 
@@ -477,10 +480,29 @@ sessions.  It does not select or replace the storage engine.
   shares the catalog/table handles.
 - Resolve the current transaction context from executor statement/session
   state instead of implicit static access.
-- Release statement snapshots and roll back an active transaction when a
-  session disconnects, is cancelled, or is destroyed.
+- Release statement snapshots on cancellation, and roll back an active
+  transaction when a session disconnects, resets, or is destroyed.
 - Preserve the current `LocalLiteTxn` executor-facing API boundary so scan and
   DML TCB semantics do not depend on a future wire protocol.
+
+Current implementation evidence (2026-08-13): each `ContextCli` owns an
+`ExTransaction`, which creates and canonically owns that session's
+`LocalLiteTxnContext`. Transaction, tuple-flow, scan/DML, DDL, and executor-root
+statement-snapshot paths receive that context explicitly; reset, end/drop
+session, deletion, and destruction discard its pending writes and snapshots.
+Making `ExTransaction::xnInProgress()` authoritative also exposed inherited
+native-HBase user-transaction DDL restrictions; LocalLite keeps its existing
+bounded CREATE/DROP and CTAS behavior explicitly, revalidated by
+`executor/TEST014`. Object ownership is likewise bound to the current
+`ContextCli`, with `TEST041` covering identity switches and owner GRANTs.
+`make local-lite-m11a` exercises the static wiring plus statement, transaction,
+concurrency, lower-level independent-context, and production two-`ContextCli`
+SQLCI probes. The SQLCI probe keeps transactions active in both contexts,
+validates isolation and independent completion, then uses `RESETCONTEXT` and
+`DELETECONTEXT` to verify implicit rollback without poisoning the peer.
+The complete M11 gate adds a real cancel request while a peer transaction is
+active: the canceled statement returns `57014`, its snapshot is released, the
+transaction rolls back explicitly, and the peer commits and remains usable.
 
 M11A completion requires two independent CLI contexts in one process to begin
 transactions concurrently, isolate uncommitted writes, commit or roll back
@@ -503,18 +525,46 @@ through the server, observe the declared isolation boundary, disconnect without
 leaking transaction state, and read committed data after a clean or unclean
 server restart.
 
+Implemented evidence: `nativelite-server` opens a process-lifetime catalog
+lease, rejects a second server on the same store, creates/destroys one
+`ContextCli` per connection, and accepts numeric loopback TCP or an exact Unix
+socket with mode `0600`. Connection threads feed one serialized engine queue so
+embedded compiler/CLI process globals are not entered concurrently; completed
+connection threads are reaped. Unix startup refuses non-socket, foreign, or
+active paths, and shutdown unlinks only the exact socket inode created by this
+server. The `make local-lite-m11b` lifecycle gate verifies store ownership,
+disconnect rollback and key reuse, then validates committed versus pending data after both
+graceful shutdown and `SIGKILL` restart. Health and Unix-socket paths are also
+covered, including preservation of an existing regular file and a pathname
+replacement made after bind. Session diagnostic captures are unnamed and the
+unclean-restart path verifies that no SQL-bearing capture pathname is exposed.
+
 ### M11C: Product Client Protocol
 
-- Time-box a choice between a reduced Trafodion client path and a standalone
-  protocol such as PostgreSQL wire compatibility; do not restore DCS,
-  ZooKeeper, Monitor, or the full service stack by default.
+- Use a reduced Trafodion Type 4 client path without restoring DCS, ZooKeeper,
+  Monitor, or the full service stack.
 - Support authentication startup, statement lifecycle, result metadata/rows,
   transaction status, cancellation, and stable SQLSTATE mapping.
 - Validate with a real JDBC or ODBC client.  An in-process CLI call is not
   end-to-end protocol evidence.
 
-M11 completion does not claim production readiness.  It establishes the
-multi-session service boundary needed for M12 durability, recovery, backup,
+M11C selects a reduced Trafodion Type 4 endpoint. One loopback listener handles
+both the association handshake and SQL dialogue, so DCS and ZooKeeper are not
+required. The implemented calls are connect/disconnect, set connection option,
+end transaction, prepare, execute/direct execute, fetch, free statement,
+STOPSRVR cancellation, and bounded GetSQLCatalogs support for catalogs, schemas,
+tables, columns, and primary keys. `make local-lite-m11c` compiles the repository
+T4 driver and runs `NativeLiteT4JdbcTest`; it covers prepared reuse, typed rows,
+overlapping transactions, disconnect rollback, cancellation with an active
+peer, metadata, and restart persistence. The driver's public
+`Statement.cancel()` does not dispatch during an active request, so the gate
+uses its internal `T4_Dcs_Cancel` path.
+
+M11 completion does not claim production readiness. The endpoint is trusted
+local only: TCP is loopback-only, Unix sockets are owner-only, and there is no
+password exchange. Results are buffered and compiler/executor work is
+serialized. M11 establishes
+the multi-session service boundary needed for M12 durability, recovery, backup,
 resource governance, and later security hardening.
 
 ## Milestone 12: Transactional Storage And Recovery
@@ -531,6 +581,9 @@ not a prerequisite baked into the executor.
   maintenance inside one transaction domain.
 - Replace whole-table materialization at the storage API with bounded streaming
   range cursors.
+- Version and migrate the pre-M11 persisted metadata-key encoding before
+  changing its fixed buffer layout, and add collision/integrity checks to the
+  migration gate.
 - Define isolation, conflict, retryable error, cancellation, and synchronous
   durability contracts before selecting the backend.
 - Preserve versioned row/key/catalog formats or provide an explicit migration.

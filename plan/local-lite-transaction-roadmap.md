@@ -399,25 +399,39 @@ side-records, RocksDB metadata, or the transaction manager layer.
 
 ## Immediate Next Implementation Step
 
-The bounded single-process transaction/storage phases and M1-M10 convergence
-gate are complete. The productization critical path now starts at M11A:
-session-owned transaction context. Portable SQL compatibility work such as the
-single-byte `TRIM`/`LTRIM`/`RTRIM` gap may continue independently, but it
-must not delay the session boundary.
+The bounded transaction/storage phases, M1-M10 convergence gate, and M11
+session/server boundary are complete. M11 uses the existing Trafodion ownership
+chain rather than introducing a second session coordinator:
 
-The first M11A implementation slice is deliberately behavior-preserving:
+```text
+ContextCli -> ExTransaction -> LocalLiteTxnContext
+             canonical state   RocksDB participant state
+```
 
-1. Introduce a LocalLite transaction-context owner on each `ContextCli`.
-2. Route `LocalLiteTxn` and executor-root statement cleanup through the active
-   CLI context instead of `LocalLiteTxnState::instance()`.
-3. Preserve the existing autocommit, explicit COMMIT/ROLLBACK, snapshot, pending
-   write, and per-table atomic publication semantics.
-4. Add focused coverage with two independent `ContextCli` instances, proving
-   that one session cannot observe, commit, roll back, or release the other
-   session's transaction and statement snapshots.
-5. Keep `make local-lite-m10` green as the compatibility gate.
+`ExTransaction` owns and synchronizes the local transaction participant with
+its existing executor transaction flags and ID. Scan/DML, DDL, tuple-flow, and
+executor-root snapshot paths receive that participant explicitly. The mutable
+`LocalLiteTxnState` singleton is gone; only `LocalLiteStorageManager` and store
+handles remain process-owned. Reset, disconnect, delete, and destruction clean
+up one session without affecting its peers. The effective authorization
+identity and LocalLite object ownership are read from that same current
+`ContextCli`; the compiler session remains a propagation target, not a second
+authority.
 
-M11A exits only when mutable transaction state is no longer process-global and
-session teardown deterministically releases its own snapshots and pending
-writes. Listener/protocol work belongs to M11B after this ownership boundary is
-stable; multi-table crash atomicity and recovery remain M12 work.
+`make local-lite-m11` now combines the independent-context/SQLCI checks with a
+long-running server gate and a real Trafodion T4 JDBC gate. The evidence includes two
+overlapping client transactions, deterministic conflicts, disconnect rollback,
+active cancel plus peer survival, prepared-statement reuse, typed fetch,
+bounded catalog metadata, store-process
+exclusivity, protected Unix-socket lifecycle, unnamed diagnostic capture, and
+committed reads after clean and unclean restart.
+
+The immediate productization step is M12A: define backend-neutral
+`StorageEngine`, `StorageSession`, `StorageTxn`, and streaming `StorageCursor`
+contracts, then put catalog, base rows, primary/UNIQUE records, and secondary
+indexes in one crash-atomic transaction domain. Backend selection must follow
+the shared correctness/fault gate. M12 must also version and migrate the
+pre-M11 persisted metadata-key encoding before changing its fixed buffer
+layout, with explicit collision and integrity checks. Until then, M11 remains a
+local trusted service boundary, not a claim of multi-table crash atomicity or
+production recovery.

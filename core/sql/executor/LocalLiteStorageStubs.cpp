@@ -7,6 +7,7 @@
 #ifdef TRAF_LOCAL_LITE
 
 #include "Platform.h"
+#include "Context.h"
 #include "ExHbaseAccess.h"
 #include "ExHdfsScan.h"
 #include "ExScheduler.h"
@@ -30,6 +31,12 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+static LocalLiteTxnContext *localLiteTxnContext(ExExeStmtGlobals *globals)
+{
+  return globals && globals->getContext()
+      ? globals->getContext()->getLocalLiteTxnContext() : NULL;
+}
 
 static std::mutex localLiteScanRowMutex;
 static std::map<std::string, std::deque<LocalLiteRow> >
@@ -451,7 +458,8 @@ private:
 
     ExExeStmtGlobals *statementGlobals =
       getGlobals()->castToExExeStmtGlobals();
-    LocalLiteTxn txn(&store_, statementGlobals,
+    LocalLiteTxn txn(&store_, localLiteTxnContext(statementGlobals),
+                     statementGlobals,
                      statementGlobals->getExecutionCount());
     bool handledGetRows = false;
     bool handledIndexLookup = false;
@@ -564,7 +572,8 @@ private:
         // Pending transaction mutations have not reached the physical index.
         // A visible-row scan plus the retained executor predicate preserves
         // read-your-writes semantics until transactional index overlays exist.
-        if (LocalLiteTxnManager::active())
+        if (LocalLiteTxnManager::active(localLiteTxnContext(
+                getGlobals()->castToExExeStmtGlobals())))
           return txn->scanRows(table_, &rows_, error);
         if (!indexRanges.empty())
           return store_.scanIndexRange(table_, indexRanges[0].first,
@@ -1256,7 +1265,9 @@ private:
                                      &encodedRow, error))
       return false;
 
-    LocalLiteTxn txn(&store_);
+    ExExeStmtGlobals *statementGlobals =
+      getGlobals()->castToExExeStmtGlobals();
+    LocalLiteTxn txn(&store_, localLiteTxnContext(statementGlobals));
     uint64_t rowId = 0;
     if (insertTdb().getAccessType() == ComTdbHbaseAccess::UPSERT_)
       {
@@ -1603,7 +1614,8 @@ private:
 
     ExExeStmtGlobals *statementGlobals =
       getGlobals()->castToExExeStmtGlobals();
-    LocalLiteTxn txn(&store_, statementGlobals,
+    LocalLiteTxn txn(&store_, localLiteTxnContext(statementGlobals),
+                     statementGlobals,
                      statementGlobals->getExecutionCount());
     std::vector<LocalLiteRow> sourceRows;
     LocalLiteRow sourceRow;
@@ -2048,7 +2060,8 @@ private:
 
     ExExeStmtGlobals *statementGlobals =
       getGlobals()->castToExExeStmtGlobals();
-    LocalLiteTxn txn(&store_, statementGlobals,
+    LocalLiteTxn txn(&store_, localLiteTxnContext(statementGlobals),
+                     statementGlobals,
                      statementGlobals->getExecutionCount());
 
     ex_cri_desc *downCri = updateTdb().criDescDown_;

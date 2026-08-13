@@ -105,6 +105,16 @@ void Logfile::Open(char * name_, open_mode mode)
   }
 }
 
+NABoolean Logfile::OpenTemporary()
+{
+  Close();
+  // tmpfile() is removed from the filesystem as soon as it is opened, so a
+  // SQLCI embedding can capture diagnostics without leaving files after a
+  // process crash. The stream remains readable until Close()/destruction.
+  logfile_stream = tmpfile();
+  return logfile_stream != 0;
+}
+
 void Logfile::Reopen()
 {
   if (name)
@@ -340,4 +350,3 @@ short Log::process(SqlciEnv * sqlci_env)
       
   return 0;
 }
-

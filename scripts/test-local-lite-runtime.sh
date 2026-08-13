@@ -17,6 +17,12 @@ local_store_concurrency="$repo_root/scripts/test-local-lite-store-concurrency.sh
 local_store_process_boundary="$repo_root/scripts/test-local-lite-store-process-boundary.sh"
 local_statement_snapshot="$repo_root/scripts/test-local-lite-statement-snapshot.sh"
 local_transaction_snapshot="$repo_root/scripts/test-local-lite-transaction-snapshot.sh"
+local_session_transactions="$repo_root/scripts/test-local-lite-session-transactions.sh"
+local_context_transactions="$repo_root/scripts/test-local-lite-context-transactions.sh"
+local_server_test="$repo_root/scripts/test-local-lite-server.sh"
+local_t4jdbc_test="$repo_root/scripts/test-local-lite-t4jdbc.sh"
+local_t4jdbc_source="$repo_root/scripts/NativeLiteT4JdbcTest.java"
+local_row_codec_test_stubs="$repo_root/scripts/local-lite-row-codec-test-stubs.cpp"
 local_regress_dir="$repo_root/core/sql/regress/localLite"
 local_regress="$local_regress_dir/runregr"
 local_legacy_regress_dir="$repo_root/core/sql/regress/localLiteLegacy"
@@ -39,10 +45,17 @@ localstore_codec_source="$localstore_dir/LocalLiteRowCodec.cpp"
 cmp_stmt="$repo_root/core/sql/arkcmp/CmpStatement.cpp"
 cmp_ddl_common="$repo_root/core/sql/sqlcomp/CmpSeabaseDDLcommon.cpp"
 cmp_ddl_table="$repo_root/core/sql/sqlcomp/CmpSeabaseDDLtable.cpp"
+cmp_ddl_view="$repo_root/core/sql/sqlcomp/CmpSeabaseDDLview.cpp"
 gen_precode="$repo_root/core/sql/generator/GenPreCode.cpp"
 gen_relmisc="$repo_root/core/sql/generator/GenRelMisc.cpp"
 ex_ddl="$repo_root/core/sql/executor/ex_ddl.cpp"
+ex_ctas="$repo_root/core/sql/executor/ExExeUtilLoad.cpp"
 ex_transaction="$repo_root/core/sql/executor/ex_transaction.cpp"
+context_header="$repo_root/core/sql/cli/Context.h"
+context_source="$repo_root/core/sql/cli/Context.cpp"
+transaction_header="$repo_root/core/sql/executor/ex_transaction.h"
+server_source="$repo_root/core/sql/bin/NativeLiteServerMain.cpp"
+server_makefile="$repo_root/core/sql/nskgmake/nativelite_server/Makefile"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -133,6 +146,25 @@ grep -q 'LocalLiteTxnManager::commitForExecutor' "$ex_transaction" ||
   fail "transaction TCB must commit local-lite transactions through executor-bound facade"
 grep -q 'LocalLiteTxnManager::rollbackForExecutor' "$ex_transaction" ||
   fail "transaction TCB must rollback local-lite transactions through executor-bound facade"
+grep -q 'LocalLiteTxnContext \*localLiteTxnContext_' "$transaction_header" ||
+  fail "each CLI transaction coordinator must own a local-lite transaction context"
+grep -q 'getLocalLiteTxnContext' "$context_header" ||
+  fail "CLI context must expose its local-lite transaction context"
+grep -q 'LocalLiteTxnManager::createContext' "$ex_transaction" ||
+  fail "ExTransaction construction must create local-lite transaction state"
+grep -q 'resetLocalLiteTransaction' "$context_source" ||
+  fail "CLI session reset/teardown must discard local-lite transaction state"
+grep -q 'LocalLiteTxnManager::destroyContext' "$ex_transaction" ||
+  fail "ExTransaction destruction must destroy local-lite transaction state"
+if grep -q 'LocalLiteTxnState' "$localstore_header" "$localstore_source"; then
+  fail "local-lite mutable transaction state must not remain process-global"
+fi
+grep -q 'getLocalLiteTxnContext' "$storage_stubs" ||
+  fail "local-lite scan/DML TCBs must resolve transaction state from the CLI context"
+grep -q 'getLocalLiteTxnContext' "$executor_root" ||
+  fail "executor root statement snapshots must resolve the CLI transaction context"
+grep -q 'beginLocalLiteTransaction' "$ex_transaction" ||
+  fail "transaction TCB must use the ExTransaction-owned local-lite state"
 if grep -q 'LocalLiteDecodeFields' "$storage_stubs"; then
   fail "local-lite executor scan must not decode SQLCI text field rows"
 fi
@@ -166,6 +198,32 @@ grep -q 'unique conflicts advanced keyless row ids' "$local_store_concurrency" |
   fail "missing executable local-lite statement snapshot test: $local_statement_snapshot"
 [[ -x "$local_transaction_snapshot" ]] ||
   fail "missing executable local-lite transaction snapshot test: $local_transaction_snapshot"
+[[ -x "$local_session_transactions" ]] ||
+  fail "missing executable local-lite session transaction test: $local_session_transactions"
+[[ -x "$local_context_transactions" ]] ||
+  fail "missing executable local-lite ContextCli transaction test: $local_context_transactions"
+[[ -x "$local_server_test" ]] ||
+  fail "missing executable NativeLite standalone server test: $local_server_test"
+[[ -x "$local_t4jdbc_test" ]] ||
+  fail "missing executable NativeLite T4 JDBC test: $local_t4jdbc_test"
+[[ -f "$local_t4jdbc_source" ]] ||
+  fail "missing NativeLite T4 JDBC source: $local_t4jdbc_source"
+[[ -f "$local_row_codec_test_stubs" ]] ||
+  fail "missing local-lite row-codec standalone test stubs: $local_row_codec_test_stubs"
+grep -q 'cross-session transaction ID was accepted' "$local_session_transactions" ||
+  fail "session transaction test must reject cross-session transaction control"
+grep -q 'same-key commit conflict was not deterministic' "$local_session_transactions" ||
+  fail "session transaction test must cover deterministic same-key conflicts"
+grep -q 'session reset cleanup failed' "$local_session_transactions" ||
+  fail "session transaction test must cover reset cleanup"
+grep -q 'session destroy cleanup failed' "$local_session_transactions" ||
+  fail "session transaction test must cover destroy cleanup"
+grep -q 'CREATECONTEXT' "$local_context_transactions" ||
+  fail "ContextCli transaction test must create independent CLI contexts"
+grep -q 'RESETCONTEXT 2001' "$local_context_transactions" ||
+  fail "ContextCli transaction test must cover session reset cleanup"
+grep -q 'DELETECONTEXT 2001' "$local_context_transactions" ||
+  fail "ContextCli transaction test must cover session deletion cleanup"
 [[ -x "$local_regress" ]] ||
   fail "missing executable local-lite regress runner: $local_regress"
 [[ -x "$local_regress_dir/FILTER" ]] ||
@@ -228,6 +286,14 @@ grep -q 'MXID' "$local_regress_dir/FILTER" ||
   fail "local-lite regress output must normalize dynamic diagnostic ids"
 grep -q 'local-lite-regress' "$repo_root/Makefile" ||
   fail "top-level Makefile must expose the local-lite regress lane"
+grep -q '^local-lite-m11a:' "$repo_root/Makefile" ||
+  fail "top-level Makefile must expose the M11A session context gate"
+grep -q '^local-lite-m11b:' "$repo_root/Makefile" ||
+  fail "top-level Makefile must expose the M11B server gate"
+grep -q '^local-lite-m11c:' "$repo_root/Makefile" ||
+  fail "top-level Makefile must expose the M11C client gate"
+grep -q '^local-lite-m11:' "$repo_root/Makefile" ||
+  fail "top-level Makefile must expose the complete M11 gate"
 grep -q 'local-lite-regress-inventory' "$repo_root/Makefile" ||
   fail "top-level Makefile must expose the complete regress inventory audit"
 [[ -f "$localstore_header" ]] || fail "missing local store header: $localstore_header"
@@ -261,6 +327,16 @@ grep -q 'localLiteCreateTable' "$cmp_ddl_table" ||
   fail "CREATE TABLE must route to the local RocksDB catalog from sqlcomp"
 grep -q 'localLiteDropTable' "$cmp_ddl_table" ||
   fail "DROP TABLE must route to the local RocksDB catalog from sqlcomp"
+[[ $(grep -c 'ComUser::getCurrentUsername()' "$cmp_ddl_table") -eq 2 ]] ||
+  fail "local-lite table ownership must come from the authoritative ContextCli identity"
+grep -q 'ComUser::getCurrentUsername()' "$cmp_ddl_common" ||
+  fail "local-lite transition-table ownership must come from ContextCli"
+grep -q 'ComUser::getCurrentUsername()' "$cmp_ddl_view" ||
+  fail "local-lite view ownership must come from ContextCli"
+if rg -q 'getDatabaseUserName\(\).*data\(\)' \
+    "$cmp_ddl_table" "$cmp_ddl_common" "$cmp_ddl_view"; then
+  fail "local-lite DDL ownership must not depend on the compiler session mirror"
+fi
 grep -q 'xnNeeded() = FALSE' "$gen_precode" ||
   fail "generator pre-code must mark local-lite CREATE/DROP as no transaction"
 grep -q 'localLiteRewritePrimaryGetRows' "$gen_precode" ||
@@ -279,8 +355,55 @@ grep -q 'autocommit multi-row VALUES partially published' "$local_sqlci_smoke" |
   fail "SQLCI smoke must cover atomic autocommit multi-row VALUES failure"
 grep -q 'ddl_tdb->setHbaseDDL(TRUE)' "$gen_relmisc" ||
   fail "generator must route local-lite CREATE/DROP through PROCESSDDL"
+grep -q 'ddl_tdb->setHbaseDDLNoUserXn(FALSE)' "$gen_relmisc" ||
+  fail "local-lite CREATE/DROP must retain its bounded user-transaction semantics"
 grep -q 'switchToCmpContext' "$ex_ddl" ||
   fail "executor DDL path must initialize embedded arkcmp for local-lite"
+grep -q 'compatibility contract explicitly permits CTAS' "$ex_ctas" ||
+  fail "local-lite CTAS must remain available inside its bounded user transaction"
+
+[[ -f "$server_source" ]] || fail "missing NativeLite server source"
+[[ -f "$server_makefile" ]] || fail "missing NativeLite server makefile"
+grep -q 'nativelite_server' "$makerules" ||
+  fail "local-lite build must include the NativeLite server"
+grep -q 'SQL_EXEC_CreateContext' "$server_source" ||
+  fail "NativeLite server must create one CLI context per connection"
+grep -q 'LocalLiteRocksDBStore storeLease_' "$server_source" ||
+  fail "NativeLite server must hold the local store for its process lifetime"
+grep -q 'refusing to replace a non-socket Unix path' "$server_source" ||
+  fail "NativeLite server must preserve unrelated Unix socket path entries"
+grep -q 'unixSocketInode_' "$server_source" ||
+  fail "NativeLite server must unlink only the exact Unix socket it created"
+grep -q 'clientThreadDone_' "$server_source" ||
+  fail "NativeLite server must reap completed connection threads"
+grep -q 'kT4GetObjectRef' "$server_source" ||
+  fail "NativeLite server must implement the T4 association handshake"
+grep -q 'kT4SqlConnect' "$server_source" ||
+  fail "NativeLite server must implement the T4 SQL dialogue handshake"
+grep -q 'SQL_EXEC_Cancel' "$server_source" ||
+  fail "NativeLite server must expose CLI statement cancellation"
+grep -q 'LocalLiteSqlTable_isUtilityStatement' "$server_source" ||
+  fail "NativeLite extended-query Describe must not execute SQLCI utilities"
+grep -q 'OpenTemporary' "$server_source" ||
+  fail "NativeLite diagnostics must not leave named files after a crash"
+grep -q 'kT4Fetch' "$server_source" ||
+  fail "NativeLite T4 server must support result fetching"
+grep -q 'kT4Cancel' "$server_source" ||
+  fail "NativeLite T4 server must expose the T4 cancel operation"
+grep -q 'testCancellationWithPeer' "$local_t4jdbc_source" ||
+  fail "T4 JDBC gate must cancel a statement without damaging a peer"
+grep -q 'testOverlappingTransactions' "$local_t4jdbc_source" ||
+  fail "T4 JDBC gate must exercise overlapping transaction sessions"
+grep -q 'testDisconnectRollback' "$local_t4jdbc_source" ||
+  fail "T4 JDBC gate must verify disconnect rollback"
+grep -q 'testResultTypes' "$local_t4jdbc_source" ||
+  fail "T4 JDBC gate must verify JDBC result metadata and typed values"
+grep -q 'testMetadata' "$local_t4jdbc_source" ||
+  fail "T4 JDBC gate must verify supported DatabaseMetaData calls"
+grep -q 'replacement-must-survive' "$local_server_test" ||
+  fail "server gate must preserve a Unix socket pathname replacement"
+grep -q 'verifyRestart' "$local_t4jdbc_source" ||
+  fail "T4 JDBC gate must verify committed data after restart"
 
 sq_classpath=$(
   cd "$repo_root/core/sqf"

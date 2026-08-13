@@ -822,6 +822,10 @@ public:
                             const char *delimiters, ULng32 delimsLen);
 
   ExTransaction * getTransaction()	{ return transaction_; }
+#ifdef TRAF_LOCAL_LITE
+  LocalLiteTxnContext *getLocalLiteTxnContext() const
+    { return transaction_->getLocalLiteTxnContext(); }
+#endif
 
   NABoolean &ddlStmtsExecuted() { return ddlStmtsExecuted_; }
 

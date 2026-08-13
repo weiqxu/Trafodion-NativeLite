@@ -3858,16 +3858,71 @@ static bool validateLocalLiteParentRI(
     const std::vector<std::string> &oldRows,
     const std::vector<std::string> &newRows, std::string *error);
 
-class LocalLiteTxnState
+class LocalLiteTxnContext
 {
 public:
-  LocalLiteTxnState()
+  LocalLiteTxnContext()
     : active_(false),
       nextLocalTxnId_(1),
       localTxnId_(0),
       executorTxnId_(LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID)
   {
     pthread_mutex_init(&mutex_, NULL);
+  }
+
+  ~LocalLiteTxnContext()
+  {
+    reset();
+    pthread_mutex_destroy(&mutex_);
+  }
+
+  void reset()
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+
+    if (active_)
+      LocalLiteStorageManager::instance().endStatement(this, localTxnId_);
+    for (std::map<const void *, uint64_t>::const_iterator it =
+           statementExecutions_.begin();
+         it != statementExecutions_.end(); ++it)
+      LocalLiteStorageManager::instance().endStatement(it->first, it->second);
+
+    statementExecutions_.clear();
+    pendingTables_.clear();
+    localTxnId_ = 0;
+    executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
+    active_ = false;
+    transactionStore_.close();
+  }
+
+  void beginStatement(const void *statementOwner,
+                      uint64_t statementExecutionId)
+  {
+    if (!statementOwner)
+      return;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    statementExecutions_[statementOwner] = statementExecutionId;
+    LocalLiteStorageManager::instance().beginStatement(statementOwner,
+                                                       statementExecutionId);
+  }
+
+  void endStatement(const void *statementOwner,
+                    uint64_t statementExecutionId)
+  {
+    if (!statementOwner)
+      return;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    std::map<const void *, uint64_t>::iterator it =
+        statementExecutions_.find(statementOwner);
+    if (it == statementExecutions_.end() ||
+        it->second != statementExecutionId)
+      return;
+
+    LocalLiteStorageManager::instance().endStatement(statementOwner,
+                                                     statementExecutionId);
+    statementExecutions_.erase(it);
   }
 
   bool begin(int64_t executorTxnId, std::string *error)
@@ -4372,12 +4427,6 @@ public:
                               readExecutionId, row, found, error);
   }
 
-  static LocalLiteTxnState &instance()
-  {
-    static LocalLiteTxnState state;
-    return state;
-  }
-
 private:
   struct PendingTable
   {
@@ -4531,14 +4580,15 @@ private:
            executorTxnId == executorTxnId_;
   }
 
-  LocalLiteTxnState(const LocalLiteTxnState &);
-  LocalLiteTxnState &operator=(const LocalLiteTxnState &);
+  LocalLiteTxnContext(const LocalLiteTxnContext &);
+  LocalLiteTxnContext &operator=(const LocalLiteTxnContext &);
 
   bool active_;
   uint64_t nextLocalTxnId_;
   uint64_t localTxnId_;
   int64_t executorTxnId_;
   PendingMap pendingTables_;
+  std::map<const void *, uint64_t> statementExecutions_;
   LocalLiteRocksDBStore transactionStore_;
   pthread_mutex_t mutex_;
 };
@@ -4607,7 +4657,8 @@ void LocalLiteRocksDBStore::close()
 }
 
 bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
-                                        std::string *error)
+                                         std::string *error,
+                                         const std::string &owner)
 {
   if (!open(error))
     return false;
@@ -4673,9 +4724,8 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   rocksdb_writebatch_destroy(batch);
   if (!checkRocksError(err, "write local-lite table metadata", error))
     return false;
-  const char *currentUser = getenv("TRAF_LOCAL_LITE_USER");
-  if (currentUser && currentUser[0] &&
-      !setTableOwner(copy.catalog, copy.schema, copy.name, currentUser, error))
+  if (!owner.empty() &&
+      !setTableOwner(copy.catalog, copy.schema, copy.name, owner, error))
     return false;
   return true;
 }
@@ -6565,10 +6615,12 @@ bool LocalLiteRocksDBStore::alterTable(
     const LocalLiteTableDef &newTable,
     const std::vector<int> &newToOldColumn,
     const std::vector<std::string> &addedValues,
+    LocalLiteTxnContext *txnContext,
     std::string *error)
 {
   if (!LocalLiteTxnManager::prepareDDLForExecutor(
-          LocalLiteTxnManager::currentExecutorTxnId(), error))
+          txnContext,
+          LocalLiteTxnManager::currentExecutorTxnId(txnContext), error))
     return false;
   if (!open(error))
     return false;
@@ -7239,9 +7291,11 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
 }
 
 LocalLiteTxn::LocalLiteTxn(LocalLiteRocksDBStore *store,
+                           LocalLiteTxnContext *txnContext,
                            const void *statementOwner,
                            uint64_t statementExecutionId)
   : store_(store),
+    txnContext_(txnContext),
     statementOwner_(statementOwner),
     statementExecutionId_(statementExecutionId)
 {
@@ -7257,9 +7311,13 @@ bool LocalLiteTxn::insertRow(const LocalLiteTableDef &table,
       setError(error, "local-lite transaction missing store");
       return false;
     }
+  if (!txnContext_)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
 
-  return LocalLiteTxnState::instance().insertRow(store_, table, encodedRow,
-                                                rowId, error);
+  return txnContext_->insertRow(store_, table, encodedRow, rowId, error);
 }
 
 bool LocalLiteTxn::upsertRow(const LocalLiteTableDef &table,
@@ -7270,6 +7328,11 @@ bool LocalLiteTxn::upsertRow(const LocalLiteTableDef &table,
   if (!store_)
     {
       setError(error, "local-lite transaction missing store");
+      return false;
+    }
+  if (!txnContext_)
+    {
+      setError(error, "local-lite transaction missing session context");
       return false;
     }
   if (table.primaryKeyColumns.empty())
@@ -7310,8 +7373,12 @@ bool LocalLiteTxn::updateRows(
       setError(error, "local-lite transaction missing store");
       return false;
     }
-  return LocalLiteTxnState::instance().updateRows(store_, table, mutations,
-                                                  error);
+  if (!txnContext_)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
+  return txnContext_->updateRows(store_, table, mutations, error);
 }
 
 bool LocalLiteTxn::deleteRows(const LocalLiteTableDef &table,
@@ -7323,7 +7390,12 @@ bool LocalLiteTxn::deleteRows(const LocalLiteTableDef &table,
       setError(error, "local-lite transaction missing store");
       return false;
     }
-  return LocalLiteTxnState::instance().deleteRows(store_, table, rows, error);
+  if (!txnContext_)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
+  return txnContext_->deleteRows(store_, table, rows, error);
 }
 
 bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
@@ -7335,9 +7407,14 @@ bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
       setError(error, "local-lite transaction missing store");
       return false;
     }
+  if (!txnContext_)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
 
-  return LocalLiteTxnState::instance().scanRows(
-      store_, table, statementOwner_, statementExecutionId_, rows, error);
+  return txnContext_->scanRows(store_, table, statementOwner_,
+                               statementExecutionId_, rows, error);
 }
 
 bool LocalLiteTxn::getRowByKey(const LocalLiteTableDef &table,
@@ -7351,78 +7428,131 @@ bool LocalLiteTxn::getRowByKey(const LocalLiteTableDef &table,
       setError(error, "local-lite transaction missing store");
       return false;
     }
+  if (!txnContext_)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
 
-  return LocalLiteTxnState::instance().getRowByKey(
-      store_, table, storageKey, statementOwner_, statementExecutionId_,
-      row, found, error);
+  return txnContext_->getRowByKey(store_, table, storageKey, statementOwner_,
+                                  statementExecutionId_, row, found, error);
 }
 
-bool LocalLiteTxnManager::begin(std::string *error)
+LocalLiteTxnContext *LocalLiteTxnManager::createContext()
 {
-  return beginForExecutor(INVALID_EXECUTOR_TXN_ID, error);
+  return new LocalLiteTxnContext();
 }
 
-bool LocalLiteTxnManager::beginForExecutor(int64_t executorTxnId,
+void LocalLiteTxnManager::resetContext(LocalLiteTxnContext *txnContext)
+{
+  if (txnContext)
+    txnContext->reset();
+}
+
+void LocalLiteTxnManager::destroyContext(LocalLiteTxnContext *txnContext)
+{
+  delete txnContext;
+}
+
+bool LocalLiteTxnManager::begin(LocalLiteTxnContext *txnContext,
+                                std::string *error)
+{
+  return beginForExecutor(txnContext, INVALID_EXECUTOR_TXN_ID, error);
+}
+
+bool LocalLiteTxnManager::beginForExecutor(LocalLiteTxnContext *txnContext,
+                                           int64_t executorTxnId,
                                            std::string *error)
 {
-  return LocalLiteTxnState::instance().begin(executorTxnId, error);
+  if (!txnContext)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
+  return txnContext->begin(executorTxnId, error);
 }
 
-bool LocalLiteTxnManager::commit(std::string *error)
+bool LocalLiteTxnManager::commit(LocalLiteTxnContext *txnContext,
+                                 std::string *error)
 {
-  return commitForExecutor(INVALID_EXECUTOR_TXN_ID, error);
+  return commitForExecutor(txnContext, INVALID_EXECUTOR_TXN_ID, error);
 }
 
-bool LocalLiteTxnManager::commitForExecutor(int64_t executorTxnId,
+bool LocalLiteTxnManager::commitForExecutor(LocalLiteTxnContext *txnContext,
+                                            int64_t executorTxnId,
                                             std::string *error)
 {
-  return LocalLiteTxnState::instance().commit(executorTxnId, error);
+  if (!txnContext)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
+  return txnContext->commit(executorTxnId, error);
 }
 
-bool LocalLiteTxnManager::rollback(std::string *error)
+bool LocalLiteTxnManager::rollback(LocalLiteTxnContext *txnContext,
+                                   std::string *error)
 {
-  return rollbackForExecutor(INVALID_EXECUTOR_TXN_ID, error);
+  return rollbackForExecutor(txnContext, INVALID_EXECUTOR_TXN_ID, error);
 }
 
-bool LocalLiteTxnManager::rollbackForExecutor(int64_t executorTxnId,
+bool LocalLiteTxnManager::rollbackForExecutor(LocalLiteTxnContext *txnContext,
+                                              int64_t executorTxnId,
                                               std::string *error)
 {
-  return LocalLiteTxnState::instance().rollback(executorTxnId, error);
+  if (!txnContext)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
+  return txnContext->rollback(executorTxnId, error);
 }
 
-bool LocalLiteTxnManager::prepareDDLForExecutor(int64_t executorTxnId,
-                                                std::string *error)
+bool LocalLiteTxnManager::prepareDDLForExecutor(
+    LocalLiteTxnContext *txnContext,
+    int64_t executorTxnId,
+    std::string *error)
 {
-  return LocalLiteTxnState::instance().prepareDDL(executorTxnId, error);
+  if (!txnContext)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
+  return txnContext->prepareDDL(executorTxnId, error);
 }
 
-bool LocalLiteTxnManager::active()
+bool LocalLiteTxnManager::active(LocalLiteTxnContext *txnContext)
 {
-  return LocalLiteTxnState::instance().active();
+  return txnContext && txnContext->active();
 }
 
-uint64_t LocalLiteTxnManager::currentLocalTxnId()
+uint64_t LocalLiteTxnManager::currentLocalTxnId(
+    LocalLiteTxnContext *txnContext)
 {
-  return LocalLiteTxnState::instance().currentLocalTxnId();
+  return txnContext ? txnContext->currentLocalTxnId() : 0;
 }
 
-int64_t LocalLiteTxnManager::currentExecutorTxnId()
+int64_t LocalLiteTxnManager::currentExecutorTxnId(
+    LocalLiteTxnContext *txnContext)
 {
-  return LocalLiteTxnState::instance().currentExecutorTxnId();
+  return txnContext ? txnContext->currentExecutorTxnId()
+                    : INVALID_EXECUTOR_TXN_ID;
 }
 
-void LocalLiteTxnManager::beginStatement(const void *statementOwner,
+void LocalLiteTxnManager::beginStatement(LocalLiteTxnContext *txnContext,
+                                         const void *statementOwner,
                                          uint64_t statementExecutionId)
 {
-  LocalLiteStorageManager::instance().beginStatement(statementOwner,
-                                                     statementExecutionId);
+  if (txnContext)
+    txnContext->beginStatement(statementOwner, statementExecutionId);
 }
 
-void LocalLiteTxnManager::endStatement(const void *statementOwner,
+void LocalLiteTxnManager::endStatement(LocalLiteTxnContext *txnContext,
+                                       const void *statementOwner,
                                        uint64_t statementExecutionId)
 {
-  LocalLiteStorageManager::instance().endStatement(statementOwner,
-                                                   statementExecutionId);
+  if (txnContext)
+    txnContext->endStatement(statementOwner, statementExecutionId);
 }
 
 #endif

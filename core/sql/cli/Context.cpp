@@ -298,6 +298,13 @@ void ContextCli::deleteMe()
 {
   ComDiagsArea *diags = NULL;
 
+#ifdef TRAF_LOCAL_LITE
+  // Context deletion is the final session boundary. Discard pending writes
+  // and release every statement/transaction snapshot before statement and
+  // executor objects start tearing down.
+  transaction_->resetLocalLiteTransaction();
+#endif
+
   if (volatileSchemaCreated_)
     {
       // drop volatile schema, if one exists
@@ -2023,6 +2030,9 @@ UInt32 ContextCli::getTimeoutChangeCounter()
 
 void ContextCli::reset(void *contextMsg)
 {
+#ifdef TRAF_LOCAL_LITE
+  transaction_->resetLocalLiteTransaction();
+#endif
   closeAllStatementsAndCursors();
 /*  retrieveContextInfo(contextMsg); */
 }
@@ -2819,6 +2829,10 @@ void ContextCli::endSession(NABoolean cleanupEsps,
                             NABoolean cleanupOpens)
 {
   short rc = 0;
+#ifdef TRAF_LOCAL_LITE
+  if (NOT cleanupEspsOnly)
+    transaction_->resetLocalLiteTransaction();
+#endif
   if (NOT cleanupEspsOnly)
     {
       rc = ExExeUtilCleanupVolatileTablesTcb::dropVolatileTables
@@ -2906,6 +2920,9 @@ void ContextCli::dropSession(NABoolean clearCmpCache)
 {
   short rc = 0;
   ComDiagsArea *diags = NULL;
+#ifdef TRAF_LOCAL_LITE
+  transaction_->resetLocalLiteTransaction();
+#endif
   if (volatileSchemaCreated_)
     {
       rc = ExExeUtilCleanupVolatileTablesTcb::dropVolatileSchema

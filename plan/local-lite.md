@@ -6,17 +6,21 @@
 engine development. It removes Java, Maven, Hadoop, HDFS, HBase, Hive, DCS,
 REST, TrafCI, and Java client modules from the selected build path.
 
-The current runtime target is `sqlci` in local-lite mode. It starts as one local
-process and exercises the normal compiler/executor over an embedded RocksDB
-catalog and table store. The bounded local surface now includes transactions,
+The runtime targets are standalone `sqlci` and the long-running M11
+`nativelite-server`. Both exercise the normal compiler/executor over an embedded
+RocksDB catalog and table store. The bounded local surface includes transactions,
 DDL/DML, primary/secondary indexes, constraints, metadata/statistics,
-authorization, and a constrained UDR adapter.
+authorization, a constrained UDR adapter, independent per-session transaction
+contexts, and a reduced Trafodion Type 4 client endpoint.
 
-Local-lite is not a complete standalone database yet. Transaction state and
-store ownership are still process-global, there is no long-running multi-session
-server or JDBC/ODBC protocol endpoint, and commit/recovery guarantees remain
-bounded to the documented RocksDB-only single-process surface. Distributed
-execution and the HBase/HDFS/Hive service stack remain outside the runtime.
+Local-lite is not a complete standalone database yet. M11 establishes the
+multi-session process and protocol boundary, but compiler/executor requests are
+serialized and commit/recovery guarantees remain bounded to the documented
+RocksDB-only surface. M12 must still define a backend-neutral transaction
+domain, crash-atomic catalog/base/index publication, recovery, backup, restore,
+and migration. Distributed execution, password/TLS authentication, full
+Trafodion wire compatibility, and the HBase/HDFS/Hive service stack
+remain outside the runtime.
 The transaction and concurrency integration plan is tracked separately in
 [`local-lite-transaction-roadmap.md`](local-lite-transaction-roadmap.md).
 
@@ -100,18 +104,44 @@ Implemented:
 - HBase access TDBs reached through the old executor path now build a TCB that
   emits an unsupported diagnostic instead of returning `NULL`.
 - Local-lite `make local-lite` no longer builds `make_monitor` or top-level SQF
-  `tools`, because the supported runtime is single-process `sqlci`, not the SQF
-  service stack.
+  `tools`, because the supported runtimes are embedded `sqlci` and
+  `nativelite-server`, not the SQF service stack.
+- Every `ContextCli` owns an `ExTransaction`, which canonically owns that
+  session's `LocalLiteTxnContext`; the old process-global mutable transaction
+  singleton is removed. Reset, disconnect, delete, and destruction release that
+  context without touching peer sessions.
+- LocalLite object ownership uses the effective identity in the current
+  `ContextCli`, including after `SET SESSION AUTHORIZATION`; it does not use an
+  environment variable or treat the compiler-session copy as authoritative.
+- `nativelite-server` exclusively opens the configured store for its process
+  lifetime, creates one CLI context per connection, and accepts numeric loopback
+  TCP or an owner-only Unix socket. It reaps completed connection threads,
+  refuses to replace non-socket, foreign, or active Unix paths, and removes
+  only its own bound socket inode. Network connections are concurrent while
+  embedded compiler/executor requests pass through one serialized engine queue.
+- The server implements a bounded Trafodion Type 4 association and SQL dialogue
+  on one listener, without DCS or ZooKeeper. The repository T4 JDBC driver
+  validates connect/disconnect, direct and prepared execution, fetch, typed
+  rows, autocommit/commit/rollback, internal STOPSRVR cancellation, and catalog,
+  schema, table, column, and primary-key metadata.
+  Session diagnostics use unnamed temporary streams and disappear even after
+  an unclean process stop.
 
 Known limits:
 
-- `sqlci` is the only runtime target intended to work standalone today.
+- `sqlci` and `nativelite-server` are the only runtime targets intended to work
+  standalone today.
 - Other built binaries such as `tdm_arkcmp`, `shell`, `monitor`, `trafns`,
   `sqwatchdog`, `pstartd`, and `tm` may be present in the local-lite build, but
   they are not a supported standalone database environment.
 - Local-lite `sqlci` still links internal Trafodion shared libraries and a small
   Seabed baseline. Monitor-specific paths are skipped or guarded, but Seabed
   libraries remain transitive dependencies.
+- The server protocol is a reduced T4 compatibility surface, not a replacement
+  for DCS. Results are buffered; LOB, callable statements, batch/rowset input,
+  broad metadata APIs, password, TLS, and remote deployment are not claimed.
+  The current T4 driver's public `Statement.cancel()` does not dispatch during
+  an active request; the protocol gate invokes its internal cancel path.
 - The RocksDB DDL path uses the compiler DDL entry point where applicable and
   loads local tables as NATables from the local catalog. DML uses local executor
   TCBs and preserves compiler-generated physical row bytes. The supported type,
@@ -196,6 +226,7 @@ trafconf
 shell
 sqlci
 tdm_arkcmp
+nativelite-server
 ```
 
 Exported shared libraries are under:
@@ -270,6 +301,39 @@ To verify persistence, use the same `TRAF_LOCAL_STORE_DIR` across two separate
 
 No `sqenv.sh`, `sqgen`, `sqstart`, monitor, DCS, REST, ZooKeeper, HBase, Hadoop,
 or Java process is required for this `sqlci` path.
+
+## Running NativeLite Server
+
+Use the same environment and matching local-lite libraries as SQLCI, then run:
+
+```bash
+$SQL_LIBS/nativelite-server --listen 127.0.0.1 --port 23400
+```
+
+The server exclusively owns `TRAF_LOCAL_STORE_DIR` until shutdown. A second
+server or SQLCI process cannot open the same RocksDB store concurrently. Connect
+with the repository Trafodion T4 JDBC driver:
+
+```text
+jdbc:t4jdbc://127.0.0.1:23400/:
+```
+
+For lifecycle or embedding use, pass an exact Unix socket path, for example
+`--unix-socket /tmp/nativelite/server.sock --port 23400`. The socket is
+created with mode `0600`. The M11 transport is deliberately trusted-local:
+numeric TCP binds are restricted to loopback and authentication has no password
+exchange. The current T4 JDBC acceptance gate uses TCP.
+Existing non-socket, foreign, or active Unix paths are preserved, and shutdown
+unlinks only the socket inode created by this server. It must not be exposed as
+a remote production listener.
+
+Each accepted connection receives a distinct `ContextCli` and
+`LocalLiteTxnContext`. Connection threads may overlap, but requests enter a
+single engine queue because the embedded CLI/compiler has process-global state.
+That still permits independent, overlapping transactions: pending writes and
+snapshots stay in each session context while peer requests are interleaved.
+Graceful `SIGTERM` stops new accepts, closes clients, rolls back their pending
+state, and closes the store.
 
 ## Operational Usage
 
@@ -347,13 +411,15 @@ Supported local-lite `sqlci` behavior:
 
 Unsupported behavior:
 
-- Atomic multi-table commit, crash recovery/WAL ownership above RocksDB, and
-  production multi-session isolation.
+- Atomic multi-table/catalog commit, recovery/WAL ownership above RocksDB,
+  backup/restore, and production resource-governed multi-session operation.
 - RI CASCADE, computed system columns, unrestricted histogram/physical metadata,
   LOB/ARRAY storage, and the full UDR server/host-rowset surface.
 - HBase-backed metadata/storage operations.
 - HDFS, HBase, Hive, ORC, bulk load/unload, and LOB storage access.
-- JDBC/ODBC, DCS, REST, TrafCI, and remote client connectivity.
+- Full T4/DCS compatibility, ODBC certification, REST, TrafCI, TLS, password
+  authentication, and remote client connectivity. M11 supports only its reduced
+  local T4 surface validated with the repository JDBC driver.
 - Distributed query execution.
 - Full transaction service behavior through TM/DTM/RMS.
 
@@ -518,8 +584,8 @@ unchanged in local-lite.
 
 The next portable compatibility increment is single-byte
 `TRIM`/`LTRIM`/`RTRIM` family coverage over local tables. It is separate from
-the productization critical path, whose next milestone is M11A session-owned
-transaction state.
+the productization critical path, whose active milestone is now M12
+transactional storage and recovery after the completed M11 service boundary.
 
 The broader effort to run portable sections from the legacy regress suites is
 tracked separately in `plan/local-lite-legacy-regress-roadmap.md`. Milestone 0
@@ -725,8 +791,8 @@ above.
 
 ### Current Task Status
 
-Last updated after closing the Phase 1 through 5 local transaction/storage v1
-acceptance matrix and adding native `REPEAT()` regress coverage.
+Last updated after completing the bounded M11 sessionized runtime, standalone
+server, and Trafodion Type 4 client-protocol acceptance gates.
 
 Completed:
 
@@ -770,6 +836,11 @@ Completed:
 - Cross-process shared-store boundary enforcement for `TRAF_LOCAL_STORE_DIR`:
   a second process that tries to open an already-held local store receives an
   explicit local-lite diagnostic instead of a raw RocksDB `LOCK` message.
+- M11 sessionization: mutable transaction state lives under each CLI session's
+  `ExTransaction`, while storage handles remain process-owned and shared.
+- M11 standalone service and reduced Trafodion Type 4 endpoint, with repository
+  T4 JDBC coverage for multi-client isolation, disconnect/cancel cleanup,
+  prepared execution, typed fetch, metadata, and restart persistence.
 - Broader executor expression smoke coverage for local table INSERT/SCAN paths,
   including `CASE`, string concatenation, `BETWEEN`, `IN`, `LIKE`, and `OR`
   predicates.
@@ -943,19 +1014,43 @@ and TMF coordination remain explicit post-v1 or Phase 6 work.
 
 Remaining, in suggested productization order:
 
-1. Implement **M11 sessionized runtime and standalone server**: move local
-   transaction ownership into each `ContextCli`, prove two independent sessions
-   in one process, and then add a long-running server with two real clients.
-2. Implement **M12 transactional storage and recovery**: define a backend-neutral
+1. Implement **M12 transactional storage and recovery**: define a backend-neutral
    storage/transaction contract, select the transactional backend using common
    correctness and fault tests, and add crash-atomic multi-table/catalog commits,
-   backup, restore, migration, and integrity verification.
-3. Continue portable SQL compatibility increments, beginning with the
+   backup, restore, migration, and integrity verification, including a versioned
+   migration for the pre-M11 fixed-buffer metadata-key encoding.
+2. Continue portable SQL compatibility increments, beginning with the
    single-byte `TRIM`/`LTRIM`/`RTRIM` family, as a parallel compatibility
    backlog rather than the productization critical path.
 
 The authoritative milestone definitions and completion gates are in
 `plan/local-lite-legacy-regress-roadmap.md`.
+
+- [x] **Complete M11 sessionized runtime and standalone server.**
+  - [x] Each `ContextCli` owns an `ExTransaction`, which creates, resets, and
+    destroys its canonical `LocalLiteTxnContext`.
+  - [x] Transaction TCBs, tuple flow, scan/DML TCBs, DDL, and executor-root
+    snapshots receive the active context explicitly; the process-global
+    `LocalLiteTxnState` singleton is removed.
+  - [x] `make local-lite-m11a` covers independent context isolation,
+    commit/rollback, same-key conflicts, and reset/destroy cleanup at the
+    local-store transaction boundary.
+  - [x] A SQLCI probe constructs two complete `ContextCli` instances, keeps
+    overlapping transactions active, and validates isolation, independent
+    completion, reset/delete rollback, and peer survival.
+  - [x] LocalLite DDL ownership resolves from the authoritative current
+    `ContextCli`; `TEST041` verifies ownership, GRANT, and identity switching,
+    while `executor/TEST014` verifies CTAS remains valid inside the bounded
+    explicit-transaction contract.
+  - [x] `nativelite-server` owns the store, creates one CLI context per client,
+    supports loopback TCP and protected 0600 Unix sockets, reaps completed
+    connection threads, and shuts down cleanly without deleting a replaced
+    socket pathname.
+  - [x] The repository Trafodion T4 JDBC driver covers association and dialogue
+    startup, prepared-statement reuse, typed rows, overlapping transactions,
+    disconnect rollback, internal STOPSRVR cancellation with an active peer,
+    bounded DatabaseMetaData calls, store exclusivity, and restart persistence.
+  - [x] `make local-lite-m11` composes the M11A, M11B, and M11C gates.
 
 - [x] **Build RocksDB dependency detection and link flags.**
   - Implemented in `core/sql/nskgmake/Makerules.linux`.
@@ -1244,6 +1339,7 @@ Current local-lite static and RocksDB SQLCI smoke checks:
 bash scripts/test-local-lite-runtime.sh
 bash scripts/test-local-lite-rocksdb-sqlci.sh
 make local-lite-regress
+make local-lite-m11
 ```
 
 ## Design Rules
@@ -1251,8 +1347,10 @@ make local-lite-regress
 - Keep the full Trafodion build unchanged unless `TRAF_LOCAL_LITE=1` is set.
 - Keep all local-lite behavior compile-time gated by `TRAF_LOCAL_LITE`.
 - Prefer small native stubs over compiling Java/Hadoop-backed code.
-- Keep the RocksDB local store native-only and single-process until the
-  compiler, executor, and transaction boundaries are explicitly designed.
+- Keep the RocksDB local store native-only and process-owned; client sessions
+  must reach it through their explicit transaction context and the serialized
+  server engine boundary.
 - Disabled HDFS/Hive/HBase paths must fail explicitly.
-- Treat `sqlci` standalone as the first supported runtime milestone; do not
-  imply `mxosrvr`, DCS, REST, or the full SQF service stack is standalone.
+- Treat `sqlci` and the bounded M11 `nativelite-server` as the supported
+  standalone runtimes; do not imply `mxosrvr`, DCS, REST, or the full SQF
+  service stack is standalone.

@@ -843,6 +843,18 @@ Lng32 ExeCliInterface::getHeadingAndLen(short entry, char* heading, Lng32 &len)
   return 0;
 }
 
+Lng32 ExeCliInterface::getOutputDescItem(short entry, Lng32 item,
+                                         void *numericValue,
+                                         char *stringValue,
+                                         Lng32 maxStringLen,
+                                         Lng32 *stringLen)
+{
+  if (!output_desc_)
+    return -CLI_DESC_NOT_EXISTS;
+  return SQL_EXEC_GetDescItem(output_desc_, entry, item, numericValue,
+                              stringValue, maxStringLen, stringLen, 0);
+}
+
 Lng32 ExeCliInterface::getNumEntries(Lng32 &numInput, Lng32 &numOutput)
 {
   Lng32 retcode = 0;

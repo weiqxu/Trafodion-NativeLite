@@ -25,6 +25,17 @@ cat >"$src" <<'CPP'
 #include <string>
 #include <vector>
 
+class TxnContextOwner
+{
+public:
+  TxnContextOwner() : context_(LocalLiteTxnManager::createContext()) {}
+  ~TxnContextOwner() { LocalLiteTxnManager::destroyContext(context_); }
+  LocalLiteTxnContext *get() const { return context_; }
+
+private:
+  LocalLiteTxnContext *context_;
+};
+
 bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &,
                               const std::string &,
                               std::string *,
@@ -48,6 +59,24 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &,
   if (error)
     error->clear();
   return true;
+}
+
+bool LocalLiteBuildOrderedSecondaryKeyPayload(
+    const LocalLiteTableDef &,
+    const LocalLiteIndexDef &,
+    const std::string &,
+    std::string *,
+    bool *hasKey,
+    bool *containsNull,
+    std::string *error)
+{
+  if (hasKey)
+    *hasKey = false;
+  if (containsNull)
+    *containsNull = false;
+  if (error)
+    *error = "ordered index codec is not used by the statement probe";
+  return false;
 }
 
 static std::string rowKey(uint64_t rowId)
@@ -117,6 +146,8 @@ static bool getFound(LocalLiteTxn *txn,
 
 int main()
 {
+  TxnContextOwner session;
+  LocalLiteTxnContext *txnContext = session.get();
   LocalLiteTableDef table;
   table.catalog = "TRAFODION";
   table.schema = "SEABASE";
@@ -137,43 +168,43 @@ int main()
       return 1;
     }
 
-  LocalLiteTxn setupTxn(&setupStore);
+  LocalLiteTxn setupTxn(&setupStore, txnContext);
   uint64_t firstRowId = 0;
   if (!insert(&setupTxn, table, "before-snapshot", &firstRowId) ||
       firstRowId != 1)
     return 1;
 
   int statementOwner = 0;
-  LocalLiteTxnManager::beginStatement(&statementOwner, 7);
+  LocalLiteTxnManager::beginStatement(txnContext, &statementOwner, 7);
 
   LocalLiteRocksDBStore firstScanStore;
-  LocalLiteTxn firstScan(&firstScanStore, &statementOwner, 7);
+  LocalLiteTxn firstScan(&firstScanStore, txnContext, &statementOwner, 7);
   if (!scanCount(&firstScan, table, 1))
     return 1;
 
   LocalLiteRocksDBStore writerStore;
-  LocalLiteTxn writer(&writerStore);
+  LocalLiteTxn writer(&writerStore, txnContext);
   uint64_t secondRowId = 0;
   if (!insert(&writer, table, "after-snapshot", &secondRowId) ||
       secondRowId != 2)
     return 1;
 
   LocalLiteRocksDBStore repeatedScanStore;
-  LocalLiteTxn repeatedScan(&repeatedScanStore, &statementOwner, 7);
+  LocalLiteTxn repeatedScan(&repeatedScanStore, txnContext, &statementOwner, 7);
   if (!scanCount(&repeatedScan, table, 1) ||
       !getFound(&repeatedScan, table, secondRowId, false))
     return 1;
 
-  LocalLiteTxnManager::endStatement(&statementOwner, 7);
-  LocalLiteTxnManager::beginStatement(&statementOwner, 8);
+  LocalLiteTxnManager::endStatement(txnContext, &statementOwner, 7);
+  LocalLiteTxnManager::beginStatement(txnContext, &statementOwner, 8);
 
   LocalLiteRocksDBStore nextExecutionStore;
-  LocalLiteTxn nextExecution(&nextExecutionStore, &statementOwner, 8);
+  LocalLiteTxn nextExecution(&nextExecutionStore, txnContext, &statementOwner, 8);
   if (!scanCount(&nextExecution, table, 2) ||
       !getFound(&nextExecution, table, secondRowId, true))
     return 1;
 
-  LocalLiteTxnManager::endStatement(&statementOwner, 8);
+  LocalLiteTxnManager::endStatement(txnContext, &statementOwner, 8);
   printf("local-lite statement snapshot probe passed\n");
   return 0;
 }
@@ -196,6 +227,7 @@ fi
   -I"$repo_root/core/sql/localstore" \
   "${rocksdb_include_flags[@]}" \
   "$src" "$repo_root/core/sql/localstore/LocalLiteRocksDBStore.cpp" \
+  "$repo_root/scripts/local-lite-row-codec-test-stubs.cpp" \
   "${rocksdb_library_flags[@]}" \
   -lrocksdb -lpthread -o "$bin"
 

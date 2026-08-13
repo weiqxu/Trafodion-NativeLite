@@ -13,6 +13,11 @@ class SqlciEnv;
 
 bool LocalLiteSqlTable_process(const char *sql, SqlciEnv *sqlciEnv, short *retcode);
 
+// Return true for SQLCI-local statements whose PostgreSQL extended-query
+// Describe response is NoData. This classifier must not execute or mutate the
+// session; Execute remains the only side-effecting protocol phase.
+bool LocalLiteSqlTable_isUtilityStatement(const char *sql);
+
 // Resolve SQLCI's -u/SET SESSION AUTHORIZATION identity from the RocksDB
 // catalog and publish it to the CLI context used by CURRENT_USER/SESSION_USER.
 bool LocalLiteSqlTable_setCurrentUser(SqlciEnv *sqlciEnv, short *retcode);

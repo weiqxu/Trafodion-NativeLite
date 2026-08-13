@@ -192,6 +192,11 @@ private:
 
   Lng32 getPtrAndLen(short entry, char* &ptr, Lng32 &len, short **ind = NULL);
   Lng32 getHeadingAndLen(short entry, char* heading, Lng32 &len);
+  Lng32 getOutputDescItem(short entry, Lng32 item,
+                          void *numericValue = NULL,
+                          char *stringValue = NULL,
+                          Lng32 maxStringLen = 0,
+                          Lng32 *stringLen = NULL);
 
   Lng32 getNumEntries(Lng32 &numInput, Lng32 &numOutput);
   Lng32 getAttributes(short entry, NABoolean forInput,

@@ -9465,7 +9465,9 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                           2 + subject.primaryKeyColumns[key]);
                   transition.primaryKeyName = transition.catalog + "." +
                       transition.schema + "." + transitionName + "_PK";
-                  if (!store.createTable(transition, &error))
+                  if (!store.createTable(
+                          transition, &error,
+                          ComUser::getCurrentUsername()))
                     transitionExists = false;
                   else
                     createdTransition = true;

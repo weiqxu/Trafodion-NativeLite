@@ -28,6 +28,17 @@ cat >"$src" <<'CPP'
 #include <string>
 #include <vector>
 
+class TxnContextOwner
+{
+public:
+  TxnContextOwner() : context_(LocalLiteTxnManager::createContext()) {}
+  ~TxnContextOwner() { LocalLiteTxnManager::destroyContext(context_); }
+  LocalLiteTxnContext *get() const { return context_; }
+
+private:
+  LocalLiteTxnContext *context_;
+};
+
 bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
                               const std::string &encodedRow,
                               std::string *key,
@@ -72,6 +83,24 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &,
   return true;
 }
 
+bool LocalLiteBuildOrderedSecondaryKeyPayload(
+    const LocalLiteTableDef &,
+    const LocalLiteIndexDef &,
+    const std::string &,
+    std::string *,
+    bool *hasKey,
+    bool *containsNull,
+    std::string *error)
+{
+  if (hasKey)
+    *hasKey = false;
+  if (containsNull)
+    *containsNull = false;
+  if (error)
+    *error = "ordered index codec is not used by the concurrency probe";
+  return false;
+}
+
 struct SharedState
 {
   LocalLiteTableDef table;
@@ -114,8 +143,9 @@ static void *writerMain(void *arg)
 {
   WriterArg *writerArg = static_cast<WriterArg *>(arg);
   SharedState *state = writerArg->state;
+  TxnContextOwner session;
   LocalLiteRocksDBStore store;
-  LocalLiteTxn txn(&store);
+  LocalLiteTxn txn(&store, session.get());
   for (int i = 0; i < writerArg->rows; i++)
     {
       char payload[64];
@@ -140,8 +170,9 @@ static void *writerMain(void *arg)
 static void *scannerMain(void *arg)
 {
   SharedState *state = static_cast<SharedState *>(arg);
+  TxnContextOwner session;
   LocalLiteRocksDBStore store;
-  LocalLiteTxn txn(&store);
+  LocalLiteTxn txn(&store, session.get());
   size_t previousCount = 0;
   for (;;)
     {
@@ -173,8 +204,9 @@ static void *scannerMain(void *arg)
 static void *conflictWriterMain(void *arg)
 {
   ConflictState *state = static_cast<ConflictState *>(arg);
+  TxnContextOwner session;
   LocalLiteRocksDBStore store;
-  LocalLiteTxn txn(&store);
+  LocalLiteTxn txn(&store, session.get());
   pthread_barrier_wait(&state->barrier);
 
   uint64_t rowId = 0;
@@ -310,7 +342,8 @@ int main()
     }
 
   LocalLiteRocksDBStore verifyStore;
-  LocalLiteTxn verifyTxn(&verifyStore);
+  TxnContextOwner verifySession;
+  LocalLiteTxn verifyTxn(&verifyStore, verifySession.get());
   std::vector<LocalLiteRow> rows;
   if (!verifyTxn.scanRows(state.table, &rows, &error))
     {
@@ -346,6 +379,7 @@ int main()
   primaryTable.objectUid = 1002;
   primaryTable.nextRowId = 1;
   primaryTable.primaryKeyColumns.push_back(0);
+  primaryTable.primaryKeyName = "CONC_PK";
   if (!setupStore.createTable(primaryTable, &error))
     {
       fprintf(stderr, "create primary-key table failed: %s\n", error.c_str());
@@ -371,6 +405,7 @@ int main()
   uniqueTable.objectUid = 1003;
   uniqueTable.nextRowId = 1;
   uniqueTable.uniqueKeyColumns.push_back(std::vector<size_t>(1, 0));
+  uniqueTable.uniqueKeyNames.push_back("CONC_UQ");
   if (!setupStore.createTable(uniqueTable, &error))
     {
       fprintf(stderr, "create unique-key table failed: %s\n", error.c_str());
@@ -423,6 +458,7 @@ fi
   -I"$repo_root/core/sql/localstore" \
   "${rocksdb_include_flags[@]}" \
   "$src" "$repo_root/core/sql/localstore/LocalLiteRocksDBStore.cpp" \
+  "$repo_root/scripts/local-lite-row-codec-test-stubs.cpp" \
   "${rocksdb_library_flags[@]}" \
   -lrocksdb -lpthread -o "$bin"
 

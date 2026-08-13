@@ -1047,7 +1047,9 @@ static bool localLiteAlterAddColumn(StmtDDLAlterTableAddColumn *node,
   added.back() = localLiteMigrationDefault(column);
   std::string error;
   LocalLiteRocksDBStore store;
-  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+  if (!store.alterTable(
+          oldTable, newTable, mapping, added,
+          GetCliGlobals()->currContext()->getLocalLiteTxnContext(), &error))
     {
       localLiteDDLDiag(error);
       return false;
@@ -1129,7 +1131,9 @@ static bool localLiteAlterDropColumn(StmtDDLAlterTableDropColumn *node,
     mapping[i] = static_cast<int>(i < drop ? i : i + 1);
   std::string error;
   LocalLiteRocksDBStore store;
-  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+  if (!store.alterTable(
+          oldTable, newTable, mapping, added,
+          GetCliGlobals()->currContext()->getLocalLiteTxnContext(), &error))
     {
       localLiteDDLDiag(error);
       return false;
@@ -1172,7 +1176,9 @@ static bool localLiteAlterRenameColumn(
   for (size_t i = 0; i < mapping.size(); i++) mapping[i] = i;
   std::string error;
   LocalLiteRocksDBStore store;
-  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+  if (!store.alterTable(
+          oldTable, newTable, mapping, added,
+          GetCliGlobals()->currContext()->getLocalLiteTxnContext(), &error))
     {
       localLiteDDLDiag(error);
       return false;
@@ -1190,7 +1196,9 @@ static bool localLiteReplaceDefinition(const LocalLiteTableDef &oldTable,
     mapping[i] = static_cast<int>(i);
   std::string error;
   LocalLiteRocksDBStore store;
-  if (!store.alterTable(oldTable, newTable, mapping, added, &error))
+  if (!store.alterTable(
+          oldTable, newTable, mapping, added,
+          GetCliGlobals()->currContext()->getLocalLiteTxnContext(), &error))
     {
       localLiteDDLDiag(error);
       return false;
@@ -1592,7 +1600,9 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
               table.secondaryIndexes[i].keyColumns[j] =
                 remap[table.secondaryIndexes[i].keyColumns[j]];
         }
-      if (!store.createTable(table, &error))
+      if (!store.createTable(
+              table, &error,
+              ComUser::getCurrentUsername()))
         {
           localLiteDDLDiag(error);
           return false;
@@ -1924,7 +1934,9 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
 
   LocalLiteRocksDBStore store;
   std::string error;
-  if (!store.createTable(table, &error))
+  if (!store.createTable(
+          table, &error,
+          ComUser::getCurrentUsername()))
     {
       localLiteDDLDiag(error);
       return false;

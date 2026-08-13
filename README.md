@@ -4,16 +4,19 @@ This checkout includes a `local-lite` build and runtime mode for native
 Trafodion SQL engine development.
 
 `local-lite` removes Java, Maven, Hadoop, HDFS, HBase, Hive, DCS, REST, TrafCI,
-and Java client modules from the selected build path. The current supported
-runtime is `sqlci` as a single-process command-line SQL engine over an embedded
-RocksDB catalog and table store.
+and Java client modules from the selected build path. The supported runtimes are
+standalone `sqlci` and the M11 `nativelite-server`, both using the normal native
+compiler/executor over an embedded RocksDB catalog and table store.
 
 Local-lite is not a complete standalone database. Its bounded RocksDB-only
 surface includes transactions, DDL/DML, indexes, metadata/statistics,
-authorization, and constrained UDR execution through normal compiler/executor
-paths. It does not yet provide session-isolated transaction state, atomic
-multi-table commit/recovery, a standalone multi-client server, JDBC/ODBC, the
-DCS/REST stack, distributed execution, or an HBase/HDFS/Hive runtime.
+authorization, constrained UDR execution, session-owned transaction contexts,
+and a reduced Trafodion Type 4 endpoint validated with the repository T4 JDBC
+driver. It does
+not yet provide crash-atomic multi-table/catalog transactions, the M12 storage
+and recovery contract, password/TLS authentication, full Trafodion wire
+compatibility, the DCS/REST stack, distributed execution, or an
+HBase/HDFS/Hive runtime.
 
 Full details are in:
 
@@ -27,22 +30,49 @@ The original Apache Trafodion project overview is preserved in:
 plan/README.trafodion.md
 ```
 
-## Current Status (verified 2026-08-12)
+## Current Status (verified 2026-08-13)
 
-The bounded M1-M10 RocksDB-only, single-process scope is complete. In this
-checkout, `make local-lite`, `make local-lite-m10`, and
-`scripts/test-local-lite-runtime.sh` pass. M11 sessionization/server work and
-M12 transactional storage/recovery are planned and have not started.
+The bounded M1-M11 scope is complete. Each `ContextCli` owns an `ExTransaction`,
+which is now the canonical owner of that session's `LocalLiteTxnContext`;
+executor/DDL paths receive it explicitly, and reset, disconnect, or destruction
+discard only that session's pending writes and snapshots. The M11A gate covers
+two overlapping CLI contexts, isolation, independent completion, deterministic
+same-key conflict, reset/delete cleanup, snapshot release, and context reuse.
+The effective authorization identity and new-object ownership also come from
+the current `ContextCli`, including after `SET SESSION AUTHORIZATION`; the
+compiler session is a propagated mirror rather than the LocalLite authority.
+
+M11B adds a long-running `nativelite-server` that exclusively owns the store,
+creates one CLI context per connection, accepts loopback TCP or owner-only Unix
+sockets, reaps completed connection threads, and survives clean and unclean
+restart with committed data intact. Unix startup preserves non-socket, foreign,
+or active paths, and shutdown removes only the exact socket inode created by
+the server. Per-session diagnostics use unnamed temporary streams, so an
+unclean stop does not leave credential- or SQL-bearing capture files.
+M11C now selects a reduced Trafodion Type 4 protocol. The same loopback listener
+implements the association handshake and SQL dialogue without DCS or ZooKeeper.
+Implemented operations cover connect/disconnect, autocommit, commit/rollback,
+direct and prepared execution, fetch/free-statement, cancellation, and bounded
+catalog metadata for catalogs, schemas, tables, columns, and primary keys. The
+repository T4 JDBC driver gate covers prepared reuse, typed results, overlapping
+transactions, disconnect rollback, cancellation with an active peer, metadata,
+and restart persistence. The driver's public `Statement.cancel()` does not
+dispatch while a request is active; cancellation is therefore gated through
+the driver's own internal `T4_Dcs_Cancel` path.
+Requests enter concurrent connection
+threads but compiler/executor work is deliberately serialized while the
+embedded CLI remains process-global. M12 transactional storage/recovery has not
+started.
 
 ### Functional boundary
 
 | Area | Validated local-lite surface | Not currently claimed |
 | --- | --- | --- |
-| DML and storage | Single-process transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes and statement-level atomicity | Session-isolated transaction state, atomic multi-table commit, and crash recovery |
+| DML and storage | Session-owned overlapping transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes; statement/per-table atomicity; disconnect/cancel cleanup; committed-data clean/unclean restart | Atomic multi-table/catalog commit, a backend-neutral storage transaction, coordinated recovery, backup/restore, and migration |
 | Catalog and DDL | Schemas, views, synonyms, sequences, defaults, CHECK and bounded RI constraints, identity columns, triggers, and persisted basic statistics | RI CASCADE, computed system columns, full histograms, and unrestricted physical `_MD_` behavior |
 | Types and executor | ISO88591/UTF8/UCS2, binary types, BOOLEAN, INTERVAL, LONG VARCHAR, cursors, window/grouping operations, local sort/scratch, and cancellation cleanup | LOB/ARRAY and broader collation support, ESP fan-out, and distributed execution |
-| Authorization and UDR | Local users, roles, ownership/privileges, and bounded native/Java UDR adapters | Password/external identity services, the full UDR server, and host-rowset behavior |
-| Runtime and clients | One local `sqlci` process using normal compiler/executor paths over RocksDB | A multi-client server, JDBC/ODBC, DCS/REST, and HBase/HDFS/Hive runtimes |
+| Authorization and UDR | Local users, roles, ownership/privileges, catalog identity validation at server startup, and bounded native/Java UDR adapters | Password/TLS/external identity services, the full UDR server, and host-rowset behavior |
+| Runtime and clients | Standalone `sqlci`; multi-client `nativelite-server`; loopback TCP and protected 0600 Unix sockets; reduced Trafodion Type 4 association/SQL protocol tested with the repository T4 JDBC driver | Full T4/DCS compatibility, ODBC certification, LOB/call/batch/rowset input, broad catalog APIs, remote/TLS deployment, DCS/REST, and HBase/HDFS/Hive runtimes |
 
 The detailed milestone evidence and boundaries are maintained in
 [`plan/local-lite-legacy-regress-roadmap.md`](plan/local-lite-legacy-regress-roadmap.md).
@@ -130,6 +160,30 @@ Minimal local table smoke example:
 >>exit;
 ```
 
+## Quick NativeLite Server Run
+
+After applying the same `TRAF_HOME`, `TRAF_LOCAL_LITE`, store, and library-path
+environment used above, start the local trusted endpoint with:
+
+```bash
+$SQL_LIBS/nativelite-server --listen 127.0.0.1 --port 23400
+```
+
+Connect with the Trafodion Type 4 JDBC driver
+(`org.trafodion.jdbc.t4.T4Driver`):
+
+```text
+jdbc:t4jdbc://127.0.0.1:23400/:
+```
+
+This M11 endpoint intentionally has no password or TLS exchange. TCP binds are
+restricted to numeric loopback addresses; alternatively pass
+`--unix-socket /path/nativelite.sock`, which creates an owner-only socket for
+lifecycle/embedding use; the current T4 JDBC gate uses TCP. User names must
+already exist in the local catalog. Existing non-socket, foreign, or active
+Unix paths are never replaced. Use this endpoint only as the documented local
+trusted transport.
+
 ## Quick Regress Run
 
 After building the local-lite SQL binary, run the native TEST/EXPECTED lane
@@ -151,6 +205,7 @@ inventories with:
 
 ```bash
 make local-lite-m10
+make local-lite-m11
 make local-lite-legacy-audit
 make local-lite-regress-inventory
 ```

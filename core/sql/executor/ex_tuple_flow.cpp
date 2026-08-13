@@ -49,6 +49,15 @@
 
 #ifdef TRAF_LOCAL_LITE
 #include "LocalLiteRocksDBStore.h"
+
+static LocalLiteTxnContext *localLiteTxnContext(ex_globals *globals)
+{
+  if (!globals)
+    return NULL;
+  ExExeStmtGlobals *statementGlobals = globals->castToExExeStmtGlobals();
+  return statementGlobals && statementGlobals->getContext()
+      ? statementGlobals->getContext()->getLocalLiteTxnContext() : NULL;
+}
 #endif
 
 /////////////////////////////////////////////////////////////////////////
@@ -149,7 +158,7 @@ void ExTupleFlowTcb::freeResources()
   if (localLiteAutocommitTxnStarted_)
     {
       std::string error;
-      LocalLiteTxnManager::rollback(&error);
+      LocalLiteTxnManager::rollback(localLiteTxnContext(getGlobals()), &error);
       localLiteAutocommitTxnStarted_ = FALSE;
     }
 #endif
@@ -216,14 +225,16 @@ short ExTupleFlowTcb::work()
             if ((tcbTgt_->isLocalLiteInsert() ||
                  tcbTgt_->isLocalLiteUpdate() ||
                  tcbTgt_->isLocalLiteDelete()) &&
-                !LocalLiteTxnManager::active())
+                !LocalLiteTxnManager::active(
+                    localLiteTxnContext(getGlobals())))
               {
                 ExMasterStmtGlobals *master = getGlobals()->
                   castToExExeStmtGlobals()->castToExMasterStmtGlobals();
                 localLiteRowsAffectedBefore_ =
                   master ? master->getRowsAffected() : 0;
                 std::string error;
-                if (!LocalLiteTxnManager::begin(&error))
+                if (!LocalLiteTxnManager::begin(
+                        localLiteTxnContext(getGlobals()), &error))
                   {
                     if (qParent_.up->isFull())
                       return WORK_OK;
@@ -758,7 +769,8 @@ short ExTupleFlowTcb::work()
                 if (localLiteAutocommitTxnStarted_)
                   {
                     std::string error;
-                    LocalLiteTxnManager::rollback(&error);
+                    LocalLiteTxnManager::rollback(
+                        localLiteTxnContext(getGlobals()), &error);
                     localLiteAutocommitTxnStarted_ = FALSE;
                     ExMasterStmtGlobals *master = getGlobals()->
                       castToExExeStmtGlobals()->castToExMasterStmtGlobals();
@@ -783,7 +795,8 @@ short ExTupleFlowTcb::work()
             if (localLiteAutocommitTxnStarted_)
               {
                 std::string error;
-                if (!LocalLiteTxnManager::commit(&error))
+                if (!LocalLiteTxnManager::commit(
+                        localLiteTxnContext(getGlobals()), &error))
                   {
                     localLiteAutocommitTxnStarted_ = FALSE;
                     ExMasterStmtGlobals *master = getGlobals()->
@@ -944,7 +957,6 @@ ex_tcb_private_state * ExTupleFlowPrivateState::allocate_new(const ex_tcb *tcb)
 {
   return new(((ex_tcb *)tcb)->getSpace()) ExTupleFlowPrivateState((ExTupleFlowTcb *) tcb);
 }
-
 
 
 

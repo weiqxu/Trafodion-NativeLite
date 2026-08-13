@@ -1227,7 +1227,6 @@ bool LocalLiteSqlTable_setCurrentUser(SqlciEnv *sqlciEnv, short *retcode)
           "unknown local-lite authorization identity: " + user : error);
       return false;
     }
-  setenv("TRAF_LOCAL_LITE_USER", user.c_str(), 1);
   const char *legacySchema = getenv("TEST_SCHEMA_NAME");
   if (legacySchema && legacySchema[0] != '\0')
     {
@@ -1275,6 +1274,40 @@ bool LocalLiteSqlTable_checkAuthorization(const char *sqlText,
     }
   *retcode = 0;
   return true;
+}
+
+bool LocalLiteSqlTable_isUtilityStatement(const char *sqlText)
+{
+  if (!sqlText)
+    return false;
+  std::string sql = trim(sqlText);
+  while (!sql.empty() && sql[sql.size() - 1] == ';')
+    sql = trim(sql.substr(0, sql.size() - 1));
+  if (sql.empty())
+    return false;
+
+  std::string normalized = upper(sql);
+  if (normalized.find("GET TEXT FOR ERROR ") == 0)
+    return false;
+
+  const char *prefixes[] = {
+    "CREATE USER", "CREATE ROLE", "DROP USER", "DROP ROLE",
+    "SET SESSION AUTHORIZATION", "GRANT", "REVOKE", "SET SCHEMA",
+    "USE", "GET", "SHOWDDL", "SHOWSTATS", "INVOKE",
+    "UPDATE STATISTICS", "CREATE SCHEMA", "DROP SCHEMA",
+    "CREATE SYNONYM", "DROP SYNONYM", "CREATE EXTERNAL TABLE",
+    "CREATE HBASE TABLE", "TRUNCATE TABLE", "UPSERT USING LOAD",
+    "CREATE FUNCTION", "CREATE PROCEDURE",
+    "CREATE TABLE MAPPING FUNCTION", "DROP FUNCTION", "DROP PROCEDURE",
+    "DROP TABLE MAPPING FUNCTION"
+  };
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++)
+    if (startsWithWord(sql, prefixes[i]))
+      return true;
+
+  return normalized == "SHOW SCHEMAS" ||
+         normalized == "INITIALIZE TRAFODION, CREATE METADATA VIEWS" ||
+         normalized == "INITIALIZE TRAFODION, DROP METADATA VIEWS";
 }
 
 bool LocalLiteSqlTable_process(const char *sqlText, SqlciEnv *sqlciEnv, short *retcode)

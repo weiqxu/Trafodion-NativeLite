@@ -25,6 +25,17 @@ cat >"$src" <<'CPP'
 #include <string>
 #include <vector>
 
+class TxnContextOwner
+{
+public:
+  TxnContextOwner() : context_(LocalLiteTxnManager::createContext()) {}
+  ~TxnContextOwner() { LocalLiteTxnManager::destroyContext(context_); }
+  LocalLiteTxnContext *get() const { return context_; }
+
+private:
+  LocalLiteTxnContext *context_;
+};
+
 bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &table,
                               const std::string &encodedRow,
                               std::string *key,
@@ -219,14 +230,18 @@ static bool getFound(LocalLiteTxn *txn,
   return true;
 }
 
-static bool finishStatement(const void *owner, uint64_t executionId)
+static bool finishStatement(LocalLiteTxnContext *txnContext,
+                            const void *owner,
+                            uint64_t executionId)
 {
-  LocalLiteTxnManager::endStatement(owner, executionId);
+  LocalLiteTxnManager::endStatement(txnContext, owner, executionId);
   return true;
 }
 
 int main()
 {
+  TxnContextOwner session;
+  LocalLiteTxnContext *txnContext = session.get();
   LocalLiteTableDef table;
   table.catalog = "TRAFODION";
   table.schema = "SEABASE";
@@ -246,19 +261,19 @@ int main()
     return 1;
   setupStore.close();
 
-  if (!LocalLiteTxnManager::begin(&error))
+  if (!LocalLiteTxnManager::begin(txnContext, &error))
     {
       fprintf(stderr, "begin transaction failed: %s\n", error.c_str());
       return 1;
     }
 
   int firstStatement = 0;
-  LocalLiteTxnManager::beginStatement(&firstStatement, 11);
+  LocalLiteTxnManager::beginStatement(txnContext, &firstStatement, 11);
   LocalLiteRocksDBStore firstScanStore;
-  LocalLiteTxn firstScan(&firstScanStore, &firstStatement, 11);
+  LocalLiteTxn firstScan(&firstScanStore, txnContext, &firstStatement, 11);
   if (!scanCount(&firstScan, table, 1))
     return 1;
-  finishStatement(&firstStatement, 11);
+  finishStatement(txnContext, &firstStatement, 11);
   firstScanStore.close();
 
   LocalLiteRocksDBStore committedWriter;
@@ -267,17 +282,17 @@ int main()
   committedWriter.close();
 
   int secondStatement = 0;
-  LocalLiteTxnManager::beginStatement(&secondStatement, 12);
+  LocalLiteTxnManager::beginStatement(txnContext, &secondStatement, 12);
   LocalLiteRocksDBStore repeatedScanStore;
-  LocalLiteTxn repeatedScan(&repeatedScanStore, &secondStatement, 12);
+  LocalLiteTxn repeatedScan(&repeatedScanStore, txnContext, &secondStatement, 12);
   if (!scanCount(&repeatedScan, table, 1) ||
       !getFound(&repeatedScan, table, 2, false))
     return 1;
-  finishStatement(&secondStatement, 12);
+  finishStatement(txnContext, &secondStatement, 12);
   repeatedScanStore.close();
 
   LocalLiteRocksDBStore pendingWriterStore;
-  LocalLiteTxn pendingWriter(&pendingWriterStore);
+  LocalLiteTxn pendingWriter(&pendingWriterStore, txnContext);
   uint64_t pendingRowId = 0;
   if (!pendingWriter.insertRow(table, "pending-own-write",
                                &pendingRowId, &error) ||
@@ -289,43 +304,45 @@ int main()
   pendingWriterStore.close();
 
   int ownWriteStatement = 0;
-  LocalLiteTxnManager::beginStatement(&ownWriteStatement, 13);
+  LocalLiteTxnManager::beginStatement(txnContext, &ownWriteStatement, 13);
   LocalLiteRocksDBStore ownWriteScanStore;
-  LocalLiteTxn ownWriteScan(&ownWriteScanStore, &ownWriteStatement, 13);
+  LocalLiteTxn ownWriteScan(&ownWriteScanStore, txnContext,
+                            &ownWriteStatement, 13);
   if (!scanCount(&ownWriteScan, table, 2) ||
       !getFound(&ownWriteScan, table, pendingRowId, true) ||
       !getFound(&ownWriteScan, table, 2, false))
     return 1;
-  finishStatement(&ownWriteStatement, 13);
+  finishStatement(txnContext, &ownWriteStatement, 13);
   ownWriteScanStore.close();
 
-  if (!LocalLiteTxnManager::rollback(&error))
+  if (!LocalLiteTxnManager::rollback(txnContext, &error))
     {
       fprintf(stderr, "rollback transaction failed: %s\n", error.c_str());
       return 1;
     }
 
   LocalLiteRocksDBStore afterRollbackStore;
-  LocalLiteTxn afterRollback(&afterRollbackStore);
+  LocalLiteTxn afterRollback(&afterRollbackStore, txnContext);
   if (!scanCount(&afterRollback, table, 2) ||
       !getFound(&afterRollback, table, 2, true) ||
       !getFound(&afterRollback, table, pendingRowId, false))
     return 1;
   afterRollbackStore.close();
 
-  if (!LocalLiteTxnManager::begin(&error))
+  if (!LocalLiteTxnManager::begin(txnContext, &error))
     {
       fprintf(stderr, "second begin transaction failed: %s\n", error.c_str());
       return 1;
     }
 
   int commitReadStatement = 0;
-  LocalLiteTxnManager::beginStatement(&commitReadStatement, 21);
+  LocalLiteTxnManager::beginStatement(txnContext, &commitReadStatement, 21);
   LocalLiteRocksDBStore commitReadStore;
-  LocalLiteTxn commitRead(&commitReadStore, &commitReadStatement, 21);
+  LocalLiteTxn commitRead(&commitReadStore, txnContext,
+                          &commitReadStatement, 21);
   if (!scanCount(&commitRead, table, 2))
     return 1;
-  finishStatement(&commitReadStatement, 21);
+  finishStatement(txnContext, &commitReadStatement, 21);
   commitReadStore.close();
 
   if (!directInsert(&committedWriter, table, "committed-before-commit", 3))
@@ -333,28 +350,29 @@ int main()
   committedWriter.close();
 
   int commitRepeatStatement = 0;
-  LocalLiteTxnManager::beginStatement(&commitRepeatStatement, 22);
+  LocalLiteTxnManager::beginStatement(txnContext, &commitRepeatStatement, 22);
   LocalLiteRocksDBStore commitRepeatStore;
-  LocalLiteTxn commitRepeat(&commitRepeatStore, &commitRepeatStatement, 22);
+  LocalLiteTxn commitRepeat(&commitRepeatStore, txnContext,
+                            &commitRepeatStatement, 22);
   if (!scanCount(&commitRepeat, table, 2) ||
       !getFound(&commitRepeat, table, 3, false))
     return 1;
-  finishStatement(&commitRepeatStatement, 22);
+  finishStatement(txnContext, &commitRepeatStatement, 22);
   commitRepeatStore.close();
 
-  if (!LocalLiteTxnManager::commit(&error))
+  if (!LocalLiteTxnManager::commit(txnContext, &error))
     {
       fprintf(stderr, "commit transaction failed: %s\n", error.c_str());
       return 1;
     }
 
   LocalLiteRocksDBStore afterCommitStore;
-  LocalLiteTxn afterCommit(&afterCommitStore);
+  LocalLiteTxn afterCommit(&afterCommitStore, txnContext);
   if (!scanCount(&afterCommit, table, 3) ||
       !getFound(&afterCommit, table, 3, true))
     return 1;
 
-  if (!LocalLiteTxnManager::begin(&error))
+  if (!LocalLiteTxnManager::begin(txnContext, &error))
     {
       fprintf(stderr, "update rollback begin failed: %s\n", error.c_str());
       return 1;
@@ -364,7 +382,7 @@ int main()
       !scanValues(&afterCommit, table, 3,
                   "rollback-update", "before-transaction"))
     return 1;
-  if (!LocalLiteTxnManager::rollback(&error) ||
+  if (!LocalLiteTxnManager::rollback(txnContext, &error) ||
       !scanValues(&afterCommit, table, 3,
                   "before-transaction", "rollback-update"))
     {
@@ -372,7 +390,7 @@ int main()
       return 1;
     }
 
-  if (!LocalLiteTxnManager::begin(&error))
+  if (!LocalLiteTxnManager::begin(txnContext, &error))
     {
       fprintf(stderr, "update commit begin failed: %s\n", error.c_str());
       return 1;
@@ -383,7 +401,7 @@ int main()
                    "pending-update", "committed-update") ||
       !scanValues(&afterCommit, table, 3,
                   "committed-update", "before-transaction") ||
-      !LocalLiteTxnManager::commit(&error) ||
+      !LocalLiteTxnManager::commit(txnContext, &error) ||
       !scanValues(&afterCommit, table, 3,
                   "committed-update", "before-transaction"))
     {
@@ -395,17 +413,18 @@ int main()
   primaryTable.name = "TX_ATOMIC_PK_T";
   primaryTable.objectUid = 3002;
   primaryTable.primaryKeyColumns.push_back(0);
+  primaryTable.primaryKeyName = "TX_ATOMIC_PK";
   if (!afterCommitStore.createTable(primaryTable, &error) ||
       !directInsert(&afterCommitStore, primaryTable, "duplicate", 1))
     return 1;
 
-  if (!LocalLiteTxnManager::begin(&error))
+  if (!LocalLiteTxnManager::begin(txnContext, &error))
     {
       fprintf(stderr, "primary atomic begin failed: %s\n", error.c_str());
       return 1;
     }
   LocalLiteRocksDBStore primaryPendingStore;
-  LocalLiteTxn primaryPending(&primaryPendingStore);
+  LocalLiteTxn primaryPending(&primaryPendingStore, txnContext);
   uint64_t ignoredRowId = 0;
   if (!primaryPending.insertRow(primaryTable, "first",
                                 &ignoredRowId, &error) ||
@@ -419,7 +438,7 @@ int main()
   primaryPendingStore.close();
 
   error.clear();
-  if (LocalLiteTxnManager::commit(&error) ||
+  if (LocalLiteTxnManager::commit(txnContext, &error) ||
       error.find("duplicate local-lite primary key") == std::string::npos)
     {
       fprintf(stderr, "primary atomic commit unexpectedly succeeded: %s\n",
@@ -427,7 +446,7 @@ int main()
       return 1;
     }
   LocalLiteRocksDBStore primaryVerifyStore;
-  LocalLiteTxn primaryVerify(&primaryVerifyStore);
+  LocalLiteTxn primaryVerify(&primaryVerifyStore, txnContext);
   if (!scanValues(&primaryVerify, primaryTable, 1,
                   "duplicate", "first"))
     return 1;
@@ -439,17 +458,18 @@ int main()
   std::vector<size_t> uniqueColumns;
   uniqueColumns.push_back(0);
   uniqueTable.uniqueKeyColumns.push_back(uniqueColumns);
+  uniqueTable.uniqueKeyNames.push_back("TX_ATOMIC_UNIQUE");
   if (!afterCommitStore.createTable(uniqueTable, &error) ||
       !directInsert(&afterCommitStore, uniqueTable, "duplicate", 1))
     return 1;
 
-  if (!LocalLiteTxnManager::begin(&error))
+  if (!LocalLiteTxnManager::begin(txnContext, &error))
     {
       fprintf(stderr, "unique atomic begin failed: %s\n", error.c_str());
       return 1;
     }
   LocalLiteRocksDBStore uniquePendingStore;
-  LocalLiteTxn uniquePending(&uniquePendingStore);
+  LocalLiteTxn uniquePending(&uniquePendingStore, txnContext);
   if (!uniquePending.insertRow(uniqueTable, "first",
                                &ignoredRowId, &error) ||
       !uniquePending.insertRow(uniqueTable, "duplicate",
@@ -462,7 +482,7 @@ int main()
   uniquePendingStore.close();
 
   error.clear();
-  if (LocalLiteTxnManager::commit(&error) ||
+  if (LocalLiteTxnManager::commit(txnContext, &error) ||
       error.find("duplicate local-lite unique key") == std::string::npos)
     {
       fprintf(stderr, "unique atomic commit unexpectedly succeeded: %s\n",
@@ -470,7 +490,7 @@ int main()
       return 1;
     }
   LocalLiteRocksDBStore uniqueVerifyStore;
-  LocalLiteTxn uniqueVerify(&uniqueVerifyStore);
+  LocalLiteTxn uniqueVerify(&uniqueVerifyStore, txnContext);
   if (!scanValues(&uniqueVerify, uniqueTable, 1,
                   "duplicate", "first") ||
       !directInsert(&uniqueVerifyStore, uniqueTable, "after-failure", 2))
@@ -498,6 +518,7 @@ fi
   -I"$repo_root/core/sql/localstore" \
   "${rocksdb_include_flags[@]}" \
   "$src" "$repo_root/core/sql/localstore/LocalLiteRocksDBStore.cpp" \
+  "$repo_root/scripts/local-lite-row-codec-test-stubs.cpp" \
   "${rocksdb_library_flags[@]}" \
   -lrocksdb -lpthread -o "$bin"
 

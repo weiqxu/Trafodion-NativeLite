@@ -504,7 +504,14 @@ short DDLExpr::codeGen(Generator * generator)
   if (localLiteDDLNode &&
       ((localLiteDDLNode->getOperatorType() == DDL_CREATE_TABLE) ||
        (localLiteDDLNode->getOperatorType() == DDL_DROP_TABLE)))
-    ddl_tdb->setHbaseDDL(TRUE);
+    {
+      ddl_tdb->setHbaseDDL(TRUE);
+      // Local-lite catalog DDL has its own bounded metadata boundary and was
+      // already supported between BEGIN/COMMIT by the M10 CTAS contract.
+      // Now that M11 keeps ExTransaction::xnInProgress() authoritative, do
+      // not let the inherited HBase no-user-transaction flag reject it.
+      ddl_tdb->setHbaseDDLNoUserXn(FALSE);
+    }
 #endif
   
   generator->initTdbFields(ddl_tdb);

@@ -337,7 +337,8 @@ ex_root_tcb::ex_root_tcb(
       mayPinAudit_(false),
       mayLock_(false)
 #ifdef TRAF_LOCAL_LITE
-      , localLiteStatementOwner_(NULL),
+      , localLiteTxnContext_(NULL),
+      localLiteStatementOwner_(NULL),
       localLiteStatementExecutionId_(0),
       localLiteStatementActive_(FALSE)
 #endif
@@ -454,9 +455,11 @@ ex_root_tcb::ex_root_tcb(
 void ex_root_tcb::beginLocalLiteStatement(ExExeStmtGlobals *glob)
 {
   endLocalLiteStatement();
+  localLiteTxnContext_ = glob->getContext()->getLocalLiteTxnContext();
   localLiteStatementOwner_ = glob;
   localLiteStatementExecutionId_ = glob->getExecutionCount();
-  LocalLiteTxnManager::beginStatement(localLiteStatementOwner_,
+  LocalLiteTxnManager::beginStatement(localLiteTxnContext_,
+                                      localLiteStatementOwner_,
                                       localLiteStatementExecutionId_);
   localLiteStatementActive_ = TRUE;
 }
@@ -466,8 +469,10 @@ void ex_root_tcb::endLocalLiteStatement()
   if (!localLiteStatementActive_)
     return;
 
-  LocalLiteTxnManager::endStatement(localLiteStatementOwner_,
+  LocalLiteTxnManager::endStatement(localLiteTxnContext_,
+                                    localLiteStatementOwner_,
                                     localLiteStatementExecutionId_);
+  localLiteTxnContext_ = NULL;
   localLiteStatementOwner_ = NULL;
   localLiteStatementExecutionId_ = 0;
   localLiteStatementActive_ = FALSE;

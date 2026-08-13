@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10
+.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 
 all:
@@ -51,6 +51,26 @@ local-lite-regress-inventory:
 local-lite-m10:
 	@echo "Running bounded RocksDB-only legacy convergence gate"
 	scripts/test-local-lite-legacy-convergence.sh
+
+local-lite-m11a:
+	@echo "Running M11A session-owned transaction context checks"
+	scripts/test-local-lite-runtime.sh
+	scripts/test-local-lite-context-transactions.sh
+	scripts/test-local-lite-statement-snapshot.sh
+	scripts/test-local-lite-transaction-snapshot.sh
+	scripts/test-local-lite-store-concurrency.sh
+	scripts/test-local-lite-session-transactions.sh
+
+local-lite-m11b:
+	@echo "Running M11B standalone server and restart checks"
+	scripts/test-local-lite-server.sh
+
+local-lite-m11c:
+	@echo "Running M11C Trafodion Type 4 JDBC checks"
+	scripts/test-local-lite-t4jdbc.sh
+
+local-lite-m11: local-lite-m11a local-lite-m11b local-lite-m11c
+	@echo "M11 sessionized server and client protocol checks passed"
 
 package: 
 	@echo "Packaging Trafodion components"

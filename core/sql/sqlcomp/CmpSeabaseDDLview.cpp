@@ -56,6 +56,7 @@
 #include "Generator.h"
 
 #ifdef TRAF_LOCAL_LITE
+#include "Context.h"
 #include "LocalLiteRocksDBStore.h"
 #include <time.h>
 #include <unistd.h>
@@ -177,7 +178,10 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
       view.objectUid = oldView.objectUid;
       std::vector<int> mapping(view.columns.size(), -1);
       std::vector<std::string> added(view.columns.size());
-      if (!store.alterTable(oldView, view, mapping, added, &error))
+      if (!store.alterTable(
+              oldView, view, mapping, added,
+              GetCliGlobals()->currContext()->getLocalLiteTxnContext(),
+              &error))
         {
           *CmpCommon::diags() << DgSqlCode(-3242)
                               << DgString0((char *)error.c_str());
@@ -187,7 +191,9 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
       ActiveSchemaDB()->getNATableDB()->setCachingON();
       return true;
     }
-  if (!store.createTable(view, &error))
+  if (!store.createTable(
+          view, &error,
+          ComUser::getCurrentUsername()))
     {
       *CmpCommon::diags() << DgSqlCode(-3242)
                           << DgString0((char *)error.c_str());

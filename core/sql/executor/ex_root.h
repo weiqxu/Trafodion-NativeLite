@@ -54,6 +54,9 @@ class Descriptor;
 class ExRtFragTable;
 class TransMode;
 class ComDiagsArea;
+#ifdef TRAF_LOCAL_LITE
+class LocalLiteTxnContext;
+#endif
 
 //
 // Task Definition Block
@@ -357,6 +360,7 @@ private:
   void beginLocalLiteStatement(ExExeStmtGlobals *glob);
   void endLocalLiteStatement();
 
+  LocalLiteTxnContext *localLiteTxnContext_;
   const void *localLiteStatementOwner_;
   UInt64 localLiteStatementExecutionId_;
   NABoolean localLiteStatementActive_;

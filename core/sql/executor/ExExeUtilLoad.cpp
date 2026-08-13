@@ -137,14 +137,19 @@ short ExExeUtilCreateTableAsTcb::work()
 	  {
 	    NABoolean xnAlreadyStarted = ta->xnInProgress();
 
-	    // allow a user transaction if NO LOAD was specified
+	    // Native CTAS rejects LOAD under a user transaction. Local-lite
+	    // always uses the regular INSERT ... SELECT path below and its M10
+	    // compatibility contract explicitly permits CTAS between
+	    // BEGIN/COMMIT, so the inherited sidetree restriction does not apply.
+#ifndef TRAF_LOCAL_LITE
 	    if (xnAlreadyStarted && !ctaTdb().noLoad())
-              {
-                ExRaiseSqlError(getHeap(), &diagsArea_, -20123, NULL, NULL, NULL,
-                                "This DDL operation");
-                step_ = ERROR_;
-                break;
-              }
+	      {
+		ExRaiseSqlError(getHeap(), &diagsArea_, -20123,
+		                NULL, NULL, NULL, "This DDL operation");
+		step_ = ERROR_;
+		break;
+	      }
+#endif
 
 	    doSidetreeInsert_ = TRUE;
 #ifdef TRAF_LOCAL_LITE

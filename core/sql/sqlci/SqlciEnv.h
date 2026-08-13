@@ -84,6 +84,7 @@ public:
   Logfile();
   ~Logfile();
   void  Open(char * name_, open_mode mode);
+  NABoolean OpenTemporary();
   void  Reopen();
   void  Close();
   void  Close_(); // close withouth delete file name

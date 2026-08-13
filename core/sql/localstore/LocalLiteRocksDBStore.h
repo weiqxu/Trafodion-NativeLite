@@ -199,7 +199,7 @@ enum LocalLitePrivilege
   LOCAL_LITE_PRIV_ALL       = 0x3f
 };
 
-class LocalLiteTxnState;
+class LocalLiteTxnContext;
 
 class LocalLiteRocksDBStore
 {
@@ -215,7 +215,8 @@ public:
   bool open(std::string *error);
   void close();
 
-  bool createTable(const LocalLiteTableDef &table, std::string *error);
+  bool createTable(const LocalLiteTableDef &table, std::string *error,
+                   const std::string &owner = std::string());
   bool createSchema(const std::string &catalog,
                     const std::string &schema,
                     bool ifNotExists,
@@ -394,6 +395,7 @@ public:
                   const LocalLiteTableDef &newTable,
                   const std::vector<int> &newToOldColumn,
                   const std::vector<std::string> &addedValues,
+                  LocalLiteTxnContext *txnContext,
                   std::string *error);
   bool validateReferentialIntegrity(const LocalLiteTableDef &table,
                                     std::string *error);
@@ -438,7 +440,7 @@ public:
                       std::string *error);
 
 private:
-  friend class LocalLiteTxnState;
+  friend class LocalLiteTxnContext;
 
   LocalLiteRocksDBStore(const LocalLiteRocksDBStore &);
   LocalLiteRocksDBStore &operator=(const LocalLiteRocksDBStore &);
@@ -463,6 +465,7 @@ class LocalLiteTxn
 {
 public:
   explicit LocalLiteTxn(LocalLiteRocksDBStore *store,
+                        LocalLiteTxnContext *txnContext,
                         const void *statementOwner = 0,
                         uint64_t statementExecutionId = 0);
 
@@ -494,6 +497,7 @@ private:
   LocalLiteTxn &operator=(const LocalLiteTxn &);
 
   LocalLiteRocksDBStore *store_;
+  LocalLiteTxnContext *txnContext_;
   const void *statementOwner_;
   uint64_t statementExecutionId_;
 };
@@ -503,22 +507,35 @@ class LocalLiteTxnManager
 public:
   static const int64_t INVALID_EXECUTOR_TXN_ID = -1;
 
-  static bool begin(std::string *error);
-  static bool beginForExecutor(int64_t executorTxnId, std::string *error);
-  static bool commit(std::string *error);
-  static bool commitForExecutor(int64_t executorTxnId, std::string *error);
-  static bool rollback(std::string *error);
-  static bool rollbackForExecutor(int64_t executorTxnId, std::string *error);
+  static LocalLiteTxnContext *createContext();
+  static void resetContext(LocalLiteTxnContext *txnContext);
+  static void destroyContext(LocalLiteTxnContext *txnContext);
+
+  static bool begin(LocalLiteTxnContext *txnContext, std::string *error);
+  static bool beginForExecutor(LocalLiteTxnContext *txnContext,
+                               int64_t executorTxnId,
+                               std::string *error);
+  static bool commit(LocalLiteTxnContext *txnContext, std::string *error);
+  static bool commitForExecutor(LocalLiteTxnContext *txnContext,
+                                int64_t executorTxnId,
+                                std::string *error);
+  static bool rollback(LocalLiteTxnContext *txnContext, std::string *error);
+  static bool rollbackForExecutor(LocalLiteTxnContext *txnContext,
+                                  int64_t executorTxnId,
+                                  std::string *error);
   // Flush the current DML image before a catalog/row-layout-changing DDL,
   // then keep the executor transaction context usable for following DML.
-  static bool prepareDDLForExecutor(int64_t executorTxnId,
+  static bool prepareDDLForExecutor(LocalLiteTxnContext *txnContext,
+                                    int64_t executorTxnId,
                                     std::string *error);
-  static bool active();
-  static uint64_t currentLocalTxnId();
-  static int64_t currentExecutorTxnId();
-  static void beginStatement(const void *statementOwner,
+  static bool active(LocalLiteTxnContext *txnContext);
+  static uint64_t currentLocalTxnId(LocalLiteTxnContext *txnContext);
+  static int64_t currentExecutorTxnId(LocalLiteTxnContext *txnContext);
+  static void beginStatement(LocalLiteTxnContext *txnContext,
+                             const void *statementOwner,
                              uint64_t statementExecutionId);
-  static void endStatement(const void *statementOwner,
+  static void endStatement(LocalLiteTxnContext *txnContext,
+                           const void *statementOwner,
                            uint64_t statementExecutionId);
 };
 

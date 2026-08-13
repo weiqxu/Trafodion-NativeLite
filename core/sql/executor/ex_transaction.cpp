@@ -87,15 +87,25 @@ ExTransaction::ExTransaction(CliGlobals * cliGlob, CollHeap *heap)
        savepointId_(0),
        volatileSchemaExists_(FALSE),
        transtag_(-1)
+#ifdef TRAF_LOCAL_LITE
+       , localLiteTxnContext_(NULL)
+#endif
 {
   transMode_ = new(heap) TransMode(TransMode::SERIALIZABLE_, 
 			     TransMode::READ_WRITE_,
 			     TransMode::OFF_);
+#ifdef TRAF_LOCAL_LITE
+  localLiteTxnContext_ = LocalLiteTxnManager::createContext();
+#endif
   resetXnState();
 }
 
 ExTransaction::~ExTransaction()
 {
+#ifdef TRAF_LOCAL_LITE
+  LocalLiteTxnManager::destroyContext(localLiteTxnContext_);
+  localLiteTxnContext_ = NULL;
+#endif
   if (transMode_)
     NADELETE(transMode_, TransMode, heap_);
   transMode_ = 0;
@@ -104,6 +114,54 @@ ExTransaction::~ExTransaction()
   userTransMode_ = 0;
   heap_ = NULL;
 }
+
+#ifdef TRAF_LOCAL_LITE
+bool ExTransaction::beginLocalLiteTransaction(std::string *error)
+{
+  const int64_t executorTxnId = localLiteExecutorTxnId(this);
+  if (!LocalLiteTxnManager::beginForExecutor(localLiteTxnContext_,
+                                              executorTxnId, error))
+    return false;
+
+  exeXnId_ = static_cast<Int64>(executorTxnId);
+  transid_ = exeXnId_;
+  exeStartedXn_ = TRUE;
+  exeStartedXnDuringRecursiveCLICall_ = FALSE;
+  xnInProgress_ = TRUE;
+  userEndedExeXn_ = FALSE;
+  implicitXn_ = FALSE;
+  return true;
+}
+
+bool ExTransaction::commitLocalLiteTransaction(std::string *error)
+{
+  const int64_t executorTxnId = localLiteExecutorTxnId(this);
+  const bool committed = LocalLiteTxnManager::commitForExecutor(
+      localLiteTxnContext_, executorTxnId, error);
+  // Validation/conflict failures consume the local transaction just like a
+  // successful commit.  Keep the coordinator active only for a mismatch that
+  // left the storage participant active.
+  if (!LocalLiteTxnManager::active(localLiteTxnContext_))
+    resetXnState();
+  return committed;
+}
+
+bool ExTransaction::rollbackLocalLiteTransaction(std::string *error)
+{
+  const int64_t executorTxnId = localLiteExecutorTxnId(this);
+  const bool rolledBack = LocalLiteTxnManager::rollbackForExecutor(
+      localLiteTxnContext_, executorTxnId, error);
+  if (!LocalLiteTxnManager::active(localLiteTxnContext_))
+    resetXnState();
+  return rolledBack;
+}
+
+void ExTransaction::resetLocalLiteTransaction()
+{
+  LocalLiteTxnManager::resetContext(localLiteTxnContext_);
+  resetXnState();
+}
+#endif
 
 TransMode * ExTransaction::getUserTransMode()
 {
@@ -409,6 +467,9 @@ short ExTransaction::beginTransaction()
 
 short ExTransaction::suspendTransaction()
 {
+#ifdef TRAF_LOCAL_LITE
+  return 0;
+#endif
   short retcode = FEOK;
   if (transid_ != -1 && transtag_ != -1)
   {
@@ -422,6 +483,9 @@ short ExTransaction::suspendTransaction()
 
 short ExTransaction::resumeTransaction()
 {
+#ifdef TRAF_LOCAL_LITE
+  return 0;
+#endif
   short retcode = 0;
   if (transid_ != -1 && transtag_ != -1)
   {
@@ -693,6 +757,11 @@ short ExTransaction::commitTransaction()
 ////////////////////////////////////////////////////////////
 short ExTransaction::inheritTransaction()
 {
+#ifdef TRAF_LOCAL_LITE
+  // There is no process-wide TMF transaction to inherit.  The storage
+  // participant is already bound to this ExTransaction/ContextCli session.
+  return 0;
+#endif
   // Do nothing if application has not yet 'cleaned' up
   // the executor transaction.
   if (userEndedExeXn() == TRUE)
@@ -813,6 +882,11 @@ short ExTransaction::inheritTransaction()
 ////////////////////////////////////////////////////////////
 short ExTransaction::validateTransaction()
 {
+#ifdef TRAF_LOCAL_LITE
+  return LocalLiteTxnManager::active(localLiteTxnContext_) ==
+                 (xnInProgress_ != FALSE)
+             ? 0 : -1;
+#endif
 
   // Do nothing if application has not yet 'cleaned' up
   // the executor transaction.
@@ -1099,7 +1173,6 @@ short ExTransTcb::work()
     ExExeStmtGlobals *stmtGlob = getGlobals()->castToExExeStmtGlobals();
     CliGlobals *cliGlobals =
       stmtGlob->castToExMasterStmtGlobals()->getCliGlobals();
-
     // if inside of a UDR, let a SET XN stmt get through if it
     // was compiled with setAllowedInXn option. This is allowed
     // for jdbc/odbc/sqlj sql statements.
@@ -1134,8 +1207,7 @@ short ExTransTcb::work()
 	      case BEGIN_: {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::beginForExecutor(
-	                localLiteExecutorTxnId(ta), &localLiteError))
+	        if (!ta->beginLocalLiteTransaction(&localLiteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
@@ -1173,8 +1245,7 @@ short ExTransTcb::work()
 	      case COMMIT_: {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::commitForExecutor(
-	                localLiteExecutorTxnId(ta), &localLiteError))
+	        if (!ta->commitLocalLiteTransaction(&localLiteError))
 	          {
 	            // The local transaction manager discards the pending image
 	            // when commit validation fails. Restore the session state as
@@ -1238,8 +1309,7 @@ short ExTransTcb::work()
 	      case ROLLBACK_:  {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::rollbackForExecutor(
-	                localLiteExecutorTxnId(ta), &localLiteError))
+	        if (!ta->rollbackLocalLiteTransaction(&localLiteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
@@ -1300,8 +1370,7 @@ short ExTransTcb::work()
 	      case ROLLBACK_WAITED_:  {
 #ifdef TRAF_LOCAL_LITE
 	        std::string localLiteError;
-	        if (!LocalLiteTxnManager::rollbackForExecutor(
-	                localLiteExecutorTxnId(ta), &localLiteError))
+	        if (!ta->rollbackLocalLiteTransaction(&localLiteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());

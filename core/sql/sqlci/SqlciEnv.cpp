@@ -72,6 +72,9 @@
 #include "BaseTypes.h"
 #include "ComSchemaName.h"
 #ifdef TRAF_LOCAL_LITE
+#include "Globals.h"
+#include "Context.h"
+#include "ex_transaction.h"
 #include "LocalLiteSqlTable.h"
 #endif
 
@@ -942,7 +945,14 @@ Int32 SqlciEnv::executeCommands(InputStmt *& input_stmt)
 short SqlciEnv::statusTransaction(Int64 * transid)
 {
 #ifdef TRAF_LOCAL_LITE
-  return 0;
+  CliGlobals *cliGlobals = GetCliGlobals();
+  ContextCli *context = cliGlobals ? cliGlobals->currContext() : NULL;
+  ExTransaction *transaction = context ? context->getTransaction() : NULL;
+  if (!transaction || !transaction->xnInProgress())
+    return 0;
+  if (transid)
+    *transid = transaction->getExeXnId();
+  return -1;
 #else
   // if a transaction is active, get the transid by calling the CLI procedure.
   SQLDESC_ID transid_desc; // added for multi charset module names
