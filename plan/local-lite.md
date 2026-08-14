@@ -14,11 +14,11 @@ authorization, a constrained UDR adapter, independent per-session transaction
 contexts, and a reduced Trafodion Type 4 client endpoint.
 
 Local-lite is not a complete standalone database yet. M11 establishes the
-multi-session process and protocol boundary, but compiler/executor requests are
-serialized and commit/recovery guarantees remain bounded to the documented
-RocksDB-only surface. M12 must still define a backend-neutral transaction
-domain, crash-atomic catalog/base/index publication, recovery, backup, restore,
-and migration. Distributed execution, password/TLS authentication, full
+multi-session process and protocol boundary, while M12 adds the backend-neutral
+transactional storage/recovery contract and a durable compatibility bridge for
+the existing per-table layout. Compiler/executor requests remain serialized,
+and the current implementation is a single-node service. Distributed
+execution, password/TLS authentication, full
 Trafodion wire compatibility, and the HBase/HDFS/Hive service stack
 remain outside the runtime.
 The transaction and concurrency integration plan is tracked separately in
@@ -411,8 +411,12 @@ Supported local-lite `sqlci` behavior:
 
 Unsupported behavior:
 
-- Atomic multi-table/catalog commit, recovery/WAL ownership above RocksDB,
-  backup/restore, and production resource-governed multi-session operation.
+- Cross-process concurrent writers, distributed transactions, node-level HA,
+  and online cutover of all live catalog/data paths from the journal-coordinated
+  per-table layout to the migrated single TransactionDB key space. M12 does
+  provide crash-recoverable multi-table DML, synchronous WAL policy,
+  checkpoint, backup/restore, integrity verification, migration, metrics, and
+  disk-watermark gates for its declared single-node boundary.
 - RI CASCADE, computed system columns, unrestricted histogram/physical metadata,
   LOB/ARRAY storage, and the full UDR server/host-rowset surface.
 - HBase-backed metadata/storage operations.
@@ -563,7 +567,7 @@ unchanged in local-lite.
 | --- | --- | --- |
 | Basic table DDL, `INSERT VALUES`, scans, expressions, joins, aggregates, derived tables, subqueries, and `UNION` | Covered by `TEST001`-`TEST006` | Continue migrating only deterministic, service-independent variants. |
 | Binder, executor-value, DDL, and unsupported-surface diagnostics | Covered by `TEST007`-`TEST009` | Add narrow cases only when they protect a local-lite invariant. |
-| `INSERT ... SELECT` | Covered by `TEST010` | Tuple-flow autocommit is now atomic within one target table; cross-table and catalog/table crash atomicity remain out of scope. |
+| `INSERT ... SELECT` | Covered by `TEST010` | Tuple-flow autocommit is atomic within one target table; M12 adds durable journal coordination for explicit transactions that publish multiple tables. |
 | SQLCI `PREPARE`/`EXECUTE` lifecycle | Covered by `TEST011`, including repeated SELECT/INSERT, new parameter values, name replacement, fresh SELECT results, and post-error recovery | Add cases only when they protect another prepared-execution invariant. |
 | `NATURAL JOIN`, general `SELECT DISTINCT`, and `FIRST`/limit shapes | Covered by `TEST012`, including correlated `FIRST` through ProbeCache | `LIMIT` intentionally retains Trafodion's legacy `[ANY n]` semantics rather than ordered `FIRST` semantics. |
 | POSIX `REGEXP` and additional ASCII string functions | Covered by `TEST013`, including NULL propagation, invalid-pattern `8452`, and post-error recovery | UCS2/UTF8 conversion, collation, and large-length character boundaries remain outside this portable increment. |
@@ -584,8 +588,9 @@ unchanged in local-lite.
 
 The next portable compatibility increment is single-byte
 `TRIM`/`LTRIM`/`RTRIM` family coverage over local tables. It is separate from
-the productization critical path, whose active milestone is now M12
-transactional storage and recovery after the completed M11 service boundary.
+the productization critical path, whose next step after completed M12 is the
+operational cutover from the journal-coordinated compatibility layout to the
+checksummed single-TransactionDB migration target.
 
 The broader effort to run portable sections from the legacy regress suites is
 tracked separately in `plan/local-lite-legacy-regress-roadmap.md`. Milestone 0
@@ -1008,23 +1013,44 @@ Completed:
   with a late primary-key conflict does not partially publish an earlier row.
 
 The transaction/concurrency roadmap Phases 1 through 5 are complete for the
-documented local-lite v1 boundary. Cross-process writers, cross-table atomic
-snapshots, crash-atomic catalog/table publication, multi-table atomic commit,
-and TMF coordination remain explicit post-v1 or Phase 6 work.
+documented local-lite v1 boundary. M12 subsequently adds the selected
+single-keyspace transaction contract and journal-coordinated, crash-recoverable
+multi-table DML publication. Cross-process writers, TMF coordination,
+distributed execution, node HA, and operational online cutover to the migrated
+single TransactionDB layout remain later work.
 
 Remaining, in suggested productization order:
 
-1. Implement **M12 transactional storage and recovery**: define a backend-neutral
-   storage/transaction contract, select the transactional backend using common
-   correctness and fault tests, and add crash-atomic multi-table/catalog commits,
-   backup, restore, migration, and integrity verification, including a versioned
-   migration for the pre-M11 fixed-buffer metadata-key encoding.
+1. Productize the completed **M12 transactional storage and recovery** boundary:
+   perform an operational cutover from the compatibility journal/per-table
+   layout to the migrated single TransactionDB key space, then add online
+   upgrade orchestration and service-level backup controls.
 2. Continue portable SQL compatibility increments, beginning with the
    single-byte `TRIM`/`LTRIM`/`RTRIM` family, as a parallel compatibility
    backlog rather than the productization critical path.
 
 The authoritative milestone definitions and completion gates are in
 `plan/local-lite-legacy-regress-roadmap.md`.
+
+- [x] **Complete M12 transactional storage and recovery for the declared
+  single-node migration boundary.**
+  - [x] Define backend-neutral engine, session, transaction, status, metrics,
+    and bounded streaming cursor contracts.
+  - [x] Put catalog, base, UNIQUE, and secondary-index records through the
+    common single-keyspace atomicity/snapshot contract.
+  - [x] Migrate legacy fixed-buffer metadata keys to collision-free version-2
+    encodings with exact-count and collision checks.
+  - [x] Run RocksDB TransactionDB and SQLite WAL through the same correctness,
+    crash-recovery, fault, and workload gates; select TransactionDB from those
+    results rather than peak throughput alone.
+  - [x] Add synchronous durability, checkpoint, backup/restore, integrity,
+    metrics, and disk-watermark support.
+  - [x] Add atomic, checksummed migration from the per-table RocksDB layout and
+    retain the unchanged source as the rollback window.
+  - [x] Protect live-layout multi-table DML with preflight, a durable commit
+    journal, idempotent table markers, and startup replay; verify it through a
+    real SQLCI interruption/restart test.
+  - [x] `make local-lite-m12` composes the M12A, M12B, and M12C gates.
 
 - [x] **Complete M11 sessionized runtime and standalone server.**
   - [x] Each `ContextCli` owns an `ExTransaction`, which creates, resets, and

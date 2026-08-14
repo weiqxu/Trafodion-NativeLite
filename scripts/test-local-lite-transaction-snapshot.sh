@@ -518,6 +518,7 @@ fi
   -I"$repo_root/core/sql/localstore" \
   "${rocksdb_include_flags[@]}" \
   "$src" "$repo_root/core/sql/localstore/LocalLiteRocksDBStore.cpp" \
+  "$repo_root/core/sql/localstore/LocalLiteStorage.cpp" \
   "$repo_root/scripts/local-lite-row-codec-test-stubs.cpp" \
   "${rocksdb_library_flags[@]}" \
   -lrocksdb -lpthread -o "$bin"

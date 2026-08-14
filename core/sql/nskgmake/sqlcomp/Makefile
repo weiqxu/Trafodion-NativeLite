@@ -56,7 +56,9 @@ CPPSRC := CmpDescribe.cpp \
 	vers_libsqlcomp.cpp
 
 ifeq ($(TRAF_LOCAL_LITE),1)
-CPPSRC += LocalLiteRocksDBStore.cpp
+CPPSRC += LocalLiteRocksDBStore.cpp \
+	LocalLiteStorage.cpp \
+	LocalLiteStorageMigration.cpp
 SRCPATH += localstore
 endif
 

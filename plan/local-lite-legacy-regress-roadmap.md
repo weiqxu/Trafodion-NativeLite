@@ -152,8 +152,9 @@ row/key image and applies UPDATE/DELETE/INSERT through one RocksDB WriteBatch.
 The executor uses RocksDB rows exclusively. Historical compiler/executor class
 names containing `Hbase` remain node names, not a dependency on an HBase client,
 transaction manager, or HFile path. Accordingly, the HBase/HFile-specific
-UPSERT USING LOAD path remains intentionally unsupported. Cross-table commit is
-also still intentionally not atomic.
+UPSERT USING LOAD path remains intentionally unsupported. At M2 completion,
+cross-table commit was not atomic; M12 later added durable multi-table DML
+publication and restart recovery for the single-node compatibility layout.
 
 Implement pending deletes, UNIQUE record removal, DELETE visibility, UPSERT
 insert/update selection, MERGE matched/not-matched paths, statement atomicity,
@@ -452,7 +453,7 @@ convergence or a production database.
 | Milestone | Status | Current evidence and boundary |
 | --- | --- | --- |
 | M1 UPDATE | Complete | Native `TEST026`; UPDATE generation/execution, key changes, statement atomicity, explicit transaction behavior, and diagnostics are covered. |
-| M2 DELETE, UPSERT, MERGE | Complete | Native `TEST027`-`TEST029`; per-table publication is atomic, but cross-table commit is not. |
+| M2 DELETE, UPSERT, MERGE | Complete | Native `TEST027`-`TEST029`; M2 established per-table atomic publication, and M12 later added journal-coordinated multi-table DML publication/recovery. |
 | M3 secondary indexes | Complete | Native `TEST030`-`TEST035` plus RocksDB SQLCI smoke; equality, prefix, range, covering/index-only access, uniqueness, and DML maintenance are covered. |
 | M4 catalog DDL and constraints | Complete for the declared local surface | Native `TEST009`, `TEST021`, `TEST036`, `TEST037`; later metadata/DDL compatibility work and `TEST043` extend this surface. RI CASCADE and computed system columns remain outside the boundary. |
 | M5 metadata and statistics | Complete for the declared local surface | Native `TEST038`; SHOWDDL/SHOWSTATS and persisted row/NULL statistics are covered. Full histograms and unrestricted legacy physical `_MD_` behavior are not claimed. |
@@ -461,8 +462,8 @@ convergence or a production database.
 | M8 authorization | Complete for the local catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
 | M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
 | M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the eleven allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
-| M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; production recovery and security are M12/later work. |
-| M12 transactional storage and recovery | Planned; next | Not started. The completed M11 service boundary is now its input. |
+| M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
+| M12 transactional storage and recovery | Complete for the declared single-node migration boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, atomic checksummed old-layout migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. The live compatibility layout is journal-coordinated; online cutover, node HA, and distributed execution are not claimed. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -563,15 +564,29 @@ uses its internal `T4_Dcs_Cancel` path.
 M11 completion does not claim production readiness. The endpoint is trusted
 local only: TCP is loopback-only, Unix sockets are owner-only, and there is no
 password exchange. Results are buffered and compiler/executor work is
-serialized. M11 establishes
-the multi-session service boundary needed for M12 durability, recovery, backup,
-resource governance, and later security hardening.
+serialized. M11 established the multi-session service boundary consumed by M12
+durability, recovery, backup, and resource-governance work. Password/TLS
+authentication and broader security hardening remain later milestones.
 
 ## Milestone 12: Transactional Storage And Recovery
 
-Status: planned; not started.  M12 makes the M11 service safe for durable
-single-node transactional use.  Storage-engine selection is an M12 decision,
-not a prerequisite baked into the executor.
+Status: complete for the declared single-node migration boundary. M12 makes the
+M11 service crash-recoverable for durable multi-table DML and establishes the
+transactional target format and operations contract. Storage-engine selection
+was made by the common gate rather than baked into the executor.
+
+The requested implementation order is complete:
+
+1. Rebuild and pass the M10 and M11 input baselines before changing storage.
+2. Introduce the backend-neutral engine/session/transaction/status contract.
+3. Add a bounded, cancellable streaming range cursor.
+4. Define one ordered transaction key space for catalog, base, UNIQUE, and
+   index records, plus durable compatibility-layout SQL publication/recovery.
+5. Migrate fixed-buffer metadata keys to collision-free version-2 encodings.
+6. Run TransactionDB and SQLite WAL through the identical gate and select
+   TransactionDB from correctness, recovery, and operational evidence.
+7. Complete recovery, checkpoint, backup/restore, legacy migration, checksum,
+   fault injection, metrics, disk-watermark, and SQL restart gates.
 
 ### M12A: Storage Contract And Atomic Transaction Domain
 
@@ -588,6 +603,16 @@ not a prerequisite baked into the executor.
   durability contracts before selecting the backend.
 - Preserve versioned row/key/catalog formats or provide an explicit migration.
 
+Implemented evidence (2026-08-14): `LocalLiteStorage.h` defines the engine,
+session, transaction, and one-record-at-a-time bounded cursor contracts plus
+stable status/metric types. The common contract places catalog, base-row,
+UNIQUE, and index records in one transaction and verifies commit, rollback,
+snapshot isolation, deterministic retryable conflicts, cancellation, streaming
+range iteration, and synchronous durability. Existing metadata COLUMNS and
+KEYS records migrate at open to collision-free version-2 keys containing full
+UID/ordinal/key identifiers; downgrade simulation verifies exact regenerated
+counts and absence of legacy keys.
+
 ### M12B: Backend Selection And Implementation
 
 - Evaluate at least the single-database RocksDB TransactionDB layout and one
@@ -597,6 +622,13 @@ not a prerequisite baked into the executor.
   p95/p99 stability and operational behavior second, and peak throughput after
   those gates.
 - Do not map a successful point-get/scan prototype to production readiness.
+
+Implemented evidence: the same executable contract and crash/fault workload
+runs both RocksDB TransactionDB and SQLite WAL. Both pass correctness and
+recovery; the gate records p50/p95/p99 and transaction rate without selecting
+on peak throughput. RocksDB TransactionDB is selected because it satisfies the
+correctness/recovery gates while preserving RocksDB operational and migration
+continuity.
 
 ### M12C: Recovery, Backup, Migration, And Operations
 
@@ -609,8 +641,25 @@ not a prerequisite baked into the executor.
 - Add storage and transaction metrics, disk-watermark protection, and a
   repeatable restore drill.
 
-M12 completion requires crash-atomic catalog/data and multi-table commits, one
-declared cross-table transaction snapshot, no visibility of aborted writes,
-successful recovery after every supported fault point, and a backup restored
-into a fresh store that passes metadata, row, key/index, and SQL validation.
-It still does not claim node-level high availability or distributed execution.
+Implemented evidence: the selected engine uses synchronous commit/WAL flush,
+supports checkpoints, consistent backup, restore into a fresh path, full-key
+space verification, transaction/byte/key metrics, and a configurable minimum
+free-space watermark. The fault matrix covers committed and uncommitted process
+exit, before/after commit, interrupted checkpoint/backup, restore, and
+`UINT64_MAX` disk-watermark rejection. Legacy migration writes its format,
+record count, source format, and SHA-256 in the same target transaction; an
+injected interruption leaves no partial target state, retry succeeds without
+cleanup, and the unchanged source remains SQL-queryable as the rollback
+window. The SQL recovery gate stops after the first of two table batches and
+proves the next process replays exactly once and exposes both committed rows.
+
+M12's selected single-keyspace contract provides the catalog/data/index atomic
+domain and cross-keyspace snapshot. During the live-layout transition, SQL DML
+uses a durable commit journal: every touched table is conflict-checked before
+the commit decision, publication is process-serialized, and each table batch
+contains an idempotent journal marker. Startup completes committed interrupted
+publication before accepting SQL traffic; aborted/conflicting work never gets
+a journal. Migration is an atomic copy and the source is the documented
+rollback window. Online in-place cutover and service-level backup scheduling
+remain follow-on operational work. M12 still does not claim node-level high
+availability, multi-process writers, or distributed execution.

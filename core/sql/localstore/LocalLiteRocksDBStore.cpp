@@ -7,6 +7,7 @@
 #ifdef TRAF_LOCAL_LITE
 
 #include "LocalLiteRocksDBStore.h"
+#include "LocalLiteStorage.h"
 #include "LocalLiteRowCodec.h"
 
 #include <errno.h>
@@ -17,6 +18,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <functional>
@@ -1350,22 +1352,18 @@ static std::string localLiteMetadataTableKey(uint64_t uid)
 
 static std::string localLiteMetadataColumnKey(uint64_t uid, size_t ordinal)
 {
-  char buf[32];
-  snprintf(buf, sizeof(buf), "%020llu|%020lu",
-           static_cast<unsigned long long>(uid),
-           static_cast<unsigned long>(ordinal));
-  return localLiteMetadataPrefix("COLUMNS") + buf;
+  return localLiteMetadataPrefix("COLUMNS") + "v2|" +
+         localLiteMetadataUid(uid) + "|" +
+         localLiteMetadataUid(static_cast<uint64_t>(ordinal));
 }
 
 static std::string localLiteMetadataKeyKey(uint64_t uid,
                                            const std::string &keyId,
                                            size_t sequence)
 {
-  char buf[32];
-  snprintf(buf, sizeof(buf), "%020llu|%s|%020lu",
-           static_cast<unsigned long long>(uid),
-           keyId.c_str(), static_cast<unsigned long>(sequence));
-  return localLiteMetadataPrefix("KEYS") + buf;
+  return localLiteMetadataPrefix("KEYS") + "v2|" +
+         localLiteMetadataUid(uid) + "|" + localLiteHexKey(keyId) + "|" +
+         localLiteMetadataUid(static_cast<uint64_t>(sequence));
 }
 
 static void appendLocalLiteMetadataField(std::string &out,
@@ -1503,6 +1501,197 @@ static void deleteLocalLiteMetadataForTable(rocksdb_writebatch_t *batch,
             batch, localLiteMetadataKeyKey(table.objectUid,
                                            "S" + localLiteHexKey(idx.name), i));
     }
+}
+
+static const char *LOCAL_LITE_METADATA_KEY_FORMAT =
+    "format|metadata-key";
+
+static bool collectLocalLiteMetadataV2Keys(
+    const LocalLiteTableDef &table,
+    std::set<std::string> *keys,
+    std::string *error)
+{
+  for (size_t i = 0; i < table.columns.size(); i++)
+    if (!keys->insert(
+            localLiteMetadataColumnKey(table.objectUid, i)).second)
+      {
+        setError(error, "local-lite metadata column-key collision");
+        return false;
+      }
+  for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
+    if (!keys->insert(
+            localLiteMetadataKeyKey(table.objectUid, "P", i)).second)
+      {
+        setError(error, "local-lite metadata primary-key collision");
+        return false;
+      }
+  for (size_t key = 0; key < table.uniqueKeyColumns.size(); key++)
+    for (size_t i = 0; i < table.uniqueKeyColumns[key].size(); i++)
+      if (!keys->insert(localLiteMetadataKeyKey(
+              table.objectUid, "U" + std::to_string(key), i)).second)
+        {
+          setError(error, "local-lite metadata unique-key collision");
+          return false;
+        }
+  for (size_t index = 0; index < table.secondaryIndexes.size(); index++)
+    for (size_t i = 0;
+         i < table.secondaryIndexes[index].keyColumns.size(); i++)
+      if (!keys->insert(localLiteMetadataKeyKey(
+              table.objectUid,
+              "S" + localLiteHexKey(table.secondaryIndexes[index].name),
+              i)).second)
+        {
+          setError(error, "local-lite metadata index-key collision");
+          return false;
+        }
+  return true;
+}
+
+static bool migrateLocalLiteMetadataKeys(rocksdb_t *catalogDb,
+                                         std::string *error)
+{
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  char *rocksError = NULL;
+  size_t valueLength = 0;
+  char *rawFormat = rocksdb_get(
+      catalogDb, readOptions, LOCAL_LITE_METADATA_KEY_FORMAT,
+      strlen(LOCAL_LITE_METADATA_KEY_FORMAT), &valueLength, &rocksError);
+  if (!checkRocksError(rocksError,
+                       "read local-lite metadata-key format", error))
+    {
+      rocksdb_readoptions_destroy(readOptions);
+      return false;
+    }
+  if (rawFormat)
+    {
+      const std::string format(rawFormat, valueLength);
+      rocksdb_free(rawFormat);
+      rocksdb_readoptions_destroy(readOptions);
+      if (format == "2")
+        return true;
+      setError(error, "unsupported local-lite metadata-key format " + format);
+      return false;
+    }
+
+  std::vector<LocalLiteTableDef> tables;
+  rocksdb_iterator_t *iterator =
+      rocksdb_create_iterator(catalogDb, readOptions);
+  const std::string tablePrefix("table|");
+  for (rocksdb_iter_seek(iterator, tablePrefix.data(), tablePrefix.size());
+       rocksdb_iter_valid(iterator); rocksdb_iter_next(iterator))
+    {
+      size_t keyLength = 0;
+      size_t tableLength = 0;
+      const char *rawKey = rocksdb_iter_key(iterator, &keyLength);
+      const std::string key(rawKey, keyLength);
+      if (key.compare(0, tablePrefix.size(), tablePrefix) != 0)
+        break;
+      const char *rawTable = rocksdb_iter_value(iterator, &tableLength);
+      LocalLiteTableDef table;
+      if (!decodeTable(std::string(rawTable, tableLength), &table, error))
+        {
+          rocksdb_iter_destroy(iterator);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+      tables.push_back(table);
+    }
+  rocksError = NULL;
+  rocksdb_iter_get_error(iterator, &rocksError);
+  rocksdb_iter_destroy(iterator);
+  if (!checkRocksError(rocksError,
+                       "scan tables for metadata-key migration", error))
+    {
+      rocksdb_readoptions_destroy(readOptions);
+      return false;
+    }
+
+  std::set<std::string> expectedKeys;
+  for (size_t i = 0; i < tables.size(); i++)
+    if (!collectLocalLiteMetadataV2Keys(tables[i], &expectedKeys, error))
+      {
+        rocksdb_readoptions_destroy(readOptions);
+        return false;
+      }
+
+  rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+  const char *prefixes[] = {"md|COLUMNS|", "md|KEYS|"};
+  for (size_t prefixIndex = 0; prefixIndex < 2; prefixIndex++)
+    {
+      const std::string prefix(prefixes[prefixIndex]);
+      iterator = rocksdb_create_iterator(catalogDb, readOptions);
+      for (rocksdb_iter_seek(iterator, prefix.data(), prefix.size());
+           rocksdb_iter_valid(iterator); rocksdb_iter_next(iterator))
+        {
+          size_t keyLength = 0;
+          const char *rawKey = rocksdb_iter_key(iterator, &keyLength);
+          const std::string key(rawKey, keyLength);
+          if (key.compare(0, prefix.size(), prefix) != 0)
+            break;
+          rocksdb_writebatch_delete(batch, key.data(), key.size());
+        }
+      rocksError = NULL;
+      rocksdb_iter_get_error(iterator, &rocksError);
+      rocksdb_iter_destroy(iterator);
+      if (!checkRocksError(rocksError,
+                           "scan legacy metadata keys", error))
+        {
+          rocksdb_writebatch_destroy(batch);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+    }
+  rocksdb_readoptions_destroy(readOptions);
+
+  for (size_t i = 0; i < tables.size(); i++)
+    addLocalLiteMetadataForTable(batch, tables[i]);
+  rocksdb_writebatch_put(batch, LOCAL_LITE_METADATA_KEY_FORMAT,
+                         strlen(LOCAL_LITE_METADATA_KEY_FORMAT), "2", 1);
+
+  rocksdb_writeoptions_t *writeOptions = rocksdb_writeoptions_create();
+  rocksdb_writeoptions_set_sync(writeOptions, 1);
+  rocksError = NULL;
+  rocksdb_write(catalogDb, writeOptions, batch, &rocksError);
+  rocksdb_writeoptions_destroy(writeOptions);
+  rocksdb_writebatch_destroy(batch);
+  if (!checkRocksError(rocksError,
+                       "migrate local-lite metadata keys", error))
+    return false;
+
+  readOptions = rocksdb_readoptions_create();
+  size_t migratedKeyCount = 0;
+  for (size_t prefixIndex = 0; prefixIndex < 2; prefixIndex++)
+    {
+      const std::string prefix =
+          std::string(prefixes[prefixIndex]) + "v2|";
+      iterator = rocksdb_create_iterator(catalogDb, readOptions);
+      for (rocksdb_iter_seek(iterator, prefix.data(), prefix.size());
+           rocksdb_iter_valid(iterator); rocksdb_iter_next(iterator))
+        {
+          size_t keyLength = 0;
+          const char *rawKey = rocksdb_iter_key(iterator, &keyLength);
+          const std::string key(rawKey, keyLength);
+          if (key.compare(0, prefix.size(), prefix) != 0)
+            break;
+          if (expectedKeys.find(key) == expectedKeys.end())
+            {
+              rocksdb_iter_destroy(iterator);
+              rocksdb_readoptions_destroy(readOptions);
+              setError(error,
+                       "unexpected key after metadata-key migration");
+              return false;
+            }
+          migratedKeyCount++;
+        }
+      rocksdb_iter_destroy(iterator);
+    }
+  rocksdb_readoptions_destroy(readOptions);
+  if (migratedKeyCount != expectedKeys.size())
+    {
+      setError(error, "incomplete local-lite metadata-key migration");
+      return false;
+    }
+  return true;
 }
 
 static bool isLocalLiteMetadataTable(const std::string &catalog,
@@ -2100,6 +2289,174 @@ private:
   pthread_mutex_t *mutex_;
 };
 
+struct LocalLiteJournalTable
+{
+  std::string catalog;
+  std::string schema;
+  std::string name;
+  uint64_t objectUid;
+  std::vector<LocalLiteRowMutation> updates;
+  std::vector<LocalLiteRow> deletes;
+  std::vector<LocalLiteRow> inserts;
+};
+
+static void appendJournalString(std::string &out, const std::string &value)
+{
+  appendUint64(out, value.size());
+  out.append(value);
+}
+
+static bool readJournalUint64(const std::string &encoded,
+                              size_t *offset,
+                              uint64_t *value,
+                              std::string *error)
+{
+  if (*offset + 8 > encoded.size())
+    {
+      setError(error, "truncated local-lite transaction journal");
+      return false;
+    }
+  *value = readUint64(encoded, offset);
+  return true;
+}
+
+static bool readJournalString(const std::string &encoded,
+                              size_t *offset,
+                              std::string *value,
+                              std::string *error)
+{
+  uint64_t length = 0;
+  if (!readJournalUint64(encoded, offset, &length, error) ||
+      length > encoded.size() - *offset)
+    {
+      setError(error, "invalid local-lite transaction journal string");
+      return false;
+    }
+  value->assign(encoded, *offset, static_cast<size_t>(length));
+  *offset += static_cast<size_t>(length);
+  return true;
+}
+
+static std::string encodeTransactionJournal(
+    uint64_t transactionId,
+    const std::vector<LocalLiteJournalTable> &tables)
+{
+  std::string encoded("LLTJ1", 5);
+  appendUint64(encoded, transactionId);
+  appendUint64(encoded, tables.size());
+  for (size_t table = 0; table < tables.size(); table++)
+    {
+      appendJournalString(encoded, tables[table].catalog);
+      appendJournalString(encoded, tables[table].schema);
+      appendJournalString(encoded, tables[table].name);
+      appendUint64(encoded, tables[table].objectUid);
+      appendUint64(encoded, tables[table].updates.size());
+      for (size_t i = 0; i < tables[table].updates.size(); i++)
+        {
+          appendUint64(encoded, tables[table].updates[i].before.rowId);
+          appendJournalString(encoded, tables[table].updates[i].before.value);
+          appendJournalString(encoded, tables[table].updates[i].after);
+        }
+      appendUint64(encoded, tables[table].deletes.size());
+      for (size_t i = 0; i < tables[table].deletes.size(); i++)
+        {
+          appendUint64(encoded, tables[table].deletes[i].rowId);
+          appendJournalString(encoded, tables[table].deletes[i].value);
+        }
+      appendUint64(encoded, tables[table].inserts.size());
+      for (size_t i = 0; i < tables[table].inserts.size(); i++)
+        {
+          appendUint64(encoded, tables[table].inserts[i].rowId);
+          appendJournalString(encoded, tables[table].inserts[i].value);
+        }
+    }
+  return encoded;
+}
+
+static bool decodeTransactionJournal(
+    const std::string &encoded,
+    uint64_t *transactionId,
+    std::vector<LocalLiteJournalTable> *tables,
+    std::string *error)
+{
+  tables->clear();
+  if (encoded.size() < 5 || encoded.compare(0, 5, "LLTJ1") != 0)
+    {
+      setError(error, "invalid local-lite transaction journal format");
+      return false;
+    }
+  size_t offset = 5;
+  uint64_t tableCount = 0;
+  if (!readJournalUint64(encoded, &offset, transactionId, error) ||
+      !readJournalUint64(encoded, &offset, &tableCount, error) ||
+      tableCount > 100000)
+    return false;
+  tables->resize(static_cast<size_t>(tableCount));
+  for (size_t table = 0; table < tables->size(); table++)
+    {
+      LocalLiteJournalTable &entry = (*tables)[table];
+      if (!readJournalString(encoded, &offset, &entry.catalog, error) ||
+          !readJournalString(encoded, &offset, &entry.schema, error) ||
+          !readJournalString(encoded, &offset, &entry.name, error) ||
+          !readJournalUint64(encoded, &offset, &entry.objectUid, error))
+        return false;
+      uint64_t count = 0;
+      if (!readJournalUint64(encoded, &offset, &count, error) ||
+          count > 10000000)
+        return false;
+      entry.updates.resize(static_cast<size_t>(count));
+      for (size_t i = 0; i < entry.updates.size(); i++)
+        if (!readJournalUint64(encoded, &offset,
+                               &entry.updates[i].before.rowId, error) ||
+            !readJournalString(encoded, &offset,
+                               &entry.updates[i].before.value, error) ||
+            !readJournalString(encoded, &offset,
+                               &entry.updates[i].after, error))
+          return false;
+      if (!readJournalUint64(encoded, &offset, &count, error) ||
+          count > 10000000)
+        return false;
+      entry.deletes.resize(static_cast<size_t>(count));
+      for (size_t i = 0; i < entry.deletes.size(); i++)
+        if (!readJournalUint64(encoded, &offset,
+                               &entry.deletes[i].rowId, error) ||
+            !readJournalString(encoded, &offset,
+                               &entry.deletes[i].value, error))
+          return false;
+      if (!readJournalUint64(encoded, &offset, &count, error) ||
+          count > 10000000)
+        return false;
+      entry.inserts.resize(static_cast<size_t>(count));
+      for (size_t i = 0; i < entry.inserts.size(); i++)
+        if (!readJournalUint64(encoded, &offset,
+                               &entry.inserts[i].rowId, error) ||
+            !readJournalString(encoded, &offset,
+                               &entry.inserts[i].value, error))
+          return false;
+    }
+  if (offset != encoded.size())
+    {
+      setError(error, "trailing bytes in local-lite transaction journal");
+      return false;
+    }
+  return true;
+}
+
+static std::string transactionJournalKey(uint64_t transactionId)
+{
+  char id[32];
+  snprintf(id, sizeof(id), "%020llu",
+           static_cast<unsigned long long>(transactionId));
+  return std::string("journal/") + id;
+}
+
+static std::string transactionTableMarker(uint64_t transactionId)
+{
+  std::string marker("J", 1);
+  appendUint64(marker, transactionId);
+  return marker;
+}
+
 class LocalLiteStorageManager
 {
   friend class LocalLiteRocksDBStore;
@@ -2134,6 +2491,42 @@ public:
           return false;
 
         catalogDb_ = db;
+        if (!migrateLocalLiteMetadataKeys(catalogDb_, error))
+          {
+            rocksdb_close(catalogDb_);
+            catalogDb_ = NULL;
+            return false;
+          }
+        journalEngine_ = LocalLiteCreateRocksDBTransactionEngine();
+        LocalLiteStorageOptions journalOptions;
+        journalOptions.synchronousCommit = true;
+        const char *minimumFree =
+            getenv("TRAF_LOCAL_LITE_MINIMUM_FREE_BYTES");
+        if (minimumFree && minimumFree[0])
+          journalOptions.minimumFreeBytes = strtoull(minimumFree, NULL, 10);
+        LocalLiteStorageStatus journalStatus;
+        if (!journalEngine_->open(
+                LocalLiteRocksDBStore::defaultRoot() +
+                    "/m12-transaction-journal",
+                journalOptions, &journalStatus))
+          {
+            setError(error, "open LocalLite M12 transaction journal: " +
+                            journalStatus.message);
+            delete journalEngine_;
+            journalEngine_ = NULL;
+            rocksdb_close(catalogDb_);
+            catalogDb_ = NULL;
+            return false;
+          }
+        if (!recoverJournals(error))
+          {
+            journalEngine_->close();
+            delete journalEngine_;
+            journalEngine_ = NULL;
+            rocksdb_close(catalogDb_);
+            catalogDb_ = NULL;
+            return false;
+          }
       }
 
     refCount_++;
@@ -2160,7 +2553,86 @@ public:
     if (catalogDb_)
       rocksdb_close(catalogDb_);
     catalogDb_ = NULL;
+    if (journalEngine_)
+      {
+        journalEngine_->close();
+        delete journalEngine_;
+        journalEngine_ = NULL;
+      }
   }
+
+  bool persistJournal(const std::vector<LocalLiteJournalTable> &tables,
+                      uint64_t *transactionId,
+                      std::string *error)
+  {
+    if (!transactionId)
+      {
+        setError(error, "missing LocalLite M12 transaction journal id");
+        return false;
+      }
+    LocalLiteStorageStatus status;
+    LocalLiteStorageSession *session = journalEngine_
+        ? journalEngine_->createSession(&status) : NULL;
+    LocalLiteStorageTxn *txn = session ? session->begin(&status) : NULL;
+    std::string encodedNextId;
+    bool found = false;
+    uint64_t nextId = 1;
+    bool ok = txn && txn->get("meta/next-journal-id", &encodedNextId,
+                              &found, &status);
+    if (ok && found)
+      {
+        size_t offset = 0;
+        if (encodedNextId.size() != 8)
+          {
+            status.code = LOCAL_LITE_STORAGE_CORRUPTION;
+            status.message = "invalid LocalLite M12 next journal id";
+            ok = false;
+          }
+        else
+          nextId = readUint64(encodedNextId, &offset);
+      }
+    if (ok && nextId == 0)
+      {
+        status.code = LOCAL_LITE_STORAGE_CORRUPTION;
+        status.message = "exhausted LocalLite M12 transaction journal ids";
+        ok = false;
+      }
+    std::string encodedFollowingId;
+    if (ok)
+      appendUint64(encodedFollowingId, nextId + 1);
+    if (ok)
+      ok = txn->put("meta/next-journal-id", encodedFollowingId, &status) &&
+           txn->put(transactionJournalKey(nextId),
+                    encodeTransactionJournal(nextId, tables), &status) &&
+           txn->commit(&status);
+    if (!ok)
+      setError(error, "persist LocalLite M12 transaction journal: " +
+                      status.message);
+    else
+      *transactionId = nextId;
+    delete txn;
+    delete session;
+    return ok;
+  }
+
+  bool removeJournal(uint64_t transactionId, std::string *error)
+  {
+    LocalLiteStorageStatus status;
+    LocalLiteStorageSession *session = journalEngine_
+        ? journalEngine_->createSession(&status) : NULL;
+    LocalLiteStorageTxn *txn = session ? session->begin(&status) : NULL;
+    const bool ok = txn &&
+        txn->erase(transactionJournalKey(transactionId), &status) &&
+        txn->commit(&status);
+    if (!ok)
+      setError(error, "remove LocalLite M12 transaction journal: " +
+                      status.message);
+    delete txn;
+    delete session;
+    return ok;
+  }
+
+  bool recoverJournals(std::string *error);
 
   rocksdb_t *catalogDb()
   {
@@ -3258,6 +3730,8 @@ public:
       const std::vector<LocalLiteRowMutation> &updates,
       const std::vector<LocalLiteRow> &deletes,
       const std::vector<LocalLiteRow> &inserts,
+      bool validateOnly,
+      uint64_t journalTransactionId,
       std::string *error)
   {
     if (updates.empty() && deletes.empty() && inserts.empty())
@@ -3280,6 +3754,29 @@ public:
     if (!db)
       return false;
 
+    const std::string journalMarker =
+        transactionTableMarker(journalTransactionId);
+    if (journalTransactionId != 0)
+      {
+        rocksdb_readoptions_t *markerReadOptions =
+            rocksdb_readoptions_create();
+        char *markerError = NULL;
+        size_t markerValueLen = 0;
+        char *markerValue = rocksdb_get(
+            db, markerReadOptions, journalMarker.data(), journalMarker.size(),
+            &markerValueLen, &markerError);
+        rocksdb_readoptions_destroy(markerReadOptions);
+        if (!checkRocksError(markerError,
+                             "read local-lite transaction table marker",
+                             error))
+          return false;
+        if (markerValue)
+          {
+            rocksdb_free(markerValue);
+            return true;
+          }
+      }
+
     typedef std::map<std::string, std::string> RecordMap;
     typedef std::map<std::string, LocalLiteRow> RowMap;
     RecordMap originalRecords;
@@ -3296,7 +3793,8 @@ public:
         std::string key(rawKey, keyLen);
         std::string value(rawValue, valueLen);
         originalRecords[key] = value;
-        if (!key.empty() && (key[0] == 'U' || key[0] == 'I'))
+        if (!key.empty() &&
+            (key[0] == 'U' || key[0] == 'I' || key[0] == 'J'))
           continue;
 
         LocalLiteRow row;
@@ -3328,6 +3826,10 @@ public:
     std::vector<std::string> updatedKeys(updates.size());
     std::vector<std::string> insertedKeys(inserts.size());
     const bool keyless = loaded.primaryKeyColumns.empty();
+    const uint64_t firstInsertedRowId =
+        inserts.empty() ? loaded.nextRowId : inserts.front().rowId;
+    const bool keylessMetadataAlreadyAdvanced = keyless && !inserts.empty() &&
+        loaded.nextRowId == firstInsertedRowId + inserts.size();
 
     for (size_t i = 0; i < updates.size(); i++)
       {
@@ -3403,7 +3905,16 @@ public:
       {
         if (keyless)
           {
-            const uint64_t expectedRowId = loaded.nextRowId + i;
+            if (loaded.nextRowId != firstInsertedRowId &&
+                !keylessMetadataAlreadyAdvanced)
+              {
+                setError(error,
+                         "local-lite keyless row-id allocation changed while "
+                         "transaction was active; restart and retry the "
+                         "transaction");
+                return false;
+              }
+            const uint64_t expectedRowId = firstInsertedRowId + i;
             if (inserts[i].rowId != expectedRowId)
               {
                 setError(error,
@@ -3464,9 +3975,12 @@ public:
             }
       }
 
+    if (validateOnly)
+      return true;
+
     std::string tableMetadataKey;
     std::string oldMetadata;
-    if (keyless && !inserts.empty())
+    if (keyless && !inserts.empty() && !keylessMetadataAlreadyAdvanced)
       {
         LocalLiteTableDef updated = loaded;
         updated.nextRowId += inserts.size();
@@ -3478,6 +3992,10 @@ public:
       }
 
     rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    if (journalTransactionId != 0)
+      rocksdb_writebatch_put(batch,
+                             journalMarker.data(), journalMarker.size(),
+                             "1", 1);
     for (RecordMap::const_iterator record = originalRecords.begin();
          record != originalRecords.end(); ++record)
       if (finalRecords.find(record->first) == finalRecords.end())
@@ -3501,7 +4019,8 @@ public:
     if (!checkRocksError(writeError,
                          "commit local-lite table mutations", error))
       {
-        if (keyless && !inserts.empty())
+        if (keyless && !inserts.empty() &&
+            !keylessMetadataAlreadyAdvanced)
           putCatalogLocked(tableMetadataKey, oldMetadata,
                            "rollback local-lite row id metadata", NULL);
         return false;
@@ -3562,9 +4081,14 @@ private:
 
   LocalLiteStorageManager()
     : refCount_(0),
-      catalogDb_(NULL)
+      catalogDb_(NULL),
+      journalEngine_(NULL)
   {
-    pthread_mutex_init(&mutex_, NULL);
+    pthread_mutexattr_t attributes;
+    pthread_mutexattr_init(&attributes);
+    pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&mutex_, &attributes);
+    pthread_mutexattr_destroy(&attributes);
   }
 
   LocalLiteStorageManager(const LocalLiteStorageManager &);
@@ -3777,10 +4301,83 @@ private:
 
   unsigned int refCount_;
   rocksdb_t *catalogDb_;
+  LocalLiteStorageEngine *journalEngine_;
   TableMap tableDbs_;
   StatementMap statementSnapshots_;
   pthread_mutex_t mutex_;
 };
+
+bool LocalLiteStorageManager::recoverJournals(std::string *error)
+{
+  LocalLiteStorageStatus status;
+  LocalLiteStorageSession *session = journalEngine_
+      ? journalEngine_->createSession(&status) : NULL;
+  LocalLiteStorageTxn *txn = session ? session->begin(&status) : NULL;
+  LocalLiteStorageCursor *cursor = txn
+      ? txn->scan("journal/", "journal0", &status) : NULL;
+  std::vector<LocalLiteStorageRecord> records;
+  bool ok = cursor != NULL;
+  while (ok)
+    {
+      LocalLiteStorageRecord record;
+      bool end = false;
+      ok = cursor->next(&record, &end, &status);
+      if (!ok || end)
+        break;
+      records.push_back(record);
+    }
+  delete cursor;
+  if (txn)
+    {
+      LocalLiteStorageStatus rollbackStatus;
+      txn->rollback(&rollbackStatus);
+    }
+  delete txn;
+  delete session;
+  if (!ok)
+    {
+      setError(error, "scan LocalLite M12 transaction journal: " +
+                      status.message);
+      return false;
+    }
+
+  for (size_t recordIndex = 0; recordIndex < records.size(); recordIndex++)
+    {
+      uint64_t transactionId = 0;
+      std::vector<LocalLiteJournalTable> tables;
+      if (!decodeTransactionJournal(records[recordIndex].value,
+                                    &transactionId, &tables, error))
+        return false;
+      if (records[recordIndex].key != transactionJournalKey(transactionId))
+        {
+          setError(error,
+                   "LocalLite M12 transaction journal key/id mismatch");
+          return false;
+        }
+      for (size_t tableIndex = 0; tableIndex < tables.size(); tableIndex++)
+        {
+          LocalLiteTableDef table;
+          table.catalog = tables[tableIndex].catalog;
+          table.schema = tables[tableIndex].schema;
+          table.name = tables[tableIndex].name;
+          table.objectUid = tables[tableIndex].objectUid;
+          if (!commitPendingMutations(
+                  table, tables[tableIndex].updates,
+                  tables[tableIndex].deletes,
+                  tables[tableIndex].inserts, false, transactionId, error))
+            {
+              if (error)
+                *error = "recover LocalLite M12 transaction " +
+                         transactionJournalKey(transactionId) + ": " +
+                         *error;
+              return false;
+            }
+        }
+      if (!removeJournal(transactionId, error))
+        return false;
+    }
+  return true;
+}
 
 static bool readCatalogValue(const std::string &key,
                              std::string *value,
@@ -3989,28 +4586,83 @@ public:
         transactionStore_.close();
         return false;
       }
+
+    std::vector<LocalLiteJournalTable> journalTables;
+    journalTables.reserve(pending.size());
+    for (PendingMap::const_iterator t = pending.begin();
+         t != pending.end(); ++t)
+      {
+        LocalLiteJournalTable journalTable;
+        journalTable.catalog = t->second.table.catalog;
+        journalTable.schema = t->second.table.schema;
+        journalTable.name = t->second.table.name;
+        journalTable.objectUid = t->second.table.objectUid;
+        journalTable.updates = t->second.updates;
+        journalTable.deletes = t->second.deletes;
+        journalTable.inserts = t->second.rows;
+        journalTables.push_back(journalTable);
+      }
+
+    // Keep readers and writers behind one process-wide publication latch.
+    // The durable TransactionDB journal is the commit decision; each legacy
+    // table records the journal id in the same write batch as its mutations,
+    // so startup recovery can replay an interrupted multi-table publication.
+    LocalLiteMutexGuard atomicPublication(
+        LocalLiteStorageManager::instance().mutex());
+    for (PendingMap::const_iterator t = pending.begin();
+         t != pending.end(); ++t)
+      if (!LocalLiteStorageManager::instance().commitPendingMutations(
+              t->second.table, t->second.updates, t->second.deletes,
+              t->second.rows, true, 0, error))
+        {
+          transactionStore_.close();
+          return false;
+        }
+
+    uint64_t journalTransactionId = 0;
+    if (!journalTables.empty() &&
+        !LocalLiteStorageManager::instance().persistJournal(
+            journalTables, &journalTransactionId, error))
+      {
+        transactionStore_.close();
+        return false;
+      }
+
     size_t committedTables = 0;
     for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
       {
         if (!LocalLiteStorageManager::instance().commitPendingMutations(
                 t->second.table, t->second.updates, t->second.deletes,
-                t->second.rows, error))
+                t->second.rows, false, journalTransactionId, error))
           {
-            if (committedTables > 0 && error)
-              *error +=
-                  "; local-lite atomic commit is limited to one table; "
-                  "earlier tables in this transaction may already be "
-                  "committed";
+            if (error)
+              *error += "; durable transaction journal retained for recovery";
             transactionStore_.close();
             return false;
           }
-        if (!transactionStore_.invalidateTableStats(t->second.table, error))
-          {
-            transactionStore_.close();
-            return false;
-          }
+
         committedTables++;
+        const char *faultAfterTable =
+            getenv("TRAF_LOCAL_LITE_LEGACY_COMMIT_FAULT_AFTER_TABLE");
+        if (faultAfterTable && faultAfterTable[0] &&
+            strtoull(faultAfterTable, NULL, 10) == committedTables)
+          _exit(90);
       }
+
+    if (journalTransactionId != 0 &&
+        !LocalLiteStorageManager::instance().removeJournal(
+            journalTransactionId, error))
+      {
+        transactionStore_.close();
+        return false;
+      }
+
+    for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
+      if (!transactionStore_.invalidateTableStats(t->second.table, error))
+          {
+            transactionStore_.close();
+            return false;
+          }
     transactionStore_.close();
     return true;
   }
@@ -6394,7 +7046,8 @@ bool LocalLiteRocksDBStore::createIndex(const LocalLiteTableDef &table,
       const char *rawRowKey = rocksdb_iter_key(it, &rowKeyLen);
       const char *rawRowValue = rocksdb_iter_value(it, &rowValueLen);
       std::string rowKey(rawRowKey, rowKeyLen);
-      if (!rowKey.empty() && (rowKey[0] == 'U' || rowKey[0] == 'I'))
+      if (!rowKey.empty() &&
+          (rowKey[0] == 'U' || rowKey[0] == 'I' || rowKey[0] == 'J'))
         continue;
 
       std::string encodedRow;
@@ -7262,7 +7915,8 @@ bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
       const char *rawKey = rocksdb_iter_key(it, &keyLen);
       const char *rawValue = rocksdb_iter_value(it, &valueLen);
       std::string key(rawKey, keyLen);
-      if (key.size() > 0 && (key[0] == 'U' || key[0] == 'I'))
+      if (key.size() > 0 &&
+          (key[0] == 'U' || key[0] == 'I' || key[0] == 'J'))
         continue;
       std::string value(rawValue, valueLen);
       size_t offset = 0;

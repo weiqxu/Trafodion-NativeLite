@@ -19,7 +19,8 @@ introduce the same shape of ownership that Trafodion uses elsewhere:
 
 ## Current Baseline
 
-Local-lite currently supports a narrow local table path:
+As of M12 (verified 2026-08-14), local-lite supports the following local table
+and transactional-storage path:
 
 - `CREATE TABLE` and `DROP TABLE` are routed through compiler DDL code and write
   local RocksDB catalog metadata.
@@ -41,17 +42,20 @@ The important storage limits are:
   key.
 - Primary-key local tables store row data under deterministic binary row keys
   derived from the persisted `LLBR1` row payload.
-- The explicit local transaction context is single-process and buffers pending
-  writes in memory until `COMMIT WORK`.
-- There is no RocksDB TransactionDB or cross-process transaction coordinator
-  yet.
+- Each `ContextCli` owns its explicit local transaction context and buffers
+  pending writes until `COMMIT WORK`.
+- RocksDB TransactionDB implements the selected backend-neutral storage
+  contract and the durable commit journal for the live compatibility layout.
+- All touched tables are conflict-checked before the durable commit decision;
+  idempotent table markers let startup complete an interrupted multi-table DML
+  publication before accepting traffic.
 
-This means the current implementation is appropriate for serial smoke tests,
-same-process scan reuse, and single-process explicit SQL transaction smoke, but
-not yet for cross-process concurrent writers or crash-atomic multi-table commit.
+This is a durable single-node boundary, not a distributed transaction system.
 Cross-process attempts to open the same `TRAF_LOCAL_STORE_DIR` are rejected by
-RocksDB's DB lock and are now surfaced as an explicit local-lite process-boundary
-diagnostic.
+the RocksDB lock and surfaced as an explicit local-lite process-boundary
+diagnostic. The live SQL store still uses the journal-coordinated per-table
+compatibility layout until operational cutover to the migrated single
+TransactionDB key space.
 
 ## Trafodion Transaction Model To Preserve
 
@@ -135,9 +139,11 @@ TCB opens an implicit local transaction, commits its pending rows only after
 complete source/target EOD, and rolls back on source errors, target errors, or
 cancellation. The old public `allocateRowId()` and direct `putRow()` store APIs
 have been removed, so local executor writes cannot bypass the transaction
-facade. Because catalog metadata and table rows still live in separate RocksDB
-databases, this phase does not claim cross-process or crash-atomic multi-DB
-commit semantics.
+facade. At Phase 2 completion, catalog metadata and table rows still lived in
+separate RocksDB databases, so that phase did not claim cross-process or
+crash-atomic multi-DB commit semantics. M12 later added the durable
+compatibility journal for multi-table DML; it did not add cross-process
+writers.
 Same-process concurrent write coverage now exercises multiple writer threads
 plus an overlapping scanner through the local transaction facade and validates
 contiguous, duplicate-free row ids.
@@ -230,11 +236,13 @@ Local-lite also disables the HBase coprocessor `COUNT(*)` binder rewrite.
 Transaction aggregates therefore remain normal executor aggregates over the
 same local scan and transaction snapshot path.
 
-This phase does not provide RocksDB TransactionDB semantics, atomic multi-table
-commit, crash-atomic keyless catalog/table publication, or one cross-table
-snapshot instant because the catalog and each table use separate RocksDB
-databases. If a later table fails after an earlier table was published, COMMIT
-returns an explicit diagnostic that the earlier table may already be committed.
+At Phase 4 completion this phase did not provide RocksDB TransactionDB
+semantics, atomic multi-table commit, crash-atomic keyless catalog/table
+publication, or one cross-table snapshot instant because the catalog and each
+table used separate RocksDB databases. M12 supersedes the multi-table DML
+limitation with preflight plus a durable, idempotently replayed commit journal;
+the compatibility-layout-to-single-keyspace operational cutover remains later
+work.
 
 Add local transaction behavior for `BEGIN`, `COMMIT`, and `ROLLBACK` without
 starting TMF/DTM/RMS.
@@ -334,12 +342,12 @@ Validation:
   primary key and one UNIQUE key, verifies exactly one writer succeeds, and
   confirms failed UNIQUE attempts do not advance keyless `nextRowId`.
 
-Phases 1 through 5 are complete for the v1 boundary defined by this roadmap.
-This completion deliberately does not claim cross-process concurrent writers,
-cross-table atomic snapshots, crash-atomic catalog/table publication,
-multi-table atomic commit, or TMF coordination. Those require a different
-storage layout or the optional Phase 6 integration rather than additional work
-inside the completed Phase 1 through 5 scope.
+Phases 1 through 5 remain complete for the original v1 boundary. M12 builds on
+them with a backend-neutral single-keyspace contract, TransactionDB selection,
+and crash-recoverable multi-table DML publication for the live compatibility
+layout. Current completion still does not claim cross-process concurrent
+writers, TMF coordination, distributed execution, node HA, or completed online
+cutover of all live catalog/data paths to the single TransactionDB layout.
 
 ### Phase 6: Optional TMF Integration Boundary
 
@@ -426,12 +434,20 @@ bounded catalog metadata, store-process
 exclusivity, protected Unix-socket lifecycle, unnamed diagnostic capture, and
 committed reads after clean and unclean restart.
 
-The immediate productization step is M12A: define backend-neutral
-`StorageEngine`, `StorageSession`, `StorageTxn`, and streaming `StorageCursor`
-contracts, then put catalog, base rows, primary/UNIQUE records, and secondary
-indexes in one crash-atomic transaction domain. Backend selection must follow
-the shared correctness/fault gate. M12 must also version and migrate the
-pre-M11 persisted metadata-key encoding before changing its fixed buffer
-layout, with explicit collision and integrity checks. Until then, M11 remains a
-local trusted service boundary, not a claim of multi-table crash atomicity or
-production recovery.
+M12 now provides backend-neutral `StorageEngine`, `StorageSession`,
+`StorageTxn`, and streaming `StorageCursor` contracts. The shared gate covers
+atomic catalog/base/UNIQUE/index records, snapshots, conflicts, cancellation,
+durability, recovery, backup/restore, integrity, metrics, and disk watermarks
+for RocksDB TransactionDB and SQLite WAL; TransactionDB is selected on
+correctness, recovery, and operational-continuity grounds. Version-2 metadata
+keys remove fixed-buffer truncation and are migrated with collision and exact
+count checks.
+
+The live SQL compatibility layout is protected during cutover by a synchronous
+TransactionDB commit journal. A transaction validates every touched table
+before the durable commit decision, publishes table batches under one process
+latch, and records an idempotent marker with each batch; startup replays only
+committed incomplete journals. The next productization step is operational
+cutover to the checksummed single-keyspace migration target and online upgrade
+orchestration. This remains a single-node boundary, not node-level HA or
+distributed execution.

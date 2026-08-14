@@ -8,13 +8,14 @@ and Java client modules from the selected build path. The supported runtimes are
 standalone `sqlci` and the M11 `nativelite-server`, both using the normal native
 compiler/executor over an embedded RocksDB catalog and table store.
 
-Local-lite is not a complete standalone database. Its bounded RocksDB-only
+Local-lite is not a complete standalone database. Its bounded single-node
 surface includes transactions, DDL/DML, indexes, metadata/statistics,
 authorization, constrained UDR execution, session-owned transaction contexts,
 and a reduced Trafodion Type 4 endpoint validated with the repository T4 JDBC
-driver. It does
-not yet provide crash-atomic multi-table/catalog transactions, the M12 storage
-and recovery contract, password/TLS authentication, full Trafodion wire
+driver. M12 adds a backend-neutral transactional storage contract, a selected
+RocksDB TransactionDB engine, durable multi-table DML publication/recovery, and
+versioned migration/backup/restore tooling. It does not provide password/TLS
+authentication, full Trafodion wire
 compatibility, the DCS/REST stack, distributed execution, or an
 HBase/HDFS/Hive runtime.
 
@@ -30,9 +31,9 @@ The original Apache Trafodion project overview is preserved in:
 plan/README.trafodion.md
 ```
 
-## Current Status (verified 2026-08-13)
+## Current Status (verified 2026-08-14)
 
-The bounded M1-M11 scope is complete. Each `ContextCli` owns an `ExTransaction`,
+The bounded M1-M12 scope is complete. Each `ContextCli` owns an `ExTransaction`,
 which is now the canonical owner of that session's `LocalLiteTxnContext`;
 executor/DDL paths receive it explicitly, and reset, disconnect, or destruction
 discard only that session's pending writes and snapshots. The M11A gate covers
@@ -61,14 +62,31 @@ dispatch while a request is active; cancellation is therefore gated through
 the driver's own internal `T4_Dcs_Cancel` path.
 Requests enter concurrent connection
 threads but compiler/executor work is deliberately serialized while the
-embedded CLI remains process-global. M12 transactional storage/recovery has not
-started.
+embedded CLI remains process-global.
+
+M12 defines `LocalLiteStorageEngine`, session, transaction, and streaming cursor
+interfaces. A shared gate runs RocksDB TransactionDB and SQLite WAL through the
+same atomicity, snapshot, conflict, cancellation, recovery, backup/restore,
+integrity, metrics, and disk-watermark checks. TransactionDB is selected for
+the single-node runtime. The existing per-table layout remains readable during
+the transition: a synchronous TransactionDB journal is the durable commit
+decision, all tables are conflict-checked before that decision, and idempotent
+table markers allow startup to finish an interrupted multi-table SQL commit.
+Metadata keys are migrated to collision-free version-2 encodings, and an
+atomic, checksummed copy migrates the legacy layout while leaving the source as
+the rollback window.
+
+The next productization step is an operational cutover from that
+journal-coordinated compatibility layout to the migrated single TransactionDB
+key space, followed by online upgrade orchestration and service-level backup
+controls. Cross-process writers, node-level HA, distributed execution, and
+password/TLS authentication remain outside the current claim.
 
 ### Functional boundary
 
 | Area | Validated local-lite surface | Not currently claimed |
 | --- | --- | --- |
-| DML and storage | Session-owned overlapping transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes; statement/per-table atomicity; disconnect/cancel cleanup; committed-data clean/unclean restart | Atomic multi-table/catalog commit, a backend-neutral storage transaction, coordinated recovery, backup/restore, and migration |
+| DML and storage | Session-owned overlapping transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes; backend-neutral transaction/cursor contract; crash-recoverable multi-table DML; checkpoint, backup/restore, integrity verification, migration, and disk-watermark checks | Distributed transactions, node-level HA, online multi-process writers, and a live in-place cutover of the legacy per-table layout |
 | Catalog and DDL | Schemas, views, synonyms, sequences, defaults, CHECK and bounded RI constraints, identity columns, triggers, and persisted basic statistics | RI CASCADE, computed system columns, full histograms, and unrestricted physical `_MD_` behavior |
 | Types and executor | ISO88591/UTF8/UCS2, binary types, BOOLEAN, INTERVAL, LONG VARCHAR, cursors, window/grouping operations, local sort/scratch, and cancellation cleanup | LOB/ARRAY and broader collation support, ESP fan-out, and distributed execution |
 | Authorization and UDR | Local users, roles, ownership/privileges, catalog identity validation at server startup, and bounded native/Java UDR adapters | Password/TLS/external identity services, the full UDR server, and host-rowset behavior |
@@ -188,6 +206,14 @@ trusted transport.
 
 After building the local-lite SQL binary, run the native TEST/EXPECTED lane
 without starting SQF, TMF, HBase, Hadoop, or ZooKeeper:
+
+```bash
+make local-lite-m12
+```
+
+This runs the common TransactionDB/SQLite contract and fault matrix, metadata
+key migration, legacy-layout migration/verification, and a real SQLCI
+multi-table commit interruption/restart recovery test.
 
 ```bash
 make local-lite-regress

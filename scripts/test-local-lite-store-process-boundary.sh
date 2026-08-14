@@ -136,6 +136,7 @@ fi
   -I"$repo_root/core/sql/localstore" \
   "${include_flags[@]}" \
   "$src" "$repo_root/core/sql/localstore/LocalLiteRocksDBStore.cpp" \
+  "$repo_root/core/sql/localstore/LocalLiteStorage.cpp" \
   "${library_flags[@]}" \
   -lrocksdb -lpthread -o "$bin"
 

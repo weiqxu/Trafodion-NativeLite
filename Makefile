@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11
+.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 
 all:
@@ -71,6 +71,23 @@ local-lite-m11c:
 
 local-lite-m11: local-lite-m11a local-lite-m11b local-lite-m11c
 	@echo "M11 sessionized server and client protocol checks passed"
+
+local-lite-m12a:
+	@echo "Running M12A backend-neutral storage contract checks"
+	scripts/test-local-lite-storage-contract.sh
+	scripts/test-local-lite-metadata-key-migration.sh
+
+local-lite-m12b: local-lite-m12a
+	@echo "Running M12B transactional backend comparison"
+	scripts/test-local-lite-storage-backends.sh
+
+local-lite-m12c: local-lite-m12b
+	@echo "Running M12C migration, recovery, and operations checks"
+	scripts/test-local-lite-store-migration.sh
+	scripts/test-local-lite-sql-commit-recovery.sh
+
+local-lite-m12: local-lite-m12c
+	@echo "M12 transactional storage and recovery checks passed"
 
 package: 
 	@echo "Packaging Trafodion components"
