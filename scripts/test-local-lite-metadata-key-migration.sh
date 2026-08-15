@@ -39,7 +39,7 @@ if grep -q '\*\*\* ERROR' <<<"$setup_output"; then
 fi
 
 "$run_root/metadata-key-migration-test" downgrade \
-  "$run_root/store/catalog"
+  "$run_root/store/transactiondb"
 
 migration_output=$(run_sqlci <<'SQL'
 SELECT COLUMN_NAME FROM TRAFODION."_MD_".COLUMNS;
@@ -59,5 +59,5 @@ grep -q -- '--- 2 row(s) selected.' <<<"$migration_output" || {
 }
 
 "$run_root/metadata-key-migration-test" verify \
-  "$run_root/store/catalog"
+  "$run_root/store/transactiondb"
 echo "LocalLite metadata-key migration checks passed"

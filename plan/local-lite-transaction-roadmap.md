@@ -19,7 +19,7 @@ introduce the same shape of ownership that Trafodion uses elsewhere:
 
 ## Current Baseline
 
-As of M12 (verified 2026-08-14), local-lite supports the following local table
+As of M13 (verified 2026-08-15), local-lite supports the following local table
 and transactional-storage path:
 
 - `CREATE TABLE` and `DROP TABLE` are routed through compiler DDL code and write
@@ -45,7 +45,8 @@ The important storage limits are:
 - Each `ContextCli` owns its explicit local transaction context and buffers
   pending writes until `COMMIT WORK`.
 - RocksDB TransactionDB implements the selected backend-neutral storage
-  contract and the durable commit journal for the live compatibility layout.
+  contract, the exclusive catalog/table key space after M13 activation, and the
+  durable commit journal used by the SQL publication protocol.
 - All touched tables are conflict-checked before the durable commit decision;
   idempotent table markers let startup complete an interrupted multi-table DML
   publication before accepting traffic.
@@ -53,9 +54,10 @@ The important storage limits are:
 This is a durable single-node boundary, not a distributed transaction system.
 Cross-process attempts to open the same `TRAF_LOCAL_STORE_DIR` are rejected by
 the RocksDB lock and surfaced as an explicit local-lite process-boundary
-diagnostic. The live SQL store still uses the journal-coordinated per-table
-compatibility layout until operational cutover to the migrated single
-TransactionDB key space.
+diagnostic. Fresh stores are created directly in the format-version-2
+`transactiondb/` layout. Stores containing the obsolete per-table `catalog/`
+or `data/` directories are rejected explicitly. The old-layout reader,
+migration, export, rollback, and runtime fallback code is not present.
 
 ## Trafodion Transaction Model To Preserve
 
@@ -241,8 +243,7 @@ semantics, atomic multi-table commit, crash-atomic keyless catalog/table
 publication, or one cross-table snapshot instant because the catalog and each
 table used separate RocksDB databases. M12 supersedes the multi-table DML
 limitation with preflight plus a durable, idempotently replayed commit journal;
-the compatibility-layout-to-single-keyspace operational cutover remains later
-work.
+M13 later makes the single-keyspace target the exclusive runtime format.
 
 Add local transaction behavior for `BEGIN`, `COMMIT`, and `ROLLBACK` without
 starting TMF/DTM/RMS.
@@ -344,10 +345,11 @@ Validation:
 
 Phases 1 through 5 remain complete for the original v1 boundary. M12 builds on
 them with a backend-neutral single-keyspace contract, TransactionDB selection,
-and crash-recoverable multi-table DML publication for the live compatibility
-layout. Current completion still does not claim cross-process concurrent
-writers, TMF coordination, distributed execution, node HA, or completed online
-cutover of all live catalog/data paths to the single TransactionDB layout.
+and crash-recoverable multi-table DML publication. M13 adds restart-based,
+format-checked activation of the exclusive catalog/table key space. Current
+completion still does not claim cross-process concurrent writers, TMF
+coordination, distributed execution, node HA, or zero-downtime upgrade
+orchestration.
 
 ### Phase 6: Optional TMF Integration Boundary
 
@@ -443,11 +445,13 @@ correctness, recovery, and operational-continuity grounds. Version-2 metadata
 keys remove fixed-buffer truncation and are migrated with collision and exact
 count checks.
 
-The live SQL compatibility layout is protected during cutover by a synchronous
+The live SQL publication path is protected by a synchronous
 TransactionDB commit journal. A transaction validates every touched table
 before the durable commit decision, publishes table batches under one process
 latch, and records an idempotent marker with each batch; startup replays only
-committed incomplete journals. The next productization step is operational
-cutover to the checksummed single-keyspace migration target and online upgrade
-orchestration. This remains a single-node boundary, not node-level HA or
+committed incomplete journals. M13 now durably activates the format-version-2
+single-keyspace target and rejects old per-table directories; no old-layout
+conversion or fallback implementation remains. Online upgrade/drain
+orchestration, active-layout backup scheduling, and journal consolidation
+remain next. This remains a single-node boundary, not node-level HA or
 distributed execution.

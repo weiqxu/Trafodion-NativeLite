@@ -14,7 +14,10 @@ authorization, constrained UDR execution, session-owned transaction contexts,
 and a reduced Trafodion Type 4 endpoint validated with the repository T4 JDBC
 driver. M12 adds a backend-neutral transactional storage contract, a selected
 RocksDB TransactionDB engine, durable multi-table DML publication/recovery, and
-versioned migration/backup/restore tooling. It does not provide password/TLS
+versioned metadata keys plus backup/restore tooling. M13 makes that
+TransactionDB the exclusive catalog/table storage format and rejects old
+per-table stores. It does
+not provide password/TLS
 authentication, full Trafodion wire
 compatibility, the DCS/REST stack, distributed execution, or an
 HBase/HDFS/Hive runtime.
@@ -31,9 +34,9 @@ The original Apache Trafodion project overview is preserved in:
 plan/README.trafodion.md
 ```
 
-## Current Status (verified 2026-08-14)
+## Current Status (verified 2026-08-15)
 
-The bounded M1-M12 scope is complete. Each `ContextCli` owns an `ExTransaction`,
+The bounded M1-M13 scope is complete. Each `ContextCli` owns an `ExTransaction`,
 which is now the canonical owner of that session's `LocalLiteTxnContext`;
 executor/DDL paths receive it explicitly, and reset, disconnect, or destruction
 discard only that session's pending writes and snapshots. The M11A gate covers
@@ -68,25 +71,29 @@ M12 defines `LocalLiteStorageEngine`, session, transaction, and streaming cursor
 interfaces. A shared gate runs RocksDB TransactionDB and SQLite WAL through the
 same atomicity, snapshot, conflict, cancellation, recovery, backup/restore,
 integrity, metrics, and disk-watermark checks. TransactionDB is selected for
-the single-node runtime. The existing per-table layout remains readable during
-the transition: a synchronous TransactionDB journal is the durable commit
-decision, all tables are conflict-checked before that decision, and idempotent
-table markers allow startup to finish an interrupted multi-table SQL commit.
-Metadata keys are migrated to collision-free version-2 encodings, and an
-atomic, checksummed copy migrates the legacy layout while leaving the source as
-the rollback window.
+the single-node runtime. A synchronous TransactionDB journal is the durable
+commit decision, all tables are conflict-checked before that decision, and
+idempotent table markers allow startup to finish an interrupted multi-table SQL
+commit. Metadata keys use collision-free version-2 encodings.
 
-The next productization step is an operational cutover from that
-journal-coordinated compatibility layout to the migrated single TransactionDB
-key space, followed by online upgrade orchestration and service-level backup
-controls. Cross-process writers, node-level HA, distributed execution, and
-password/TLS authentication remain outside the current claim.
+M13 switches the SQL runtime exclusively to `transactiondb/` format version 2.
+Fresh stores publish `m13/active` and the versioned logical-layout marker before
+catalog or table access. An interruption after the format marker is retryable.
+The old per-table `catalog/` and `data/` format is rejected at startup; its
+migration, export, rollback, and runtime fallback code is not shipped. The
+synchronous M12 recovery journal remains separate while SQL publication still
+uses its idempotent recovery protocol.
+
+The next productization step is online upgrade/drain orchestration,
+service-level backup controls for the active layout, and journal consolidation.
+Cross-process writers, node-level HA, distributed
+execution, and password/TLS authentication remain outside the current claim.
 
 ### Functional boundary
 
 | Area | Validated local-lite surface | Not currently claimed |
 | --- | --- | --- |
-| DML and storage | Session-owned overlapping transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes; backend-neutral transaction/cursor contract; crash-recoverable multi-table DML; checkpoint, backup/restore, integrity verification, migration, and disk-watermark checks | Distributed transactions, node-level HA, online multi-process writers, and a live in-place cutover of the legacy per-table layout |
+| DML and storage | Session-owned overlapping transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes; backend-neutral transaction/cursor contract; crash-recoverable multi-table DML; checkpoint, backup/restore, integrity verification, disk-watermark checks, and exclusive unified TransactionDB layout | In-place upgrade from the removed per-table format, distributed transactions, node-level HA, online multi-process writers, and zero-downtime upgrade orchestration |
 | Catalog and DDL | Schemas, views, synonyms, sequences, defaults, CHECK and bounded RI constraints, identity columns, triggers, and persisted basic statistics | RI CASCADE, computed system columns, full histograms, and unrestricted physical `_MD_` behavior |
 | Types and executor | ISO88591/UTF8/UCS2, binary types, BOOLEAN, INTERVAL, LONG VARCHAR, cursors, window/grouping operations, local sort/scratch, and cancellation cleanup | LOB/ARRAY and broader collation support, ESP fan-out, and distributed execution |
 | Authorization and UDR | Local users, roles, ownership/privileges, catalog identity validation at server startup, and bounded native/Java UDR adapters | Password/TLS/external identity services, the full UDR server, and host-rowset behavior |
@@ -208,12 +215,30 @@ After building the local-lite SQL binary, run the native TEST/EXPECTED lane
 without starting SQF, TMF, HBase, Hadoop, or ZooKeeper:
 
 ```bash
-make local-lite-m12
+make local-lite-m13
 ```
 
-This runs the common TransactionDB/SQLite contract and fault matrix, metadata
-key migration, legacy-layout migration/verification, and a real SQLCI
-multi-table commit interruption/restart recovery test.
+This runs M12's common TransactionDB/SQLite contract and fault matrix, metadata
+key migration, and real SQLCI multi-table commit interruption/restart recovery,
+followed by M13's format-activation retry, old-layout rejection, unified-only
+DDL/DML, and restart checks.
+
+### Storage Format
+
+M13 is a deliberate format break. Start the sole owner with a fresh store or a
+store already created by this build:
+
+```bash
+TRAF_LOCAL_STORE_DIR=/path/to/store \
+  $SQL_LIBS/nativelite-server --listen 127.0.0.1 --port 23400
+```
+
+Startup creates `/path/to/store/transactiondb` and publishes the format and
+activation markers. If `/path/to/store/catalog` or `/path/to/store/data`
+exists, startup fails explicitly. There is no old-layout reader, migration,
+export, rollback, or runtime fallback; recovery uses TransactionDB
+backup/restore. `TRAF_LOCAL_LITE_ACTIVATION_FAULT=after-format` is reserved for
+the M13 fault gate and exits with status 91 before activation.
 
 ```bash
 make local-lite-regress

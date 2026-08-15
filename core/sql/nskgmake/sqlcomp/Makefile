@@ -58,7 +58,7 @@ CPPSRC := CmpDescribe.cpp \
 ifeq ($(TRAF_LOCAL_LITE),1)
 CPPSRC += LocalLiteRocksDBStore.cpp \
 	LocalLiteStorage.cpp \
-	LocalLiteStorageMigration.cpp
+	LocalLiteUnifiedRocksDB.cpp
 SRCPATH += localstore
 endif
 

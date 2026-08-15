@@ -28,6 +28,8 @@
 
 #include <rocksdb/c.h>
 
+#include "LocalLiteUnifiedRocksDB.h"
+
 static const unsigned char LOCAL_LITE_ROW_FORMAT_VERSION = 1;
 
 static void setError(std::string *error, const std::string &message)
@@ -2475,6 +2477,9 @@ public:
       {
         if (!mkdirs(parentDir(LocalLiteRocksDBStore::catalogPath()), error))
           return false;
+        if (!LocalLiteUnifiedRocksDBPrepare(
+                LocalLiteRocksDBStore::defaultRoot(), error))
+          return false;
 
         rocksdb_options_t *options = rocksdb_options_create();
         rocksdb_options_set_create_if_missing(options, 1);
@@ -2488,13 +2493,17 @@ public:
                              "open RocksDB catalog " +
                              LocalLiteRocksDBStore::catalogPath(),
                              error))
-          return false;
+          {
+            LocalLiteUnifiedRocksDBShutdown();
+            return false;
+          }
 
         catalogDb_ = db;
         if (!migrateLocalLiteMetadataKeys(catalogDb_, error))
           {
             rocksdb_close(catalogDb_);
             catalogDb_ = NULL;
+            LocalLiteUnifiedRocksDBShutdown();
             return false;
           }
         journalEngine_ = LocalLiteCreateRocksDBTransactionEngine();
@@ -2516,6 +2525,7 @@ public:
             journalEngine_ = NULL;
             rocksdb_close(catalogDb_);
             catalogDb_ = NULL;
+            LocalLiteUnifiedRocksDBShutdown();
             return false;
           }
         if (!recoverJournals(error))
@@ -2525,6 +2535,7 @@ public:
             journalEngine_ = NULL;
             rocksdb_close(catalogDb_);
             catalogDb_ = NULL;
+            LocalLiteUnifiedRocksDBShutdown();
             return false;
           }
       }
@@ -2559,6 +2570,7 @@ public:
         delete journalEngine_;
         journalEngine_ = NULL;
       }
+    LocalLiteUnifiedRocksDBShutdown();
   }
 
   bool persistJournal(const std::vector<LocalLiteJournalTable> &tables,
@@ -5344,7 +5356,8 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
       return false;
     }
 
-  if (!mkdirs(parentDir(tablePath(table)), error))
+  if (!LocalLiteUnifiedRocksDBActive() &&
+      !mkdirs(parentDir(tablePath(table)), error))
     return false;
 
   LocalLiteStorageManager::instance().closeTable(tablePath(table));

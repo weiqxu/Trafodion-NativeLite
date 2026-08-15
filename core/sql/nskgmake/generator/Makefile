@@ -73,7 +73,7 @@ SRCPATH := generator langman smdio
 ifeq ($(TRAF_LOCAL_LITE),1)
 CPPSRC += LocalLiteRocksDBStore.cpp \
 	LocalLiteStorage.cpp \
-	LocalLiteStorageMigration.cpp \
+	LocalLiteUnifiedRocksDB.cpp \
 	LocalLiteRowCodec.cpp
 SRCPATH += localstore
 DEFS += -DTRAF_LOCAL_LITE

@@ -138,7 +138,7 @@ CPPSRC += LocalLiteStorageStubs.cpp \
 	LocalLiteHiveHookStubs.cpp \
 	LocalLiteRocksDBStore.cpp \
 	LocalLiteStorage.cpp \
-	LocalLiteStorageMigration.cpp \
+	LocalLiteUnifiedRocksDB.cpp \
 	LocalLiteRowCodec.cpp
 DEFS += -DTRAF_LOCAL_LITE
 endif

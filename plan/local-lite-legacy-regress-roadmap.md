@@ -337,7 +337,7 @@ and reruns the native `TEST001-TEST043` lane.  The current allowlist is
 `core/TEST018`, `core/TEST163`, `executor/TEST014`, `executor/TEST050`,
 `executor/TEST101`, and `seabase/TEST012[schemaDrop,getStmts]`; the native lane
 remains 43/43.
-This was revalidated on 2026-08-13; all eleven allowlisted legacy cases and all
+This was revalidated on 2026-08-15; all eleven allowlisted legacy cases and all
 43 native cases passed with exact normalized EXPECTED output.
 `charsets/TEST003` validates UCS2 column storage, literal assignment,
 UPDATE/DELETE, supported translation, and the expected rejection of unsupported
@@ -463,7 +463,8 @@ convergence or a production database.
 | M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
 | M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the eleven allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
-| M12 transactional storage and recovery | Complete for the declared single-node migration boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, atomic checksummed old-layout migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. The live compatibility layout is journal-coordinated; online cutover, node HA, and distributed execution are not claimed. |
+| M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
+| M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -570,7 +571,7 @@ authentication and broader security hardening remain later milestones.
 
 ## Milestone 12: Transactional Storage And Recovery
 
-Status: complete for the declared single-node migration boundary. M12 makes the
+Status: complete for the declared single-node boundary. M12 makes the
 M11 service crash-recoverable for durable multi-table DML and establishes the
 transactional target format and operations contract. Storage-engine selection
 was made by the common gate rather than baked into the executor.
@@ -585,8 +586,8 @@ The requested implementation order is complete:
 5. Migrate fixed-buffer metadata keys to collision-free version-2 encodings.
 6. Run TransactionDB and SQLite WAL through the identical gate and select
    TransactionDB from correctness, recovery, and operational evidence.
-7. Complete recovery, checkpoint, backup/restore, legacy migration, checksum,
-   fault injection, metrics, disk-watermark, and SQL restart gates.
+7. Complete recovery, checkpoint, backup/restore, integrity, fault injection,
+   metrics, disk-watermark, and SQL restart gates.
 
 ### M12A: Storage Contract And Atomic Transaction Domain
 
@@ -628,14 +629,12 @@ runs both RocksDB TransactionDB and SQLite WAL. Both pass correctness and
 recovery; the gate records p50/p95/p99 and transaction rate without selecting
 on peak throughput. RocksDB TransactionDB is selected because it satisfies the
 correctness/recovery gates while preserving RocksDB operational and migration
-continuity.
+continuity for supported metadata-key formats.
 
-### M12C: Recovery, Backup, Migration, And Operations
+### M12C: Recovery, Backup, And Operations
 
 - Add synchronous commit/WAL policy, checkpoint, integrity verification,
   consistent backup, restore, and on-disk format-version checks.
-- Add migration from the current per-table RocksDB layout with object, row,
-  key/index, and checksum verification plus a documented rollback window.
 - Inject process kill, restart, disk-full, interrupted checkpoint/backup,
   commit-boundary, and metadata/data publication failures.
 - Add storage and transaction metrics, disk-watermark protection, and a
@@ -646,12 +645,9 @@ supports checkpoints, consistent backup, restore into a fresh path, full-key
 space verification, transaction/byte/key metrics, and a configurable minimum
 free-space watermark. The fault matrix covers committed and uncommitted process
 exit, before/after commit, interrupted checkpoint/backup, restore, and
-`UINT64_MAX` disk-watermark rejection. Legacy migration writes its format,
-record count, source format, and SHA-256 in the same target transaction; an
-injected interruption leaves no partial target state, retry succeeds without
-cleanup, and the unchanged source remains SQL-queryable as the rollback
-window. The SQL recovery gate stops after the first of two table batches and
-proves the next process replays exactly once and exposes both committed rows.
+`UINT64_MAX` disk-watermark rejection. The SQL recovery gate stops after the
+first of two table batches and proves the next process replays exactly once and
+exposes both committed rows.
 
 M12's selected single-keyspace contract provides the catalog/data/index atomic
 domain and cross-keyspace snapshot. During the live-layout transition, SQL DML
@@ -659,7 +655,25 @@ uses a durable commit journal: every touched table is conflict-checked before
 the commit decision, publication is process-serialized, and each table batch
 contains an idempotent journal marker. Startup completes committed interrupted
 publication before accepting SQL traffic; aborted/conflicting work never gets
-a journal. Migration is an atomic copy and the source is the documented
-rollback window. Online in-place cutover and service-level backup scheduling
-remain follow-on operational work. M12 still does not claim node-level high
-availability, multi-process writers, or distributed execution.
+a journal. M12 still does not claim node-level high availability,
+multi-process writers, or distributed execution.
+
+## Milestone 13: Exclusive Unified Storage
+
+Status: complete for single-process format activation. Fresh stores are created
+directly in `transactiondb/`. Startup rejects unknown or inconsistent format
+and layout markers and commits `m13/active=1` with
+`m13/layout=unified-hex-v1` before routing SQL catalog or table access.
+
+`TRAF_LOCAL_LITE_ACTIVATION_FAULT=after-format` terminates before activation;
+retry finishes activation without cleanup. Startup rejects any store containing
+old `catalog/` or `data/` directories before creating a target.
+`make local-lite-m13` proves that rejection, activation retry, active reads,
+updates, index/table cleanup, new DDL/DML, and restart persistence. The old
+per-table migration, export, rollback, and runtime fallback code is removed.
+
+This is an offline operational switch, not a zero-downtime rolling upgrade.
+The M12 TransactionDB recovery journal remains a separate store while SQL
+multi-table publication uses the existing decision/marker/replay protocol.
+Service drain/upgrade orchestration, active-layout backup policy, journal
+consolidation, node HA, and distributed execution remain outside M13.

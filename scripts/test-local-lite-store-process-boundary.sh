@@ -61,6 +61,24 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &,
   return true;
 }
 
+bool LocalLiteBuildOrderedSecondaryKeyPayload(
+    const LocalLiteTableDef &,
+    const LocalLiteIndexDef &,
+    const std::string &,
+    std::string *,
+    bool *hasKey,
+    bool *containsNull,
+    std::string *error)
+{
+  if (hasKey)
+    *hasKey = false;
+  if (containsNull)
+    *containsNull = false;
+  if (error)
+    *error = "ordered index codec should not be used by this probe";
+  return false;
+}
+
 static LocalLiteTableDef tableDef()
 {
   LocalLiteTableDef table;
@@ -137,6 +155,8 @@ fi
   "${include_flags[@]}" \
   "$src" "$repo_root/core/sql/localstore/LocalLiteRocksDBStore.cpp" \
   "$repo_root/core/sql/localstore/LocalLiteStorage.cpp" \
+  "$repo_root/core/sql/localstore/LocalLiteUnifiedRocksDB.cpp" \
+  "$repo_root/scripts/local-lite-row-codec-test-stubs.cpp" \
   "${library_flags[@]}" \
   -lrocksdb -lpthread -o "$bin"
 
