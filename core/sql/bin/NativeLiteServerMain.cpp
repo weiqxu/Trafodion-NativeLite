@@ -1812,6 +1812,81 @@ bool substituteT4Parameters(const std::string &sql,
   return parameter == values.size();
 }
 
+bool decodeT4ParameterRows(
+    const std::string &data, size_t parameterCount, uint32_t rowCount,
+    std::vector<std::vector<std::string> > *rows,
+    std::vector<std::vector<bool> > *nullRows)
+{
+  const size_t descriptorStride = 260;
+  const size_t valueStride = 258;
+  if (rowCount == 0)
+    rowCount = 1;
+  if (parameterCount != 0 &&
+      (parameterCount > std::numeric_limits<size_t>::max() /
+           descriptorStride ||
+       rowCount > std::numeric_limits<size_t>::max() /
+           (parameterCount * descriptorStride)))
+    return false;
+  const size_t required = parameterCount * descriptorStride * rowCount;
+  if (data.size() < required)
+    return false;
+  rows->assign(rowCount, std::vector<std::string>(parameterCount));
+  nullRows->assign(rowCount, std::vector<bool>(parameterCount, false));
+  for (size_t column = 0; column < parameterCount; column++)
+    for (size_t row = 0; row < rowCount; row++)
+      {
+        const size_t nullOffset = column * descriptorStride * rowCount +
+            row * sizeof(uint16_t);
+        const size_t valueOffset = (column * descriptorStride + 2) * rowCount +
+            row * valueStride;
+        if (nullOffset + 2 > data.size() || valueOffset + 2 > data.size())
+          return false;
+        (*nullRows)[row][column] =
+            getU16(data.data() + nullOffset) == 0xffffU;
+        if (!(*nullRows)[row][column])
+          {
+            const uint16_t length = getU16(data.data() + valueOffset);
+            if (length > 256 || valueOffset + 2 + length > data.size())
+              return false;
+            (*rows)[row][column].assign(
+                data.data() + valueOffset + 2, length);
+          }
+      }
+  return true;
+}
+
+bool buildT4BatchSql(
+    const std::string &sql,
+    const std::vector<std::vector<std::string> > &rows,
+    const std::vector<std::vector<bool> > &nullRows,
+    std::string *output)
+{
+  if (rows.empty() || rows.size() != nullRows.size())
+    return false;
+  if (rows.size() == 1)
+    return substituteT4Parameters(sql, rows[0], nullRows[0], output);
+  if (firstWord(sql) != "INSERT")
+    return false;
+  const std::string upperSql = upper(sql);
+  const size_t values = upperSql.find("VALUES");
+  if (values == std::string::npos)
+    return false;
+  const size_t tupleOffset = values + 6;
+  const std::string tupleTemplate = sql.substr(tupleOffset);
+  *output = sql.substr(0, tupleOffset);
+  for (size_t row = 0; row < rows.size(); row++)
+    {
+      std::string tuple;
+      if (!substituteT4Parameters(
+              tupleTemplate, rows[row], nullRows[row], &tuple))
+        return false;
+      if (row != 0)
+        output->push_back(',');
+      *output += tuple;
+    }
+  return true;
+}
+
 bool t4PatternMatches(const std::string &value, const std::string &pattern,
                       size_t valueOffset = 0, size_t patternOffset = 0)
 {
@@ -2644,24 +2719,13 @@ private:
         return;
       }
     T4StatementState &state = found->second;
-    std::vector<std::string> values(state.parameterCount);
-    std::vector<bool> nulls(state.parameterCount, false);
-    bool valid = data.size() >= state.parameterCount * 260;
-    for (size_t i = 0; valid && i < state.parameterCount; i++)
-      {
-        size_t offset = i * 260;
-        nulls[i] = getU16(data.data() + offset) == 0xffffU;
-        if (!nulls[i])
-          {
-            uint16_t length = getU16(data.data() + offset + 2);
-            if (length > 256)
-              valid = false;
-            else
-              values[i].assign(data.data() + offset + 4, length);
-          }
-      }
+    const uint32_t rowCount = fields[3] == 0 ? 1 : fields[3];
+    std::vector<std::vector<std::string> > rows;
+    std::vector<std::vector<bool> > nullRows;
+    bool valid = decodeT4ParameterRows(
+        data, state.parameterCount, rowCount, &rows, &nullRows);
     std::string sql;
-    if (!valid || !substituteT4Parameters(state.sql, values, nulls, &sql))
+    if (!valid || !buildT4BatchSql(state.sql, rows, nullRows, &sql))
       {
         sendT4Response(fd, request, std::string(), 1, 0);
         return;

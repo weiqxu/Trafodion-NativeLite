@@ -1044,7 +1044,7 @@ The authoritative milestone definitions and completion gates are in
   trusted-local boundary.**
   - [x] Pin TPC-C 5.11.0, document dialect deviations, and version the schema,
     driver, workload, terminal, retry, and reporting contracts.
-  - [ ] Add deterministic one-warehouse creation/loading, exact cardinality
+  - [x] Add deterministic one-warehouse creation/loading, exact cardinality
     checks, consistency queries, interrupted-load recovery, and restore proof.
   - [ ] Implement New-Order, Payment, Order-Status, Delivery, and Stock-Level
     through prepared statements on the real reduced T4 JDBC endpoint.

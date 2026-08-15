@@ -23,5 +23,14 @@ uses the reduced NativeLite T4 endpoint. It is intentionally inspectable and is
 not represented as a TPC-certified driver.
 
 Run `make local-lite-m14a` to validate these inputs and emit a machine-readable
-baseline report. Database schema creation and loading are added by M14B; M14A
-freezes their inputs before implementation begins.
+baseline report. Run `make local-lite-m14b` for the fast smoke-scale schema,
+loader, interruption/retry, restart, and backup/restore gate. Set
+`TPCC_M14_SCALE=qualification` to exercise the pinned one-warehouse scale:
+
+```sh
+TPCC_M14_SCALE=qualification make local-lite-m14b
+```
+
+The loader is deterministic and restartable at bounded commit boundaries. It
+uses the real reduced T4 JDBC endpoint; its report contains the exact generated
+cardinalities and post-load consistency result.

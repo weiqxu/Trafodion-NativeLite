@@ -467,7 +467,7 @@ convergence or a production database.
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
-| M14 TPC-C qualification | In progress; M14A complete | The pinned 5.11.0 contract, nine-entity manifest, deterministic qualification scale, known-deviation register, and machine-readable baseline gate are implemented. M14B next builds and loads the real database. No `tpmC` or TPC-C compliance claim is permitted until the required consistency, isolation, durability, mix, timing, and disclosure evidence exists. |
+| M14 TPC-C qualification | In progress; M14A-M14B complete | The pinned contract and real T4 loader cover the nine mapped tables, deterministic interrupted-load retry, exact one-warehouse cardinalities including 300,003 ORDER_LINE rows, relationship checks, restart, and copied-store restore. High-cardinality ITEM/STOCK and ORDER/ORDER_LINE references are verified by full anti-joins rather than declared foreign keys. M14C transaction profiles are next. No `tpmC` or TPC-C compliance claim is permitted until the required isolation, durability, mix, timing, and disclosure evidence exists. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -683,7 +683,7 @@ consolidation, node HA, and distributed execution remain outside M13.
 
 ## Milestone 14: TPC-C Qualification
 
-Status: planned and next in implementation order. M14 turns the completed
+Status: in progress; M14A-M14B complete and M14C next. M14 turns the completed
 M11-M13 session, transaction, recovery, and unified-storage foundations into a
 repeatable OLTP qualification workload. It is not complete when the schema can
 be loaded or when one transaction succeeds: completion requires all five TPC-C
@@ -736,6 +736,19 @@ invariants. This separation keeps contract drift distinguishable from loader or
 database failures.
 
 ### M14B: Schema, Loader, And Data Integrity
+
+Status: complete. `benchmarks/tpcc/schema.sql` creates all nine mapped tables,
+core foreign keys, and customer/order lookup indexes. `NativeLiteTpcc` creates
+and deterministically loads the database through the reduced T4 endpoint using
+bounded 1,000-row set commits; an injected failure proves restartable loading.
+The one-warehouse result contains 100,000 ITEM, 100,000 STOCK, 30,000 CUSTOMER,
+30,000 HISTORY, 30,000 ORDER, 9,000 NEW_ORDER, and exactly 300,003 ORDER_LINE
+rows. Exact counts and full relationship anti-joins pass on the initial store,
+after a clean restart, and against a copied TransactionDB store. The
+high-cardinality ITEM/STOCK and ORDER/ORDER_LINE relationships remain an
+explicit dialect deviation: enforcing them row-by-row as declared foreign keys
+is not currently viable at qualification scale, so the gate verifies them with
+full anti-joins.
 
 - Support the exact integer, fixed numeric, character, timestamp, default,
   primary-key, UNIQUE, secondary-index, and bounded referential-integrity

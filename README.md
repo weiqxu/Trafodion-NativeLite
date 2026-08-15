@@ -87,8 +87,10 @@ uses its idempotent recovery protocol.
 
 M14 TPC-C qualification is in progress. M14A pins the 5.11.0 input contract,
 nine-entity mapping, deterministic one-warehouse scale, known deviations, and
-a machine-readable baseline gate. M14B next creates and loads the real database,
-followed by all five transaction profiles through T4 JDBC, Level 3
+a machine-readable baseline gate. M14B adds the real nine-table schema, a
+bounded and restartable deterministic loader through T4 JDBC, exact cardinality
+and relationship checks, plus clean-restart and copied-store restore proof.
+M14C next implements all five transaction profiles through T4 JDBC; Level 3
 isolation evidence, concurrent compiler/executor work, and then a reproducible
 multi-warehouse TPC-C-like workload. Results are not `tpmC` and do not claim
 formal TPC-C compliance until all specification and disclosure requirements are

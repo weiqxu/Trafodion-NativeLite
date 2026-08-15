@@ -34,6 +34,10 @@ property() {
 [[ "$(property orders.per.district)" == 3000 ]] || fail "order cardinality drift"
 [[ "$(property new.orders.per.district)" == 900 ]] || fail "new-order cardinality drift"
 [[ "$(property items)" == 100000 ]] || fail "item cardinality drift"
+batch_rows=$(property loader.batch.rows)
+commit_rows=$(property loader.commit.rows)
+((batch_rows > 0 && commit_rows >= batch_rows)) ||
+  fail "loader bounds must satisfy 0 < batch rows <= commit rows"
 
 entity_count=$(awk -F '\t' 'NR > 1 && NF { count++ } END { print count + 0 }' "$manifest")
 [[ "$entity_count" == 9 ]] || fail "expected nine logical entities, found $entity_count"

@@ -88,6 +88,31 @@ public final class NativeLiteT4JdbcTest {
     }
   }
 
+  private static void testPreparedBatch(Connection connection)
+      throws SQLException {
+    try (PreparedStatement insert = connection.prepareStatement(
+        "INSERT INTO " + TABLE + " VALUES (?, ?)")) {
+      insert.setInt(1, 50);
+      insert.setString(2, "batch-one");
+      insert.addBatch();
+      insert.setInt(1, 51);
+      insert.setNull(2, Types.VARCHAR);
+      insert.addBatch();
+      int[] results = insert.executeBatch();
+      require(results.length == 2, "prepared batch returned wrong row count");
+      for (int result : results) {
+        require(result == 1 || result == Statement.SUCCESS_NO_INFO,
+            "prepared batch returned " + result);
+      }
+    }
+    require(queryInt(connection, "SELECT COUNT(*) FROM " + TABLE +
+        " WHERE id IN (50, 51)") == 2,
+        "prepared batch rows were not stored");
+    require(queryInt(connection, "SELECT COUNT(*) FROM " + TABLE +
+        " WHERE id = 51 AND note IS NULL") == 1,
+        "prepared batch NULL was not preserved");
+  }
+
   private static void testOverlappingTransactions(String url)
       throws SQLException {
     try (Connection first = connect(url);
@@ -190,6 +215,7 @@ public final class NativeLiteT4JdbcTest {
       execute(connection, "CREATE TABLE " + TABLE +
           "(id INT NOT NULL PRIMARY KEY, note VARCHAR(80))");
       testPrepared(connection);
+      testPreparedBatch(connection);
       testResultTypes(connection);
       testMetadata(connection);
       execute(connection, "INSERT INTO " + TABLE + " VALUES (99, 'restart')");

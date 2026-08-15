@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a
+.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 
 all:
@@ -96,6 +96,10 @@ local-lite-m13: local-lite-m12
 local-lite-m14a:
 	@echo "Running M14A TPC-C specification and baseline checks"
 	scripts/test-local-lite-tpcc-baseline.sh
+
+local-lite-m14b: local-lite-m14a
+	@echo "Running M14B TPC-C schema, loader, and integrity checks"
+	scripts/test-local-lite-tpcc-loader.sh
 
 package: 
 	@echo "Packaging Trafodion components"
