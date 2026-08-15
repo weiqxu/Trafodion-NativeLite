@@ -85,8 +85,10 @@ migration, export, rollback, and runtime fallback code is not shipped. The
 synchronous M12 recovery journal remains separate while SQL publication still
 uses its idempotent recovery protocol.
 
-The next primary milestone is M14 TPC-C qualification: a deterministic
-one-warehouse baseline, all five transaction profiles through T4 JDBC, Level 3
+M14 TPC-C qualification is in progress. M14A pins the 5.11.0 input contract,
+nine-entity mapping, deterministic one-warehouse scale, known deviations, and
+a machine-readable baseline gate. M14B next creates and loads the real database,
+followed by all five transaction profiles through T4 JDBC, Level 3
 isolation evidence, concurrent compiler/executor work, and then a reproducible
 multi-warehouse TPC-C-like workload. Results are not `tpmC` and do not claim
 formal TPC-C compliance until all specification and disclosure requirements are

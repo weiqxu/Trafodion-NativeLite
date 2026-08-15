@@ -467,7 +467,7 @@ convergence or a production database.
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
-| M14 TPC-C qualification | Planned; next primary milestone | Build a deterministic one-warehouse baseline, execute all five TPC-C transactions through the reduced T4 JDBC path, close Level 3 isolation and concurrent-execution gaps, then add multi-warehouse workload and recovery gates. No `tpmC` or TPC-C compliance claim is permitted until the required consistency, isolation, durability, mix, timing, and disclosure evidence exists. |
+| M14 TPC-C qualification | In progress; M14A complete | The pinned 5.11.0 contract, nine-entity manifest, deterministic qualification scale, known-deviation register, and machine-readable baseline gate are implemented. M14B next builds and loads the real database. No `tpmC` or TPC-C compliance claim is permitted until the required consistency, isolation, durability, mix, timing, and disclosure evidence exists. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -709,6 +709,13 @@ The requested implementation order is:
 
 ### M14A: Specification, Inventory, And Reproducible Baseline
 
+Status: complete. `benchmarks/tpcc/qualification.properties` pins TPC-C 5.11.0,
+the one-warehouse scale, deterministic seeds, batch/commit policy, initial
+terminal count, retry policy, and report version. `schema-manifest.tsv` maps all
+nine entities and `dialect-deviations.tsv` makes the non-compliant boundary
+explicit. `make local-lite-m14a` validates those assets and emits the expected
+cardinalities as JSON.
+
 - Pin the TPC-C specification revision and record all SQL/type/name mappings.
 - Add a versioned manifest for the nine logical entities: WAREHOUSE, DISTRICT,
   CUSTOMER, HISTORY, NEW_ORDER, ORDER, ORDER_LINE, ITEM, and STOCK. Reserved
@@ -721,11 +728,12 @@ The requested implementation order is:
 - Capture the existing `make local-lite-m10`, `make local-lite-m11`, and
   `make local-lite-m13` results before changing concurrency or isolation.
 
-Gate: `make local-lite-m14a` creates an isolated store, loads one warehouse,
-verifies exact table cardinalities and primary/foreign-key invariants, and
-produces a machine-readable baseline report. Ordinary row-at-a-time INSERT is
-acceptable for the first correctness gate; loader throughput is measured but
-is not yet a pass criterion.
+Gate: `make local-lite-m14a` validates the pinned inputs and produces a
+machine-readable baseline report with the exact pre-generation cardinalities.
+M14B consumes that contract to create an isolated store, deterministically
+generate ORDER_LINE cardinality, load one warehouse, and verify database
+invariants. This separation keeps contract drift distinguishable from loader or
+database failures.
 
 ### M14B: Schema, Loader, And Data Integrity
 

@@ -1,0 +1,10 @@
+logical_entity	native_table	primary_key	qualification_rows	ownership
+WAREHOUSE	TPCC_WAREHOUSE	W_ID	warehouses	per-warehouse
+DISTRICT	TPCC_DISTRICT	D_W_ID,D_ID	warehouses*districts.per.warehouse	per-warehouse
+CUSTOMER	TPCC_CUSTOMER	C_W_ID,C_D_ID,C_ID	warehouses*districts.per.warehouse*customers.per.district	per-district
+HISTORY	TPCC_HISTORY	H_ID	warehouses*districts.per.warehouse*customers.per.district	per-customer
+NEW_ORDER	TPCC_NEW_ORDER	NO_W_ID,NO_D_ID,NO_O_ID	warehouses*districts.per.warehouse*new.orders.per.district	per-district
+ORDER	TPCC_ORDERS	O_W_ID,O_D_ID,O_ID	warehouses*districts.per.warehouse*orders.per.district	per-district
+ORDER_LINE	TPCC_ORDER_LINE	OL_W_ID,OL_D_ID,OL_O_ID,OL_NUMBER	deterministic(orders,5..15,data.seed)	per-order
+ITEM	TPCC_ITEM	I_ID	items	global
+STOCK	TPCC_STOCK	S_W_ID,S_I_ID	warehouses*items	per-warehouse

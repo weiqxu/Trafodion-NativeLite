@@ -1042,7 +1042,7 @@ The authoritative milestone definitions and completion gates are in
 
 - [ ] **Complete M14 TPC-C qualification for the supported single-node
   trusted-local boundary.**
-  - [ ] Pin TPC-C 5.11.0, document dialect deviations, and version the schema,
+  - [x] Pin TPC-C 5.11.0, document dialect deviations, and version the schema,
     driver, workload, terminal, retry, and reporting contracts.
   - [ ] Add deterministic one-warehouse creation/loading, exact cardinality
     checks, consistency queries, interrupted-load recovery, and restore proof.
