@@ -467,7 +467,7 @@ convergence or a production database.
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
-| M14 TPC-C qualification | In progress; M14A-M14B complete | The pinned contract and real T4 loader cover the nine mapped tables, deterministic interrupted-load retry, exact one-warehouse cardinalities including 300,003 ORDER_LINE rows, relationship checks, restart, and copied-store restore. High-cardinality ITEM/STOCK and ORDER/ORDER_LINE references are verified by full anti-joins rather than declared foreign keys. M14C transaction profiles are next. No `tpmC` or TPC-C compliance claim is permitted until the required isolation, durability, mix, timing, and disclosure evidence exists. |
+| M14 TPC-C qualification | In progress; M14A-M14C complete | The pinned contract and real T4 loader cover all nine tables and exact one-warehouse integrity. Five deterministic prepared-statement profiles pass alone and in a two-terminal mix with classified retries, rollback/disconnect/duplicate diagnostics, effect checks, and restart proof. M14D isolation and crash evidence is next. No `tpmC` or TPC-C compliance claim is permitted until the required isolation, durability, normative mix, timing, and disclosure evidence exists. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -683,7 +683,7 @@ consolidation, node HA, and distributed execution remain outside M13.
 
 ## Milestone 14: TPC-C Qualification
 
-Status: in progress; M14A-M14B complete and M14C next. M14 turns the completed
+Status: in progress; M14A-M14C complete and M14D next. M14 turns the completed
 M11-M13 session, transaction, recovery, and unified-storage foundations into a
 repeatable OLTP qualification workload. It is not complete when the schema can
 be loaded or when one transaction succeeds: completion requires all five TPC-C
@@ -765,6 +765,20 @@ Gate: a fresh load, interrupted load/retry, restart, and restore all produce the
 same declared counts and consistency-query results.
 
 ### M14C: Five Transaction Profiles Through T4 JDBC
+
+Status: complete for deterministic functional profiles. The repository driver
+implements New-Order, Payment, Order-Status, Delivery, and Stock-Level as
+explicit reusable prepared-statement programs. `make local-lite-m14c` loads a
+fresh smoke store, runs every profile in isolation, injects rollback and
+duplicate-key failure, proves disconnect rollback, then starts two concurrent
+T4 terminals. The gate commits three of each profile, classifies optimistic
+`restart transaction` conflicts for at most three retries with backoff, reports
+zero unclassified errors, verifies exact row deltas and orphan-free references,
+and repeats the effect checks after server restart. The T4 server now preserves
+prepared statements across ResultSet `SQL_CLOSE`, drops them only for
+`SQL_DROP`, and emits a correctly shaped EndTransaction error descriptor.
+Normative random mix, customer last-name selection, variable order-line count,
+Delivery across all ten districts, pacing, and scale remain explicit M14F work.
 
 - Implement New-Order, Payment, Order-Status, Delivery, and Stock-Level as
   explicit prepared-statement transaction programs.

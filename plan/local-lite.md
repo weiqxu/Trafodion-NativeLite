@@ -1046,7 +1046,7 @@ The authoritative milestone definitions and completion gates are in
     driver, workload, terminal, retry, and reporting contracts.
   - [x] Add deterministic one-warehouse creation/loading, exact cardinality
     checks, consistency queries, interrupted-load recovery, and restore proof.
-  - [ ] Implement New-Order, Payment, Order-Status, Delivery, and Stock-Level
+  - [x] Implement New-Order, Payment, Order-Status, Delivery, and Stock-Level
     through prepared statements on the real reduced T4 JDBC endpoint.
   - [ ] Prove the required Level 3 isolation boundary, including predicate and
     phantom conflicts, every required isolation test, timeout/deadlock policy,

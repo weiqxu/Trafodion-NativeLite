@@ -6,3 +6,4 @@ D004	character types	fixed CHAR fields	CHAR for fixed fields and VARCHAR for nor
 D005	foreign keys	logical relationships	core parent constraints plus full anti-join checks for high-cardinality STOCK and ORDER_LINE relationships	avoid repeated row-at-a-time FK probes while preserving deterministic post-load proof	accepted-m14b
 D006	driver	TPC audited implementation	repository-owned reduced T4 JDBC driver	reproducible functional qualification only	non-compliant
 D007	reporting	official tpmC result	TPC-C-like throughput and latency report	no audit, pricing, or full-disclosure process	non-compliant
+D008	transaction selection	normative random mix, last-name branch, variable order lines, and Delivery across ten districts	deterministic key-by-id functional profiles with five local lines and one district per Delivery call	M14C proves transaction effects while M14F owns normative mix, pacing, and scale	open-until-m14f

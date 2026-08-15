@@ -2477,6 +2477,22 @@ private:
     reply->append(error);
   }
 
+  void appendT4ErrorDescriptor(std::string *reply, const QueryResult &result)
+  {
+    appendU32(reply, 0); // row id
+    appendU32(reply, 0); // diagnostic id
+    appendU32(reply, static_cast<uint32_t>(-1)); // SQL code
+    std::string state = result.sqlstate.empty() ? "HY000" : result.sqlstate;
+    state.resize(5, '0');
+    reply->append(state.data(), 5);
+    reply->push_back('\0');
+    appendT4String(reply, result.error);
+    appendU32(reply, 0); // operation abort id
+    appendU32(reply, 0); // error code type
+    for (size_t i = 0; i < 7; i++)
+      appendT4String(reply, std::string());
+  }
+
   uint32_t rowsAffectedForT4(const QueryResult &result) const
   {
     std::istringstream words(result.commandTag);
@@ -3025,8 +3041,20 @@ private:
     T4Reader reader(body);
     uint32_t dialogue = 0;
     std::string label;
-    if (reader.readU32(&dialogue) && reader.readString(&label))
-      statements->erase(label);
+    uint16_t option = 0;
+    if (reader.readU32(&dialogue) && reader.readString(&label) &&
+        reader.readU16(&option))
+      {
+        std::map<std::string, T4StatementState>::iterator found =
+            statements->find(label);
+        if (option == 1)
+          statements->erase(label); // SQL_DROP
+        else if (found != statements->end())
+          {
+            found->second.result = QueryResult(); // SQL_CLOSE
+            found->second.rowOffset = 0;
+          }
+      }
     std::string reply;
     appendU32(&reply, 0);
     appendU32(&reply, 0);
@@ -3058,15 +3086,8 @@ private:
         appendU32(&reply, 3);
         appendU32(&reply, 0);
         appendU32(&reply, 1);
-        std::string error;
-        appendU32(&error, 0);
-        appendU32(&error, static_cast<uint32_t>(-1));
-        appendT4String(&error, result.error);
-        std::string state = result.sqlstate.empty() ? "HY000" : result.sqlstate;
-        state.resize(5, '0');
-        error.append(state.data(), 5);
-        error.push_back('\0');
-        reply.append(error);
+        appendT4ErrorDescriptor(&reply, result);
+        appendU32(&reply, 0); // no warning list
       }
     sendT4Response(fd, request, reply);
   }

@@ -34,3 +34,10 @@ TPCC_M14_SCALE=qualification make local-lite-m14b
 The loader is deterministic and restartable at bounded commit boundaries. It
 uses the real reduced T4 JDBC endpoint; its report contains the exact generated
 cardinalities and post-load consistency result.
+
+Run `make local-lite-m14c` for the five deterministic transaction profiles,
+first in isolation and then as a two-terminal mix. The gate records classified
+retries, negative diagnostics, rollback/disconnect cleanup, final consistency,
+and restart persistence. This is a functional profile gate; the normative
+random transaction mix, terminal pacing, and multi-warehouse scale belong to
+M14F.

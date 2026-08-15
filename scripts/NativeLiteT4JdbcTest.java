@@ -85,6 +85,11 @@ public final class NativeLiteT4JdbcTest {
         require(result.next() && "prepared-two".equals(result.getString(1)),
             "prepared SELECT returned the wrong row");
       }
+      select.setString(1, "1");
+      try (ResultSet result = select.executeQuery()) {
+        require(result.next() && "prepared-one".equals(result.getString(1)),
+            "reused prepared SELECT returned the wrong row");
+      }
     }
   }
 

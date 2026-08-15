@@ -90,8 +90,12 @@ nine-entity mapping, deterministic one-warehouse scale, known deviations, and
 a machine-readable baseline gate. M14B adds the real nine-table schema, a
 bounded and restartable deterministic loader through T4 JDBC, exact cardinality
 and relationship checks, plus clean-restart and copied-store restore proof.
-M14C next implements all five transaction profiles through T4 JDBC; Level 3
-isolation evidence, concurrent compiler/executor work, and then a reproducible
+M14C implements deterministic New-Order, Payment, Order-Status, Delivery, and
+Stock-Level profiles through reusable prepared statements on T4 JDBC. Its
+two-terminal gate classifies and retries optimistic commit conflicts, covers
+rollback/disconnect/duplicate diagnostics, and rechecks effects after restart.
+M14D next supplies the complete Level 3 isolation and crash matrix; concurrent
+compiler/executor work and then a reproducible
 multi-warehouse TPC-C-like workload. Results are not `tpmC` and do not claim
 formal TPC-C compliance until all specification and disclosure requirements are
 met. Upgrade/drain orchestration, service-level backup controls, journal
