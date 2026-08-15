@@ -5,9 +5,11 @@
 Milestones 0 through 10 in this roadmap track the work required to run the
 portable, non-Hive, and non-HBase portions of the legacy suites under
 `core/sql/regress` against the standalone local-lite SQLCI and RocksDB store.
-Milestones 11 and 12 extend that validated SQL surface into the session,
-service, transaction, recovery, and storage boundaries required for a
-production-oriented single-node database.
+Milestones 11 through 13 extend that validated SQL surface into the session,
+service, transaction, recovery, and unified-storage boundaries required for a
+production-oriented single-node database. Milestone 14 makes TPC-C
+qualification the next primary objective and uses those foundations to drive
+isolation, concurrent execution, workload, and operational evidence.
 
 The legacy suites are not a drop-in replacement for the native
 `core/sql/regress/localLite` lane. They mix portable SQL semantics with HBase
@@ -465,6 +467,7 @@ convergence or a production database.
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
+| M14 TPC-C qualification | Planned; next primary milestone | Build a deterministic one-warehouse baseline, execute all five TPC-C transactions through the reduced T4 JDBC path, close Level 3 isolation and concurrent-execution gaps, then add multi-warehouse workload and recovery gates. No `tpmC` or TPC-C compliance claim is permitted until the required consistency, isolation, durability, mix, timing, and disclosure evidence exists. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -677,3 +680,158 @@ The M12 TransactionDB recovery journal remains a separate store while SQL
 multi-table publication uses the existing decision/marker/replay protocol.
 Service drain/upgrade orchestration, active-layout backup policy, journal
 consolidation, node HA, and distributed execution remain outside M13.
+
+## Milestone 14: TPC-C Qualification
+
+Status: planned and next in implementation order. M14 turns the completed
+M11-M13 session, transaction, recovery, and unified-storage foundations into a
+repeatable OLTP qualification workload. It is not complete when the schema can
+be loaded or when one transaction succeeds: completion requires all five TPC-C
+transaction profiles, concurrent correctness, crash recovery, and explicitly
+versioned evidence.
+
+The normative benchmark reference is
+<https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-c_v5.11.0.pdf>.
+Repository tests may use a dialect-adapted schema and a non-audited driver, but
+every deviation from the specification must be recorded. Until every formal
+requirement is satisfied, results must be labelled `TPC-C-like` or
+`non-compliant`; they must not be reported as official `tpmC`.
+
+The requested implementation order is:
+
+1. Freeze the specification, schema mapping, workload contract, and baseline.
+2. Build deterministic schema creation, loading, and consistency checks.
+3. Implement the five transaction profiles through the real client boundary.
+4. Close ACID, Level 3 isolation, and conflict/retry correctness gaps.
+5. Remove the compiler/executor serialization bottleneck safely.
+6. Add multi-warehouse scale, latency, throughput, and recovery evidence.
+7. Compose the qualification gate and publish an explicit compliance report.
+
+### M14A: Specification, Inventory, And Reproducible Baseline
+
+- Pin the TPC-C specification revision and record all SQL/type/name mappings.
+- Add a versioned manifest for the nine logical entities: WAREHOUSE, DISTRICT,
+  CUSTOMER, HISTORY, NEW_ORDER, ORDER, ORDER_LINE, ITEM, and STOCK. Reserved
+  identifiers may be mapped, but the mapping must remain stable and documented.
+- Define one warehouse as the first correctness scale. Record deterministic
+  random seeds, cardinalities, key ranges, data distributions, and loader
+  parameters so two clean runs produce equivalent logical databases.
+- Choose and vendor or implement a driver whose license, source revision,
+  transaction mix, terminal model, pacing, and retry policy are inspectable.
+- Capture the existing `make local-lite-m10`, `make local-lite-m11`, and
+  `make local-lite-m13` results before changing concurrency or isolation.
+
+Gate: `make local-lite-m14a` creates an isolated store, loads one warehouse,
+verifies exact table cardinalities and primary/foreign-key invariants, and
+produces a machine-readable baseline report. Ordinary row-at-a-time INSERT is
+acceptable for the first correctness gate; loader throughput is measured but
+is not yet a pass criterion.
+
+### M14B: Schema, Loader, And Data Integrity
+
+- Support the exact integer, fixed numeric, character, timestamp, default,
+  primary-key, UNIQUE, secondary-index, and bounded referential-integrity
+  shapes required by the mapped schema.
+- Keep loader commits bounded and restartable. A failed batch must not leave a
+  partially accepted logical unit or silently skip rejected rows.
+- Add post-load consistency queries for district next-order identifiers,
+  customer/history relationships, orders/order-lines, new-order queues, and
+  item/stock coverage.
+- Validate clean restart and TransactionDB backup/restore against the loaded
+  database before transaction traffic begins.
+
+Gate: a fresh load, interrupted load/retry, restart, and restore all produce the
+same declared counts and consistency-query results.
+
+### M14C: Five Transaction Profiles Through T4 JDBC
+
+- Implement New-Order, Payment, Order-Status, Delivery, and Stock-Level as
+  explicit prepared-statement transaction programs.
+- Exercise commit, rollback, typed parameter binding, typed fetch, NULL and
+  timestamp handling, duplicate/conflict diagnostics, disconnect cleanup, and
+  statement reuse through `jdbc:t4jdbc://127.0.0.1:23400/:`.
+- Keep application loops and branch decisions visible in the driver; do not
+  replace a required transaction with a server-side shortcut solely to obtain
+  a passing workload.
+- Assert each transaction's row-level effects and the cross-table consistency
+  conditions after both success and injected failure.
+
+Gate: `make local-lite-m14c` runs each profile deterministically in isolation,
+then runs the five-profile mix with at least two concurrent terminals and zero
+unclassified SQL errors or consistency violations.
+
+### M14D: Isolation, Conflicts, And Durability
+
+- Implement and prove the Level 3 boundary required among New-Order, Payment,
+  Delivery, and Order-Status: no dirty write, dirty read, non-repeatable read,
+  or phantom within the required transaction pairs.
+- Add predicate/range conflict tracking or another disclosed mechanism that
+  prevents write skew and phantoms; snapshot isolation alone is not accepted as
+  evidence of serializable behavior.
+- Define blocking versus optimistic-abort behavior, conflict diagnostics,
+  deadlock detection or avoidance, lock/conflict timeout, and bounded client
+  retry with backoff. Retries must preserve exactly-once logical effects.
+- Encode every isolation test required by the pinned TPC-C revision, adapting
+  the procedure only where the non-locking design requires an equivalent proof.
+- Inject process termination before and after the durable commit decision for
+  New-Order, Payment, and Delivery, then verify atomicity and consistency after
+  restart.
+
+Gate: `make local-lite-m14d` passes the versioned isolation matrix, consistency
+conditions, commit/rollback faults, and crash-recovery cases without relying on
+global single-statement serialization.
+
+### M14E: Concurrent Compiler And Executor Runtime
+
+- Inventory all process-global compiler, CLI, diagnostics, executor, scratch,
+  authorization, and current-context state currently protected by the server's
+  global request serialization.
+- Move mutable request state to session/request ownership or introduce narrow,
+  documented synchronization around genuinely shared caches and catalogs.
+- Permit independent sessions to compile and execute concurrently while
+  preserving DDL/catalog serialization where required.
+- Add race, cancellation, disconnect, slow-client, and peer-survival gates;
+  run sanitizer or equivalent concurrency instrumentation on the new ownership
+  boundary where the toolchain permits it.
+
+Gate: overlapping terminals must show measured executor overlap, preserve
+transaction isolation, and complete without cross-session diagnostics, state
+leaks, deadlocks, or store corruption. Merely accepting concurrent sockets does
+not satisfy M14E.
+
+### M14F: Scale, Performance, And Operations
+
+- Scale from one warehouse to multiple warehouses without changing the schema,
+  transaction programs, or correctness assertions.
+- Generate the declared TPC-C transaction mix and terminal behavior; report
+  committed/aborted/retried transactions separately by profile.
+- Record throughput plus p50/p95/p99/max latency, queue time, compile time,
+  execution time, conflict rate, retry count, WAL/fsync latency, compaction,
+  write stalls, cache behavior, disk growth, and recovery time.
+- Establish warmup, measurement duration, repetitions, variance threshold,
+  hardware/software identity, and artifact retention before setting a numeric
+  performance target.
+- Exercise checkpoint/backup under load, clean restart, unclean restart,
+  disk-watermark rejection, and restored-database consistency.
+
+Gate: `make local-lite-m14f` produces a reproducible non-compliant performance
+report and passes correctness/recovery at every declared scale. Performance
+regressions fail only against versioned thresholds, never an ad hoc best run.
+
+### M14G: Aggregate Qualification And Reporting
+
+- Add `make local-lite-m14` as the aggregate M14A-M14F gate and keep M10-M13
+  regression inputs explicit in CI so TPC-C work cannot narrow prior coverage.
+- Publish schema/driver revisions, configuration, scale, transaction counts,
+  errors, retries, latency distributions, resource metrics, consistency and
+  isolation results, recovery evidence, and known deviations in one report.
+- Separate three claims: transaction-profile functional support, repeatable
+  TPC-C-like workload support, and formal TPC-C compliance. Each has its own
+  checklist and no stronger label is inferred from a weaker gate.
+
+M14 completion means repeatable TPC-C-like qualification on the supported
+single-node trusted-local boundary. Formal benchmark compliance additionally
+requires all specification, timing, pricing, audit, and disclosure obligations
+outside the code-only gate. Password/TLS, node HA, distributed execution, and
+official publication remain separate productization work unless explicitly
+added to the tested system boundary.

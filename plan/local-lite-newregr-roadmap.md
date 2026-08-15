@@ -18,7 +18,11 @@ scripts/audit-local-lite-upstream-regress.sh --list-newregr
 ```
 
 The current source tree contains 281 paired inputs and one unpaired input. No
-newregress execution result is currently claimed.
+newregress execution result is currently claimed. M14 TPC-C qualification is
+the next primary product milestone and is tracked in
+`plan/local-lite-legacy-regress-roadmap.md`; it does not count as newregress
+coverage. N1-N4 remain a parallel compatibility/performance backlog and must
+not borrow TPC-C transaction results as suite passes.
 
 | Suite | Paired | Unpaired | Qualification boundary |
 | --- | ---: | ---: | --- |
@@ -53,7 +57,7 @@ The audit discovers paired inputs from each suite's native naming convention,
 checks `newregr-inventory.tsv`, reports the missing generic
 `tools/runregr_other.ksh`, and keeps `perf`/`exeperf` outside the case count.
 
-### N1: Portable SQLCI candidates — next
+### N1: Portable SQLCI candidates — next newregress increment
 
 Build explicit adapters for `opt` and `card` first. Reconstruct their setup,
 load, execution order, filter, and baseline-selection rules inside isolated

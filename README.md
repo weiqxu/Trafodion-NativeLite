@@ -36,7 +36,8 @@ plan/README.trafodion.md
 
 ## Current Status (verified 2026-08-15)
 
-The bounded M1-M13 scope is complete. Each `ContextCli` owns an `ExTransaction`,
+The bounded M1-M13 scope is complete; M14 TPC-C qualification is planned as the
+next primary milestone. Each `ContextCli` owns an `ExTransaction`,
 which is now the canonical owner of that session's `LocalLiteTxnContext`;
 executor/DDL paths receive it explicitly, and reset, disconnect, or destruction
 discard only that session's pending writes and snapshots. The M11A gate covers
@@ -84,10 +85,14 @@ migration, export, rollback, and runtime fallback code is not shipped. The
 synchronous M12 recovery journal remains separate while SQL publication still
 uses its idempotent recovery protocol.
 
-The next productization step is online upgrade/drain orchestration,
-service-level backup controls for the active layout, and journal consolidation.
-Cross-process writers, node-level HA, distributed
-execution, and password/TLS authentication remain outside the current claim.
+The next primary milestone is M14 TPC-C qualification: a deterministic
+one-warehouse baseline, all five transaction profiles through T4 JDBC, Level 3
+isolation evidence, concurrent compiler/executor work, and then a reproducible
+multi-warehouse TPC-C-like workload. Results are not `tpmC` and do not claim
+formal TPC-C compliance until all specification and disclosure requirements are
+met. Upgrade/drain orchestration, service-level backup controls, journal
+consolidation, node HA, distributed execution, and password/TLS authentication
+remain separate productization work.
 
 ### Functional boundary
 

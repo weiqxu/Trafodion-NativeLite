@@ -407,7 +407,7 @@ The persisted `LLBR1` row payload should remain the table row value. Transaction
 metadata, locks, versions, or write intents should live in storage keys,
 side-records, RocksDB metadata, or the transaction manager layer.
 
-## Immediate Next Implementation Step
+## Implemented Foundation And Immediate M14 Step
 
 The bounded transaction/storage phases, M1-M10 convergence gate, and M11
 session/server boundary are complete. M11 uses the existing Trafodion ownership
@@ -453,5 +453,37 @@ committed incomplete journals. M13 now durably activates the format-version-2
 single-keyspace target and rejects old per-table directories; no old-layout
 conversion or fallback implementation remains. Online upgrade/drain
 orchestration, active-layout backup scheduling, and journal consolidation
-remain next. This remains a single-node boundary, not node-level HA or
-distributed execution.
+remain separate productization work. This remains a single-node boundary, not
+node-level HA or distributed execution.
+
+M14 TPC-C qualification is now the immediate transaction/concurrency target.
+The storage work is not sufficient by itself: the four update/read transaction
+profiles require a proved Level 3 isolation boundary, including prevention of
+dirty writes, dirty reads, non-repeatable reads, and phantoms for the required
+transaction pairs. The implementation must add predicate/range conflict
+coverage or an equivalent disclosed serializability mechanism; current stable
+snapshots and key conflict checks are baseline evidence, not completion.
+
+The transaction implementation order for M14 is:
+
+1. Run deterministic New-Order, Payment, Order-Status, Delivery, and
+   Stock-Level programs over one loaded warehouse through T4 JDBC.
+2. Encode the pinned TPC-C isolation matrix and consistency conditions as
+   executable two-session tests before selecting a locking or optimistic
+   conflict design.
+3. Define wait/abort behavior, deadlock detection or avoidance, conflict
+   timeout, retryable diagnostics, and bounded backoff with exactly-once
+   logical effects.
+4. Protect point and predicate reads against write skew and phantoms without
+   making the server-wide compiler/executor mutex the isolation mechanism.
+5. Move compiler/executor mutable state to session/request ownership until
+   independent terminals show real execution overlap.
+6. Inject failures around the durable decision and recovery of each updating
+   TPC-C profile, then verify all cross-table invariants after restart.
+7. Scale to multiple warehouses only after one-warehouse functional,
+   isolation, and recovery gates pass.
+
+The aggregate transaction gate is `make local-lite-m14`; its detailed A-G
+phases and claim boundaries are authoritative in
+`plan/local-lite-legacy-regress-roadmap.md`. Until that gate exists and passes,
+the project claims neither TPC-C support nor `tpmC`.

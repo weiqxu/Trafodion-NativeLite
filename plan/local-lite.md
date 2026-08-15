@@ -588,11 +588,14 @@ unchanged in local-lite.
 | Single-byte `TRIM`/`LTRIM`/`RTRIM` family | Stored `TRIM` projections are exercised by `TEST005`/`TEST013`, while `LTRIM`/`RTRIM` remain literal-only in `TEST013`; family-wide assignment and predicate coverage is not yet claimed | This is the next portable gap from `core/TEST038` and `charsets/TEST313`; cover leading/trailing/both and explicit trim-character forms, CHAR versus VARCHAR results, empty/NULL values, both INSERT assignment paths, concatenation, and predicates without adding UTF8/UCS2 variants. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, character/data types, statistics, authorization, and bounded UDR | Covered for the declared RocksDB-only surface by `TEST026`-`TEST043` and the eleven-case legacy allowlist | Legacy cases that require physical HBase/Hive behavior, shell-driven multi-session execution, broader collation/LOB paths, or compiler-crashing SQL remain blocked, unsafe, or excluded. |
 
-The next portable compatibility increment is single-byte
-`TRIM`/`LTRIM`/`RTRIM` family coverage over local tables. It is separate from
-the productization critical path. After the completed M13 exclusive storage
-activation, that path continues with service drain/upgrade orchestration,
-active-layout backup controls and journal consolidation.
+The next primary milestone is M14 TPC-C qualification. Portable
+`TRIM`/`LTRIM`/`RTRIM` compatibility remains a parallel backlog rather than the
+critical path. M14 first establishes a deterministic one-warehouse schema and
+loader, all five transaction profiles over T4 JDBC, Level 3 isolation evidence,
+and true concurrent execution; it then scales to a reproducible multi-warehouse
+TPC-C-like workload. Service drain/upgrade orchestration, active-layout backup
+controls, journal consolidation, and security hardening remain parallel
+productization work.
 
 The broader effort to run portable sections from the legacy regress suites is
 tracked separately in `plan/local-lite-legacy-regress-roadmap.md`. Milestone 0
@@ -1022,17 +1025,39 @@ catalog/table runtime format. Cross-process writers,
 TMF coordination, distributed execution, node HA, and zero-downtime upgrade
 orchestration remain later work.
 
-Remaining, in suggested productization order:
+Remaining, in implementation order:
 
-1. Productize the completed **M13 exclusive unified storage** boundary with
-   service drain/upgrade orchestration, active-layout backup controls, recovery
-   journal consolidation.
-2. Continue portable SQL compatibility increments, beginning with the
-   single-byte `TRIM`/`LTRIM`/`RTRIM` family, as a parallel compatibility
-   backlog rather than the productization critical path.
+1. Complete **M14 TPC-C qualification**: deterministic schema/load, all five
+   transactions through T4 JDBC, consistency and Level 3 isolation tests,
+   concurrent compiler/executor work, then multi-warehouse performance and
+   recovery evidence.
+2. In parallel, productize the M13 boundary with service drain/upgrade,
+   active-layout backup controls, recovery-journal consolidation, and security
+   hardening.
+3. Continue portable SQL compatibility increments, beginning with the
+   single-byte `TRIM`/`LTRIM`/`RTRIM` family.
 
 The authoritative milestone definitions and completion gates are in
 `plan/local-lite-legacy-regress-roadmap.md`.
+
+- [ ] **Complete M14 TPC-C qualification for the supported single-node
+  trusted-local boundary.**
+  - [ ] Pin TPC-C 5.11.0, document dialect deviations, and version the schema,
+    driver, workload, terminal, retry, and reporting contracts.
+  - [ ] Add deterministic one-warehouse creation/loading, exact cardinality
+    checks, consistency queries, interrupted-load recovery, and restore proof.
+  - [ ] Implement New-Order, Payment, Order-Status, Delivery, and Stock-Level
+    through prepared statements on the real reduced T4 JDBC endpoint.
+  - [ ] Prove the required Level 3 isolation boundary, including predicate and
+    phantom conflicts, every required isolation test, timeout/deadlock policy,
+    and exactly-once effects across bounded retries.
+  - [ ] Remove global compiler/executor request serialization while preserving
+    session ownership, DDL/catalog safety, cancellation, and peer survival.
+  - [ ] Add multi-warehouse workload mix, latency/throughput/resource metrics,
+    crash/backup/restore-under-load evidence, repetitions, and variance gates.
+  - [ ] Add `make local-lite-m14`; publish separate functional, TPC-C-like, and
+    formal-compliance checklists. Do not label results `tpmC` before the formal
+    specification and disclosure boundary is satisfied.
 
 - [x] **Complete M13 exclusive unified storage for restart-based
   single-process activation.**
