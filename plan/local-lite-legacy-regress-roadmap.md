@@ -467,7 +467,7 @@ convergence or a production database.
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
-| M14 TPC-C qualification | In progress; M14A-M14C complete | The pinned contract and real T4 loader cover all nine tables and exact one-warehouse integrity. Five deterministic prepared-statement profiles pass alone and in a two-terminal mix with classified retries, rollback/disconnect/duplicate diagnostics, effect checks, and restart proof. M14D isolation and crash evidence is next. No `tpmC` or TPC-C compliance claim is permitted until the required isolation, durability, normative mix, timing, and disclosure evidence exists. |
+| M14 TPC-C qualification | In progress; M14A-M14D complete | The pinned contract and real T4 loader cover all nine tables and exact one-warehouse integrity. Five deterministic prepared-statement profiles pass alone and in a two-terminal mix. The Level 3 matrix proves dirty-read/write, non-repeatable-read, phantom, predicate-conflict, write-skew, bounded-retry, and six durable-decision crash cases. M14E concurrent compiler/executor work is next. No `tpmC` or TPC-C compliance claim is permitted until the normative mix, timing, and disclosure evidence exists. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -683,7 +683,7 @@ consolidation, node HA, and distributed execution remain outside M13.
 
 ## Milestone 14: TPC-C Qualification
 
-Status: in progress; M14A-M14C complete and M14D next. M14 turns the completed
+Status: in progress; M14A-M14D complete and M14E next. M14 turns the completed
 M11-M13 session, transaction, recovery, and unified-storage foundations into a
 repeatable OLTP qualification workload. It is not complete when the schema can
 be loaded or when one transaction succeeds: completion requires all five TPC-C
@@ -796,6 +796,27 @@ then runs the five-profile mix with at least two concurrent terminals and zero
 unclassified SQL errors or consistency violations.
 
 ### M14D: Isolation, Conflicts, And Durability
+
+Status: complete for the declared single-node optimistic boundary.
+`make local-lite-m14d` runs a real two-session T4 JDBC matrix covering dirty
+read, dirty write, non-repeatable read, predicate phantom, write skew, and one
+bounded retry with exactly-once effects. Transactions retain stable snapshots
+and capture the unified TransactionDB sequence at begin. Commit first performs
+exact row-before-image validation, preserving precise same-key diagnostics,
+then rejects a writing transaction if any database sequence changed since its
+snapshot. This conservative database-wide validation closes predicate and
+write-skew gaps, but can abort independent writers; D009 records that disclosed
+tradeoff.
+
+The policy is non-blocking optimistic abort with a retryable `restart
+transaction` diagnostic. The gate requires conflict response within five
+seconds; because transactions do not wait for locks, deadlock cycles are
+avoided rather than detected. The M14C client permits three retries with
+backoff, while the isolation proof uses one explicit retry and verifies only
+one logical effect. The M14D crash matrix terminates the server before and
+after the synchronous journal decision for New-Order, Payment, and Delivery.
+All six stores restart with either none or all of each profile's cross-table
+effects and pass relationship checks.
 
 - Implement and prove the Level 3 boundary required among New-Order, Payment,
   Delivery, and Order-Status: no dirty write, dirty read, non-repeatable read,

@@ -4474,6 +4474,7 @@ public:
     : active_(false),
       nextLocalTxnId_(1),
       localTxnId_(0),
+      beginSequence_(0),
       executorTxnId_(LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID)
   {
     pthread_mutex_init(&mutex_, NULL);
@@ -4499,6 +4500,7 @@ public:
     statementExecutions_.clear();
     pendingTables_.clear();
     localTxnId_ = 0;
+    beginSequence_ = 0;
     executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
     active_ = false;
     transactionStore_.close();
@@ -4564,6 +4566,12 @@ public:
         return false;
       }
 
+    {
+      LocalLiteMutexGuard atomicRead(
+          LocalLiteStorageManager::instance().mutex());
+      beginSequence_ = LocalLiteUnifiedRocksDBSequence();
+    }
+
     LocalLiteStorageManager::instance().beginStatement(this, transactionId);
     return true;
   }
@@ -4572,6 +4580,7 @@ public:
   {
     PendingMap pending;
     uint64_t transactionId = 0;
+    uint64_t beginSequence = 0;
     {
       LocalLiteMutexGuard guard(&mutex_);
       if (!active_)
@@ -4587,7 +4596,9 @@ public:
 
       pending.swap(pendingTables_);
       transactionId = localTxnId_;
+      beginSequence = beginSequence_;
       localTxnId_ = 0;
+      beginSequence_ = 0;
       executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
       active_ = false;
     }
@@ -4630,8 +4641,19 @@ public:
           transactionStore_.close();
           return false;
         }
+    if (!pending.empty() && LocalLiteUnifiedRocksDBSequence() != beginSequence)
+      {
+        setError(error,
+                 "local-lite serializable validation failed; restart "
+                 "transaction");
+        transactionStore_.close();
+        return false;
+      }
 
     uint64_t journalTransactionId = 0;
+    const char *commitFault = getenv("TRAF_LOCAL_LITE_COMMIT_FAULT");
+    if (commitFault && strcmp(commitFault, "before-journal") == 0)
+      _exit(92);
     if (!journalTables.empty() &&
         !LocalLiteStorageManager::instance().persistJournal(
             journalTables, &journalTransactionId, error))
@@ -4639,6 +4661,8 @@ public:
         transactionStore_.close();
         return false;
       }
+    if (commitFault && strcmp(commitFault, "after-journal") == 0)
+      _exit(93);
 
     size_t committedTables = 0;
     for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
@@ -4698,6 +4722,7 @@ public:
       pendingTables_.clear();
       transactionId = localTxnId_;
       localTxnId_ = 0;
+      beginSequence_ = 0;
       executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
       active_ = false;
     }
@@ -5250,6 +5275,7 @@ private:
   bool active_;
   uint64_t nextLocalTxnId_;
   uint64_t localTxnId_;
+  uint64_t beginSequence_;
   int64_t executorTxnId_;
   PendingMap pendingTables_;
   std::map<const void *, uint64_t> statementExecutions_;

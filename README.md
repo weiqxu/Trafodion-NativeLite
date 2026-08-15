@@ -34,7 +34,7 @@ The original Apache Trafodion project overview is preserved in:
 plan/README.trafodion.md
 ```
 
-## Current Status (verified 2026-08-15)
+## Current Status (verified 2026-08-16)
 
 The bounded M1-M13 scope is complete; M14 TPC-C qualification is planned as the
 next primary milestone. Each `ContextCli` owns an `ExTransaction`,
@@ -94,8 +94,15 @@ M14C implements deterministic New-Order, Payment, Order-Status, Delivery, and
 Stock-Level profiles through reusable prepared statements on T4 JDBC. Its
 two-terminal gate classifies and retries optimistic commit conflicts, covers
 rollback/disconnect/duplicate diagnostics, and rechecks effects after restart.
-M14D next supplies the complete Level 3 isolation and crash matrix; concurrent
-compiler/executor work and then a reproducible
+M14D adds a two-session Level 3 matrix for dirty read/write,
+non-repeatable read, phantom, predicate conflict, and write skew. Stable
+snapshots plus conservative database-sequence validation provide serializable
+optimistic aborts without lock waits or deadlock cycles; a bounded retry proves
+exactly-once logical effects. New-Order, Payment, and Delivery are each killed
+before and after the durable journal decision and pass atomic restart checks.
+This database-wide validator can abort independent writers and is intentionally
+disclosed as a correctness-first M14D boundary. M14E next removes the global
+compiler/executor queue, followed by a reproducible
 multi-warehouse TPC-C-like workload. Results are not `tpmC` and do not claim
 formal TPC-C compliance until all specification and disclosure requirements are
 met. Upgrade/drain orchestration, service-level backup controls, journal

@@ -456,6 +456,12 @@ bool LocalLiteUnifiedRocksDBActive()
   return unifiedState.active;
 }
 
+uint64_t LocalLiteUnifiedRocksDBSequence()
+{
+  return unifiedState.baseDb
+      ? rocksdb_get_latest_sequence_number(unifiedState.baseDb) : 0;
+}
+
 rocksdb_t *LocalLiteRocksDBOpen(const rocksdb_options_t *options,
                                 const char *name,
                                 char **error)

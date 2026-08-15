@@ -19,7 +19,7 @@ introduce the same shape of ownership that Trafodion uses elsewhere:
 
 ## Current Baseline
 
-As of M13 (verified 2026-08-15), local-lite supports the following local table
+As of M14D (verified 2026-08-16), local-lite supports the following local table
 and transactional-storage path:
 
 - `CREATE TABLE` and `DROP TABLE` are routed through compiler DDL code and write
@@ -50,6 +50,10 @@ The important storage limits are:
 - All touched tables are conflict-checked before the durable commit decision;
   idempotent table markers let startup complete an interrupted multi-table DML
   publication before accepting traffic.
+- Writing transactions record the unified TransactionDB sequence at snapshot
+  creation and validate it at commit after exact row-before-image checks. This
+  is a conservative serializable mechanism: it prevents predicate phantoms and
+  write skew, but can reject independent concurrent writers.
 
 This is a durable single-node boundary, not a distributed transaction system.
 Cross-process attempts to open the same `TRAF_LOCAL_STORE_DIR` are rejected by
@@ -457,12 +461,12 @@ remain separate productization work. This remains a single-node boundary, not
 node-level HA or distributed execution.
 
 M14 TPC-C qualification is now the immediate transaction/concurrency target.
-The storage work is not sufficient by itself: the four update/read transaction
-profiles require a proved Level 3 isolation boundary, including prevention of
-dirty writes, dirty reads, non-repeatable reads, and phantoms for the required
-transaction pairs. The implementation must add predicate/range conflict
-coverage or an equivalent disclosed serializability mechanism; current stable
-snapshots and key conflict checks are baseline evidence, not completion.
+M14D proves the Level 3 boundary for the current functional profiles using
+stable snapshots, exact key conflicts, and the disclosed database-wide
+sequence validator. Its matrix covers dirty writes, dirty reads,
+non-repeatable reads, predicate phantoms, write skew, bounded retry, and
+durable-decision crash recovery. M14E must now remove the compiler/executor
+serialization bottleneck without weakening that storage boundary.
 
 The transaction implementation order for M14 is:
 

@@ -1048,7 +1048,7 @@ The authoritative milestone definitions and completion gates are in
     checks, consistency queries, interrupted-load recovery, and restore proof.
   - [x] Implement New-Order, Payment, Order-Status, Delivery, and Stock-Level
     through prepared statements on the real reduced T4 JDBC endpoint.
-  - [ ] Prove the required Level 3 isolation boundary, including predicate and
+  - [x] Prove the required Level 3 isolation boundary, including predicate and
     phantom conflicts, every required isolation test, timeout/deadlock policy,
     and exactly-once effects across bounded retries.
   - [ ] Remove global compiler/executor request serialization while preserving

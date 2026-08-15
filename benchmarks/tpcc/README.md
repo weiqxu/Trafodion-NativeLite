@@ -41,3 +41,13 @@ retries, negative diagnostics, rollback/disconnect cleanup, final consistency,
 and restart persistence. This is a functional profile gate; the normative
 random transaction mix, terminal pacing, and multi-warehouse scale belong to
 M14F.
+
+Run `make local-lite-m14d` for the versioned two-session Level 3 isolation and
+durability matrix. The selected serializability mechanism combines stable
+TransactionDB snapshots with optimistic validation of the database sequence at
+commit. This prevents write skew and predicate phantoms but conservatively
+aborts a writer after any concurrent database write, including an independent
+one. Conflicts return the retryable `restart transaction` diagnostic without
+lock waits or deadlock cycles. The gate also terminates the server before and
+after the durable journal decision for New-Order, Payment, and Delivery and
+checks atomic effects after restart.

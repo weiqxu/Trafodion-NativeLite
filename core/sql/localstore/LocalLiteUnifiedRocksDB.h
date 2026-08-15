@@ -24,6 +24,7 @@
 
 #include <rocksdb/c.h>
 
+#include <stdint.h>
 #include <string>
 
 // Prepares the exclusive M13 runtime layout. Fresh stores are created directly
@@ -34,6 +35,7 @@ bool LocalLiteUnifiedRocksDBPrepare(const std::string &root,
                                     std::string *error);
 void LocalLiteUnifiedRocksDBShutdown();
 bool LocalLiteUnifiedRocksDBActive();
+uint64_t LocalLiteUnifiedRocksDBSequence();
 std::string LocalLiteUnifiedRocksDBPath(const std::string &root);
 
 rocksdb_t *LocalLiteRocksDBOpen(const rocksdb_options_t *options,

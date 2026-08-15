@@ -7,3 +7,4 @@ D005	foreign keys	logical relationships	core parent constraints plus full anti-j
 D006	driver	TPC audited implementation	repository-owned reduced T4 JDBC driver	reproducible functional qualification only	non-compliant
 D007	reporting	official tpmC result	TPC-C-like throughput and latency report	no audit, pricing, or full-disclosure process	non-compliant
 D008	transaction selection	normative random mix, last-name branch, variable order lines, and Delivery across ten districts	deterministic key-by-id functional profiles with five local lines and one district per Delivery call	M14C proves transaction effects while M14F owns normative mix, pacing, and scale	open-until-m14f
+D009	serializable conflicts	predicate or locking implementation with normative blocking behavior	stable snapshots plus database-wide sequence validation and optimistic retryable aborts	M14D prioritizes serializable correctness; independent concurrent writes can produce false conflicts	accepted-m14d

@@ -611,10 +611,94 @@ public final class NativeLiteTpccTransactions {
         "\"consistency\":\"pass\"}\n";
   }
 
+  private static void runCrashProfile(String url, String profile)
+      throws Exception {
+    try (Terminal terminal = new Terminal(url, 40)) {
+      if ("fault-new-order".equals(profile)) {
+        terminal.newOrder(1, 2);
+      } else if ("fault-payment".equals(profile)) {
+        terminal.payment(1, 2);
+      } else if ("fault-delivery".equals(profile)) {
+        terminal.delivery(1, 9);
+      } else {
+        throw new IllegalArgumentException("unknown crash profile: " + profile);
+      }
+    }
+    throw new AssertionError("crash profile returned without server termination");
+  }
+
+  private static void verifyCrashProfile(Connection observer, String profile,
+      boolean committed) throws SQLException {
+    long delta = committed ? 1 : 0;
+    if ("new-order".equals(profile)) {
+      require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_ORDERS") ==
+          200 + delta, "crash New-Order order count is not atomic");
+      require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_ORDER_LINE") ==
+          2002 + delta * 5, "crash New-Order line count is not atomic");
+      require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_NEW_ORDER") ==
+          60 + delta, "crash New-Order queue count is not atomic");
+      require(queryLong(observer, "SELECT D_NEXT_O_ID FROM TPCC_DISTRICT " +
+          "WHERE D_W_ID=1 AND D_ID=1") == 101 + delta,
+          "crash New-Order district effect is not atomic");
+    } else if ("payment".equals(profile)) {
+      require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_HISTORY") ==
+          200 + delta, "crash Payment history count is not atomic");
+      require(queryLong(observer, "SELECT C_PAYMENT_CNT FROM TPCC_CUSTOMER " +
+          "WHERE C_W_ID=1 AND C_D_ID=1 AND C_ID=2") == 1 + delta,
+          "crash Payment customer effect is not atomic");
+      require(queryLong(observer, "SELECT CAST(W_YTD AS BIGINT) " +
+          "FROM TPCC_WAREHOUSE WHERE W_ID=1") == 300000 + delta * 10,
+          "crash Payment warehouse effect is not atomic");
+      require(queryLong(observer, "SELECT CAST(D_YTD AS BIGINT) " +
+          "FROM TPCC_DISTRICT WHERE D_W_ID=1 AND D_ID=1") ==
+          30000 + delta * 10, "crash Payment district effect is not atomic");
+    } else if ("delivery".equals(profile)) {
+      require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_NEW_ORDER") ==
+          60 - delta, "crash Delivery queue count is not atomic");
+      require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_ORDERS " +
+          "WHERE O_W_ID=1 AND O_D_ID=1 AND O_ID=71 AND O_CARRIER_ID=9") ==
+          delta, "crash Delivery order effect is not atomic");
+      require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_ORDER_LINE " +
+          "WHERE OL_W_ID=1 AND OL_D_ID=1 AND OL_O_ID=71 " +
+          "AND OL_DELIVERY_D IS NOT NULL") == (committed ? 15 : 0),
+          "crash Delivery line effects are not atomic");
+      require(queryLong(observer, "SELECT C_DELIVERY_CNT FROM TPCC_CUSTOMER " +
+          "WHERE C_W_ID=1 AND C_D_ID=1 AND C_ID=45") == delta,
+          "crash Delivery customer effect is not atomic");
+    } else {
+      throw new IllegalArgumentException("unknown verification profile: " + profile);
+    }
+    require(queryLong(observer, "SELECT COUNT(*) FROM TPCC_ORDER_LINE L " +
+        "LEFT JOIN TPCC_ORDERS O ON L.OL_W_ID=O.O_W_ID AND " +
+        "L.OL_D_ID=O.O_D_ID AND L.OL_O_ID=O.O_ID WHERE O.O_ID IS NULL") == 0,
+        "crash recovery left orphan order lines");
+  }
+
   public static void main(String[] args) throws Exception {
     require(args.length == 3,
-        "usage: NativeLiteTpccTransactions JDBC_URL run|verify REPORT");
+        "usage: NativeLiteTpccTransactions JDBC_URL MODE REPORT");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
+    if (args[1].startsWith("fault-")) {
+      runCrashProfile(args[0], args[1]);
+      return;
+    }
+    if (args[1].startsWith("verify-crash-")) {
+      String suffix = args[1].substring("verify-crash-".length());
+      boolean committed = suffix.endsWith("-after");
+      String profile = suffix.substring(0,
+          suffix.length() - (committed ? "-after" : "-before").length());
+      try (Connection observer = connect(args[0])) {
+        verifyCrashProfile(observer, profile, committed);
+        observer.rollback();
+      }
+      String report = "{\"profile\":\"" + profile + "\"," +
+          "\"fault\":\"" + (committed ? "after" : "before") +
+          "_durable_decision\",\"atomicity\":\"pass\"," +
+          "\"restart_consistency\":\"pass\"}\n";
+      Files.write(Paths.get(args[2]), report.getBytes(StandardCharsets.UTF_8));
+      System.out.print(report);
+      return;
+    }
     if ("verify".equals(args[1])) {
       try (Connection observer = connect(args[0])) {
         verifyEffects(observer, 200, 2002, 200, 60);
