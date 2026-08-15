@@ -64,9 +64,11 @@ transactions, disconnect rollback, cancellation with an active peer, metadata,
 and restart persistence. The driver's public `Statement.cancel()` does not
 dispatch while a request is active; cancellation is therefore gated through
 the driver's own internal `T4_Dcs_Cancel` path.
-Requests enter concurrent connection
-threads but compiler/executor work is deliberately serialized while the
-embedded CLI remains process-global.
+Requests execute on their owning connection threads. CLI current context,
+SQLCI environment, assertion target, and default schema are thread-local while
+the ContextCli, compiler, diagnostics, transaction, and statement state remain
+session-owned. DDL/catalog mutations and SQLCI compatibility utilities retain
+narrow locks; independent DML and queries compile and execute concurrently.
 
 M12 defines `LocalLiteStorageEngine`, session, transaction, and streaming cursor
 interfaces. A shared gate runs RocksDB TransactionDB and SQLite WAL through the
@@ -101,8 +103,10 @@ optimistic aborts without lock waits or deadlock cycles; a bounded retry proves
 exactly-once logical effects. New-Order, Payment, and Delivery are each killed
 before and after the durable journal decision and pass atomic restart checks.
 This database-wide validator can abort independent writers and is intentionally
-disclosed as a correctness-first M14D boundary. M14E next removes the global
-compiler/executor queue, followed by a reproducible
+disclosed as a correctness-first M14D boundary. M14E removes the global engine
+queue, proves an observed compiler/executor depth of at least two across five
+instrumented races, isolates session schemas and diagnostics, and retains the
+T4 cancellation/disconnect/peer-survival gate. M14F next supplies a reproducible
 multi-warehouse TPC-C-like workload. Results are not `tpmC` and do not claim
 formal TPC-C compliance until all specification and disclosure requirements are
 met. Upgrade/drain orchestration, service-level backup controls, journal

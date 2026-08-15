@@ -464,10 +464,10 @@ convergence or a production database.
 | M8 authorization | Complete for the local catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
 | M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
 | M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make local-lite-m10` covers the eleven allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
-| M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. Compiler/executor work remains serialized; M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
+| M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. M14E later removes the original compiler/executor queue with session-thread ownership and narrow DDL/utility locks. M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
-| M14 TPC-C qualification | In progress; M14A-M14D complete | The pinned contract and real T4 loader cover all nine tables and exact one-warehouse integrity. Five deterministic prepared-statement profiles pass alone and in a two-terminal mix. The Level 3 matrix proves dirty-read/write, non-repeatable-read, phantom, predicate-conflict, write-skew, bounded-retry, and six durable-decision crash cases. M14E concurrent compiler/executor work is next. No `tpmC` or TPC-C compliance claim is permitted until the normative mix, timing, and disclosure evidence exists. |
+| M14 TPC-C qualification | In progress; M14A-M14E complete | The pinned contract, loader, five profiles, Level 3 matrix, and six durable-decision crash cases pass. M14E removes the engine queue, records compiler/executor depth at least two over five races, isolates schema/diagnostics, and preserves cancellation, disconnect, and peer survival. M14F scale/performance/operations is next. No `tpmC` or TPC-C compliance claim is permitted until the normative mix, timing, and disclosure evidence exists. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -533,8 +533,9 @@ server restart.
 Implemented evidence: `nativelite-server` opens a process-lifetime catalog
 lease, rejects a second server on the same store, creates/destroys one
 `ContextCli` per connection, and accepts numeric loopback TCP or an exact Unix
-socket with mode `0600`. Connection threads feed one serialized engine queue so
-embedded compiler/CLI process globals are not entered concurrently; completed
+socket with mode `0600`. At M11, connection threads fed one serialized engine
+queue; M14E later replaces it with session-thread execution and narrow
+DDL/utility locks. Completed
 connection threads are reaped. Unix startup refuses non-socket, foreign, or
 active paths, and shutdown unlinks only the exact socket inode created by this
 server. The `make local-lite-m11b` lifecycle gate verifies store ownership,
@@ -567,8 +568,8 @@ uses its internal `T4_Dcs_Cancel` path.
 
 M11 completion does not claim production readiness. The endpoint is trusted
 local only: TCP is loopback-only, Unix sockets are owner-only, and there is no
-password exchange. Results are buffered and compiler/executor work is
-serialized. M11 established the multi-session service boundary consumed by M12
+password exchange. Results are buffered. M11 established the multi-session
+service boundary later made compiler/executor-concurrent by M14E and consumed by M12
 durability, recovery, backup, and resource-governance work. Password/TLS
 authentication and broader security hardening remain later milestones.
 
@@ -683,7 +684,7 @@ consolidation, node HA, and distributed execution remain outside M13.
 
 ## Milestone 14: TPC-C Qualification
 
-Status: in progress; M14A-M14D complete and M14E next. M14 turns the completed
+Status: in progress; M14A-M14E complete and M14F next. M14 turns the completed
 M11-M13 session, transaction, recovery, and unified-storage foundations into a
 repeatable OLTP qualification workload. It is not complete when the schema can
 be loaded or when one transaction succeeds: completion requires all five TPC-C
@@ -838,6 +839,28 @@ conditions, commit/rollback faults, and crash-recovery cases without relying on
 global single-statement serialization.
 
 ### M14E: Concurrent Compiler And Executor Runtime
+
+Status: complete for the bounded connection-thread runtime. The versioned
+`m14e-runtime-inventory.tsv` records the compiler, CLI, diagnostics, executor,
+scratch, authorization, schema, store, and cancellation ownership decisions.
+Non-stop requests no longer enter the initialization worker queue. Each
+connection thread selects its session ContextCli and uses thread-local CLI
+current-context, SQLCI-environment, assertion-target, and default-schema state.
+Compiler, executor, transaction, diagnostic capture, and statement state remain
+owned by the session ContextCli. CREATE/DROP/ALTER/INITIALIZE and SQLCI
+compatibility utilities use separate narrow mutexes; storage publication keeps
+its existing atomicity latch.
+
+`make local-lite-m14e` loads a smoke database, executes five repeated pairs of
+real COUNT queries with deterministic test-only overlap holds, and requires the
+server's compiler/executor-region high-water mark to be at least two. It also
+creates the same unqualified table name in two session schemas, checks isolated
+results and diagnostics, and reruns the T4 cancellation, disconnect rollback,
+peer-survival, and restart suite. The concurrency regression exposed previously
+uninitialized ContextCli UDR-policy fields as repeatable SQLCODE `-8884`; every
+new context now initializes those fields explicitly. The debug toolchain has no
+maintained ThreadSanitizer target, so five deterministic races plus the M14C,
+M14D, and T4 lifecycle gates are the declared equivalent instrumentation limit.
 
 - Inventory all process-global compiler, CLI, diagnostics, executor, scratch,
   authorization, and current-context state currently protected by the server's

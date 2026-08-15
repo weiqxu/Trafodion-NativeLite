@@ -248,6 +248,17 @@ ContextCli::ContextCli(CliGlobals *cliGlobals)
 
   controlArea_ = new(exCollHeap()) ExControlArea(this, exCollHeap());
 
+  // Contexts are reused aggressively by the multi-session NativeLite server.
+  // UDR-only enforcement must be explicitly disabled for every new context;
+  // relying on fresh heap pages can leak a prior context's transaction-policy
+  // bits into an unrelated JDBC session.
+  udrErrorChecksEnabled_ = FALSE;
+  udrSqlAccessMode_ = 0;
+  udrAccessModeViolation_ = FALSE;
+  udrXactViolation_ = FALSE;
+  udrXactAborted_ = FALSE;
+  udrXactId_ = 0;
+
   stats_ = NULL;
 
   defineContext_ = getCurrentDefineContext();

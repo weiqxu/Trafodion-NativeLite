@@ -86,7 +86,7 @@
 #include "ComQueue.h"
 #include "ExExeUtilCli.h"
 
-extern SqlciEnv * global_sqlci_env; // global sqlci_env for break key handling purposes.
+extern THREAD_P SqlciEnv * global_sqlci_env; // per-thread SQLCI environment.
 extern ComDiagsArea sqlci_DA;
 extern NAHeap sqlci_Heap;
 extern BOOL WINAPI CtrlHandler (DWORD signalType);

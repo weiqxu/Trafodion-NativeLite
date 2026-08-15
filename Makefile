@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d
+.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 
 all:
@@ -108,6 +108,12 @@ local-lite-m14c: local-lite-m14b
 local-lite-m14d: local-lite-m14c
 	@echo "Running M14D isolation and crash-recovery checks"
 	scripts/test-local-lite-tpcc-isolation.sh
+
+local-lite-m14e: local-lite-m14d
+	@echo "Running M14E concurrent compiler/executor checks"
+	scripts/test-local-lite-tpcc-concurrency.sh
+	@echo "Running M14E cancellation, disconnect, and peer-survival regression"
+	scripts/test-local-lite-t4jdbc.sh
 
 package: 
 	@echo "Packaging Trafodion components"

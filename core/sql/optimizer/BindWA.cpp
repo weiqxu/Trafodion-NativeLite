@@ -63,8 +63,8 @@
 #include "MvRefreshBuilder.h"
 
 #ifdef TRAF_LOCAL_LITE
-#include <stdlib.h>
 #include "ComSchemaName.h"
+extern const char *LocalLiteGetThreadDefaultSchema();
 #endif
 
 
@@ -203,7 +203,7 @@ BindWA::BindWA(SchemaDB *schemaDB, CmpContext* cmpContext, NABoolean inDDL, NABo
   // Local-lite SQLCI handles SET SCHEMA without sending the statement through
   // the service-stack executor.  Keep the embedded compiler's per-statement
   // default in sync with that SQLCI session state.
-  const char *localLiteSchema = getenv("TRAF_LOCAL_LITE_SCHEMA");
+  const char *localLiteSchema = LocalLiteGetThreadDefaultSchema();
   if (localLiteSchema && localLiteSchema[0] != '\0')
     {
       ComSchemaName configured((NAString(localLiteSchema)));

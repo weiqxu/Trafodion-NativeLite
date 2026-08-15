@@ -18,8 +18,9 @@ multi-session process and protocol boundary, while M12 adds the backend-neutral
 transactional storage/recovery contract. M13 makes the format-version-2
 TransactionDB catalog/table key space exclusive and rejects old per-table
 stores; no old-layout migration or runtime fallback is retained.
-Compiler/executor requests remain serialized, and the current implementation
-is a single-node service. Distributed
+Independent session requests compile and execute on their connection threads;
+DDL/catalog mutation and SQLCI compatibility utilities retain narrow locks.
+The current implementation is a single-node service. Distributed
 execution, password/TLS authentication, full
 Trafodion wire compatibility, and the HBase/HDFS/Hive service stack
 remain outside the runtime.
@@ -119,8 +120,9 @@ Implemented:
   lifetime, creates one CLI context per connection, and accepts numeric loopback
   TCP or an owner-only Unix socket. It reaps completed connection threads,
   refuses to replace non-socket, foreign, or active Unix paths, and removes
-  only its own bound socket inode. Network connections are concurrent while
-  embedded compiler/executor requests pass through one serialized engine queue.
+  only its own bound socket inode. Network connections, compiler requests, and
+  executor requests are concurrent across session-owned connection threads;
+  DDL/catalog and SQLCI utility paths use narrow locks.
 - The server implements a bounded Trafodion Type 4 association and SQL dialogue
   on one listener, without DCS or ZooKeeper. The repository T4 JDBC driver
   validates connect/disconnect, direct and prepared execution, fetch, typed
@@ -1051,7 +1053,7 @@ The authoritative milestone definitions and completion gates are in
   - [x] Prove the required Level 3 isolation boundary, including predicate and
     phantom conflicts, every required isolation test, timeout/deadlock policy,
     and exactly-once effects across bounded retries.
-  - [ ] Remove global compiler/executor request serialization while preserving
+  - [x] Remove global compiler/executor request serialization while preserving
     session ownership, DDL/catalog safety, cancellation, and peer survival.
   - [ ] Add multi-warehouse workload mix, latency/throughput/resource metrics,
     crash/backup/restore-under-load evidence, repetitions, and variance gates.

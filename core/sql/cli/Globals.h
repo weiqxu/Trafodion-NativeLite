@@ -100,6 +100,10 @@ class LmLanguageManagerC;
 class LmLanguageManagerJava;
 extern CliGlobals *cli_globals;
 extern __thread ContextTidMap *tsCurrentContextMap;
+#ifdef TRAF_LOCAL_LITE
+void LocalLiteSetThreadDefaultSchema(const char *schema);
+const char *LocalLiteGetThreadDefaultSchema();
+#endif
 static  pthread_key_t thread_key;
 
 // A cleanup function when thread exits

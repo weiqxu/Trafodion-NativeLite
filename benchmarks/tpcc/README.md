@@ -51,3 +51,12 @@ one. Conflicts return the retryable `restart transaction` diagnostic without
 lock waits or deadlock cycles. The gate also terminates the server before and
 after the durable journal decision for New-Order, Payment, and Delivery and
 checks atomic effects after restart.
+
+Run `make local-lite-m14e` to prove that independent connection threads enter
+the real compiler/executor region concurrently. The gate records a minimum
+observed depth of two for five repeated races, checks per-session schema and
+diagnostic isolation, and reruns the T4 cancellation, disconnect rollback,
+peer-survival, and restart suite. The ownership/synchronization audit is
+versioned in `m14e-runtime-inventory.tsv`. DDL/catalog changes and SQLCI
+compatibility utilities remain narrowly serialized; normal DML and queries do
+not use the engine initialization queue.

@@ -58,7 +58,7 @@ extern void my_mpi_fclose();
 
 THREAD_P jmp_buf ExportJmpBuf;
 extern THREAD_P jmp_buf *ExportJmpBufPtr;
-SqlciEnv *global_sqlci_env = NULL;
+THREAD_P SqlciEnv *global_sqlci_env = NULL;
 
 namespace {
 
@@ -906,7 +906,8 @@ class NativeLiteEngine
 public:
   NativeLiteEngine()
       : initialized_(false), initializationFailed_(false), stopping_(false),
-        defaultContext_(0), bootstrapEnv_(NULL), activeSession_(NULL)
+        defaultContext_(0), bootstrapEnv_(NULL), activeExecutorRequests_(0),
+        maximumExecutorRequests_(0)
   {
     worker_ = std::thread(&NativeLiteEngine::run, this);
   }
@@ -983,7 +984,7 @@ public:
     // SQL_EXEC_Cancel is explicitly designed for a cancel thread and does not
     // acquire the normal CLI semaphore. Switch this thread to the target
     // ContextCli so cancellation cannot affect a peer session.
-    if (activeSession_.load() == session.get() && session->contextHandle != 0)
+    if (session->contextHandle != 0)
       {
         SQLCTX_HANDLE previous = 0;
         if (SQL_EXEC_SwitchContext_Internal(session->contextHandle, &previous,
@@ -1022,6 +1023,11 @@ public:
 private:
   void submit(EngineRequest *request)
   {
+    if (request->type != REQUEST_STOP)
+      {
+        runDirect(request);
+        return;
+      }
     {
       std::lock_guard<std::mutex> lock(queueMutex_);
       requests_.push_back(request);
@@ -1030,6 +1036,31 @@ private:
     std::unique_lock<std::mutex> requestLock(request->mutex);
     request->condition.wait(requestLock,
                             [request] { return request->complete; });
+  }
+
+  void runDirect(EngineRequest *request)
+  {
+    ExportJmpBufPtr = &ExportJmpBuf;
+    if (setjmp(ExportJmpBuf))
+      {
+        std::cerr << "NativeLite terminating after a CLI assertion"
+                  << std::endl;
+        _exit(1);
+      }
+    processRequest(request);
+    finish(request);
+  }
+
+  void processRequest(EngineRequest *request)
+  {
+    if (request->type == REQUEST_CREATE)
+      createSession(request);
+    else if (request->type == REQUEST_DESTROY)
+      destroySession(request);
+    else if (request->type == REQUEST_DESCRIBE)
+      request->result = runStatement(request->session, request->sql, true);
+    else if (request->type == REQUEST_EXECUTE)
+      request->result = runStatement(request->session, request->sql, false);
   }
 
   void finish(EngineRequest *request)
@@ -1109,14 +1140,7 @@ private:
             finish(request);
             break;
           }
-        if (request->type == REQUEST_CREATE)
-          createSession(request);
-        else if (request->type == REQUEST_DESTROY)
-          destroySession(request);
-        else if (request->type == REQUEST_DESCRIBE)
-          request->result = runStatement(request->session, request->sql, true);
-        else
-          request->result = runStatement(request->session, request->sql, false);
+        processRequest(request);
         finish(request);
       }
 
@@ -1205,7 +1229,7 @@ private:
 
     updateTransactionStatus(session);
     SQL_EXEC_SwitchContext_Internal(defaultContext_, NULL, TRUE);
-    global_sqlci_env = bootstrapEnv_;
+    global_sqlci_env = NULL;
     request->success = true;
   }
 
@@ -1213,7 +1237,7 @@ private:
   {
     SQLCTX_HANDLE failedContext = session->contextHandle;
     SQL_EXEC_SwitchContext_Internal(defaultContext_, NULL, TRUE);
-    global_sqlci_env = bootstrapEnv_;
+    global_sqlci_env = NULL;
     if (failedContext != 0)
       SQL_EXEC_DeleteContext(failedContext);
     session->contextHandle = 0;
@@ -1240,7 +1264,7 @@ private:
         SQL_EXEC_ResetContext(handle, NULL);
       }
     SQL_EXEC_SwitchContext_Internal(defaultContext_, NULL, TRUE);
-    global_sqlci_env = bootstrapEnv_;
+    global_sqlci_env = NULL;
     SQL_EXEC_DeleteContext(handle);
     session->contextHandle = 0;
     if (session->env)
@@ -1259,7 +1283,7 @@ private:
     std::string qualified =
         std::string(catalog && catalog[0] ? catalog : "TRAFODION") + "." +
         (schema && schema[0] ? schema : "SEABASE");
-    setenv("TRAF_LOCAL_LITE_SCHEMA", qualified.c_str(), 1);
+    LocalLiteSetThreadDefaultSchema(qualified.c_str());
     global_sqlci_env = session->env;
   }
 
@@ -1298,6 +1322,25 @@ private:
         result.columns.push_back(column);
         result.rows.push_back(std::vector<Cell>(1, Cell("ok")));
         result.commandTag = "SELECT 1";
+        return result;
+      }
+
+    if (normalized == "SELECT NATIVE_LITE_EXECUTOR_OVERLAP()" ||
+        normalized == "SELECT NATIVELITE_EXECUTOR_OVERLAP()")
+      {
+        *handled = true;
+        Column column;
+        column.name = "native_lite_executor_overlap";
+        column.oid = 23;
+        column.typeLength = 4;
+        result.columns.push_back(column);
+        result.commandTag = "SELECT 1";
+        if (!describeOnly)
+          {
+            std::ostringstream value;
+            value << maximumExecutorRequests_.load();
+            result.rows.push_back(std::vector<Cell>(1, Cell(value.str())));
+          }
         return result;
       }
 
@@ -1565,6 +1608,12 @@ private:
   QueryResult runStatement(const std::shared_ptr<Session> &session,
                            const std::string &sql, bool describeOnly)
   {
+    std::unique_lock<std::mutex> catalogLock(catalogMutex_,
+                                             std::defer_lock);
+    std::string sqlWord = firstWord(sql);
+    if (sqlWord == "CREATE" || sqlWord == "DROP" || sqlWord == "ALTER" ||
+        sqlWord == "INITIALIZE")
+      catalogLock.lock();
     QueryResult result;
     if (!switchTo(session))
       {
@@ -1573,7 +1622,6 @@ private:
         return result;
       }
     applySessionEnvironment(session);
-    activeSession_.store(session.get());
 
     if (session->cancelRequested.load())
       {
@@ -1581,7 +1629,6 @@ private:
         result.error = "canceling statement due to user request";
         if (GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
           session->failedTransaction = true;
-        activeSession_.store(NULL);
         updateTransactionStatus(session);
         return result;
       }
@@ -1590,7 +1637,6 @@ private:
       {
         result.sqlstate = "25P02";
         result.error = "current transaction is aborted; ROLLBACK required";
-        activeSession_.store(NULL);
         updateTransactionStatus(session);
         return result;
       }
@@ -1607,7 +1653,6 @@ private:
         if (!result.ok() &&
             GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
           session->failedTransaction = true;
-        activeSession_.store(NULL);
         updateTransactionStatus(session);
         return result;
       }
@@ -1623,7 +1668,6 @@ private:
         if (!result.ok() &&
             GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
           session->failedTransaction = true;
-        activeSession_.store(NULL);
         updateTransactionStatus(session);
         return result;
       }
@@ -1632,7 +1676,13 @@ private:
       {
         clearCapture(session->env->get_logfile());
         short utilityRc = 0;
-        if (LocalLiteSqlTable_process(sql.c_str(), session->env, &utilityRc))
+        bool utilityHandled = false;
+        {
+          std::lock_guard<std::mutex> utilityLock(utilityMutex_);
+          utilityHandled = LocalLiteSqlTable_process(
+              sql.c_str(), session->env, &utilityRc);
+        }
+        if (utilityHandled)
           {
             std::string output = readCapture(session->env->get_logfile());
             if (utilityRc != 0)
@@ -1651,7 +1701,6 @@ private:
             if (!result.ok() &&
                 GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
               session->failedTransaction = true;
-            activeSession_.store(NULL);
             updateTransactionStatus(session);
             return result;
           }
@@ -1665,6 +1714,19 @@ private:
     ContextCli *context = GetCliGlobals()->currContext();
     ExeCliInterface cli(context->exHeap(), SQLCHARSETCODE_UTF8, context);
     cli.setNotExeUtilInternalQuery(TRUE);
+    int active = activeExecutorRequests_.fetch_add(1) + 1;
+    int maximum = maximumExecutorRequests_.load();
+    while (active > maximum &&
+           !maximumExecutorRequests_.compare_exchange_weak(maximum, active))
+      {}
+    const char *holdText = getenv("TRAF_LOCAL_LITE_EXECUTOR_HOLD_MS");
+    if (holdText && holdText[0] && sql.find("M14E_OVERLAP") != std::string::npos)
+      {
+        char *end = NULL;
+        long hold = strtol(holdText, &end, 10);
+        if (end && *end == '\0' && hold > 0 && hold <= 5000)
+          std::this_thread::sleep_for(std::chrono::milliseconds(hold));
+      }
     Lng32 rc = cli.fetchRowsPrologue(executableSql.c_str(), TRUE);
     if (rc < 0)
       {
@@ -1718,7 +1780,7 @@ private:
     if (!result.ok() &&
         GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
       session->failedTransaction = true;
-    activeSession_.store(NULL);
+    activeExecutorRequests_.fetch_sub(1);
     updateTransactionStatus(session);
     return result;
   }
@@ -1734,7 +1796,10 @@ private:
   std::atomic<bool> stopping_;
   SQLCTX_HANDLE defaultContext_;
   SqlciEnv *bootstrapEnv_;
-  std::atomic<Session *> activeSession_;
+  std::mutex catalogMutex_;
+  std::mutex utilityMutex_;
+  std::atomic<int> activeExecutorRequests_;
+  std::atomic<int> maximumExecutorRequests_;
   LocalLiteRocksDBStore storeLease_;
 };
 

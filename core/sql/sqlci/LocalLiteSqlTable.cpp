@@ -13,6 +13,7 @@
 #include "SqlciEnv.h"
 #include "SQLCLIdev.h"
 #include "ComSmallDefs.h"
+#include "Globals.h"
 #include "SequenceGeneratorAttributes.h"
 
 #include <ctype.h>
@@ -872,7 +873,7 @@ static void localLiteSetDefaultSchema(SqlciEnv *env,
   strcpy(env->defaultCatalog(), catalog.c_str());
   strcpy(env->defaultSchema(), schema.c_str());
   std::string defaultSchema = catalog + "." + schema;
-  setenv("TRAF_LOCAL_LITE_SCHEMA", defaultSchema.c_str(), 1);
+  LocalLiteSetThreadDefaultSchema(defaultSchema.c_str());
 }
 
 static bool parseCatalogName(const std::string &text,
@@ -1244,10 +1245,10 @@ bool LocalLiteSqlTable_setCurrentUser(SqlciEnv *sqlciEnv, short *retcode)
       strcpy(sqlciEnv->defaultCatalog(), "TRAFODION");
       strcpy(sqlciEnv->defaultSchema(), legacySchema);
       std::string defaultSchema = "TRAFODION." + upper(legacySchema);
-      setenv("TRAF_LOCAL_LITE_SCHEMA", defaultSchema.c_str(), 1);
+      LocalLiteSetThreadDefaultSchema(defaultSchema.c_str());
     }
-  else if (!getenv("TRAF_LOCAL_LITE_SCHEMA"))
-    setenv("TRAF_LOCAL_LITE_SCHEMA", "TRAFODION.SEABASE", 1);
+  else if (!LocalLiteGetThreadDefaultSchema()[0])
+    LocalLiteSetThreadDefaultSchema("TRAFODION.SEABASE");
   Lng32 rc = SQL_EXEC_SetSessionAttr_Internal(SESSION_DATABASE_USER,
                                               static_cast<Lng32>(identity.id),
                                               const_cast<char *>(user.c_str()));

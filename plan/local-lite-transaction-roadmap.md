@@ -19,7 +19,7 @@ introduce the same shape of ownership that Trafodion uses elsewhere:
 
 ## Current Baseline
 
-As of M14D (verified 2026-08-16), local-lite supports the following local table
+As of M14E (verified 2026-08-16), local-lite supports the following local table
 and transactional-storage path:
 
 - `CREATE TABLE` and `DROP TABLE` are routed through compiler DDL code and write
@@ -466,7 +466,12 @@ stable snapshots, exact key conflicts, and the disclosed database-wide
 sequence validator. Its matrix covers dirty writes, dirty reads,
 non-repeatable reads, predicate phantoms, write skew, bounded retry, and
 durable-decision crash recovery. M14E must now remove the compiler/executor
-serialization bottleneck without weakening that storage boundary.
+serialization bottleneck without weakening that storage boundary. M14E now
+does so: request threads own their selected ContextCli and thread-local CLI,
+SQLCI, assertion, and schema state; only DDL/catalog mutation and compatibility
+utilities retain narrow locks. The executable high-water mark proves at least
+two concurrent compiler/executor requests, with M14C/M14D/T4 lifecycle
+regressions preserving the transaction and cancellation boundaries.
 
 The transaction implementation order for M14 is:
 

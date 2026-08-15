@@ -108,7 +108,7 @@ extern void my_mpi_fclose();
 THREAD_P jmp_buf ExportJmpBuf;
 extern THREAD_P jmp_buf* ExportJmpBufPtr;
 
-SqlciEnv * global_sqlci_env = NULL ; // Global sqlci_env for break key handling purposes.
+THREAD_P SqlciEnv * global_sqlci_env = NULL ; // Per-thread SQLCI environment.
 
 // This processes options of the form:
 //   <hyphen><single option char><zero or more blanks><required argument string>

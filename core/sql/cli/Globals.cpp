@@ -71,6 +71,20 @@
 #include "ExCextdecs.h"
 CliGlobals * cli_globals = NULL;
 __thread ContextTidMap *tsCurrentContextMap = NULL;
+#ifdef TRAF_LOCAL_LITE
+static __thread char localLiteThreadDefaultSchema[512] = {0};
+
+void LocalLiteSetThreadDefaultSchema(const char *schema)
+{
+  snprintf(localLiteThreadDefaultSchema,
+           sizeof(localLiteThreadDefaultSchema), "%s", schema ? schema : "");
+}
+
+const char *LocalLiteGetThreadDefaultSchema()
+{
+  return localLiteThreadDefaultSchema;
+}
+#endif
 
 CLISemaphore globalSemaphore ;
 

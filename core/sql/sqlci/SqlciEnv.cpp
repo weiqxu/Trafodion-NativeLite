@@ -90,7 +90,7 @@ ComDiagsArea sqlci_DA(&sqlci_Heap);
 
 ComDiagsArea &SqlciEnv::diagsArea() { return sqlci_DA; }
 
-extern SqlciEnv * global_sqlci_env ; // Global sqlci_env for break key handling purposes.
+extern THREAD_P SqlciEnv * global_sqlci_env ; // Per-thread SQLCI environment.
 
 
 #define MXCI_DONOTISSUE_ERRMSGS   -1
