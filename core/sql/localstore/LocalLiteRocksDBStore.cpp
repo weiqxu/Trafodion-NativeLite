@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <map>
 #include <pthread.h>
 #include <set>
@@ -4473,6 +4474,169 @@ static bool validateLocalLiteParentRI(
     const std::vector<std::string> &oldRows,
     const std::vector<std::string> &newRows, std::string *error);
 
+struct OccReadRange
+{
+  OccReadRange() : objectUid(0), full(false) {}
+  uint64_t objectUid;
+  std::string start;
+  std::string end;
+  bool full;
+};
+
+struct OccReadRangeLess
+{
+  bool operator()(const OccReadRange &left,
+                  const OccReadRange &right) const
+  {
+    if (left.objectUid != right.objectUid)
+      return left.objectUid < right.objectUid;
+    if (left.full != right.full)
+      return left.full < right.full;
+    if (left.start != right.start)
+      return left.start < right.start;
+    return left.end < right.end;
+  }
+};
+
+typedef std::pair<uint64_t, std::string> OccWriteKey;
+typedef std::set<OccReadRange, OccReadRangeLess> OccReadSet;
+typedef std::set<OccWriteKey> OccWriteSet;
+
+struct OccCommittedWriteSet
+{
+  const void *owner;
+  uint64_t sequence;
+  OccWriteSet writes;
+};
+
+class LocalLiteOccCoordinator
+{
+public:
+  LocalLiteOccCoordinator()
+    : overflowSequence_(0), validationCandidates_(0),
+      validationConflicts_(0), historyOverflowAborts_(0) {}
+
+  void begin(const void *owner, uint64_t startSequence)
+  {
+    active_[owner] = startSequence;
+  }
+
+  void end(const void *owner)
+  {
+    active_.erase(owner);
+    collect();
+  }
+
+  bool validate(const void *owner,
+                uint64_t startSequence,
+                const OccReadSet &reads,
+                std::string *error)
+  {
+    if (overflowSequence_ != 0 && startSequence < overflowSequence_)
+      {
+        historyOverflowAborts_++;
+        setError(error,
+                 "local-lite serializable validation failed (SQLSTATE "
+                 "40001, OCC history overflow); restart transaction");
+        return false;
+      }
+
+    for (size_t committed = 0; committed < history_.size(); committed++)
+      {
+        if (history_[committed].sequence <= startSequence)
+          continue;
+        if (history_[committed].owner == owner)
+          continue;
+        validationCandidates_++;
+        for (OccWriteSet::const_iterator write =
+               history_[committed].writes.begin();
+             write != history_[committed].writes.end(); ++write)
+          for (OccReadSet::const_iterator read = reads.begin();
+               read != reads.end(); ++read)
+            {
+              if (read->objectUid != write->first)
+                continue;
+              const bool intersects = write->second.empty() || read->full ||
+                  (read->start == read->end
+                       ? read->start == write->second
+                       : write->second >= read->start &&
+                           (read->end.empty() || write->second < read->end));
+              if (intersects)
+                {
+                  validationConflicts_++;
+                  setError(error,
+                           "local-lite serializable validation failed "
+                           "(SQLSTATE 40001, OCC read/write conflict); "
+                           "restart transaction");
+                  return false;
+                }
+            }
+      }
+    return true;
+  }
+
+  void publish(const void *owner,
+               uint64_t sequence,
+               const OccWriteSet &writes)
+  {
+    if (writes.empty())
+      return;
+    OccCommittedWriteSet committed;
+    committed.owner = owner;
+    committed.sequence = sequence;
+    committed.writes = writes;
+    history_.push_back(committed);
+    collect();
+  }
+
+private:
+  void collect()
+  {
+    uint64_t oldest = std::numeric_limits<uint64_t>::max();
+    for (std::map<const void *, uint64_t>::const_iterator active =
+           active_.begin(); active != active_.end(); ++active)
+      oldest = std::min(oldest, active->second);
+
+    while (!history_.empty() &&
+           (active_.empty() || history_.front().sequence <= oldest))
+      history_.erase(history_.begin());
+
+    size_t writeCount = 0;
+    for (size_t i = 0; i < history_.size(); i++)
+      writeCount += history_[i].writes.size();
+    while (writeCount > 1000000 && !history_.empty())
+      {
+        overflowSequence_ = std::max(overflowSequence_,
+                                     history_.front().sequence);
+        writeCount -= history_.front().writes.size();
+        history_.erase(history_.begin());
+      }
+    if (active_.empty())
+      overflowSequence_ = 0;
+  }
+
+  std::map<const void *, uint64_t> active_;
+  std::vector<OccCommittedWriteSet> history_;
+  uint64_t overflowSequence_;
+  uint64_t validationCandidates_;
+  uint64_t validationConflicts_;
+  uint64_t historyOverflowAborts_;
+};
+
+static LocalLiteOccCoordinator localLiteOccCoordinator;
+
+static void publishOccTableChange(const void *owner, uint64_t objectUid)
+{
+  if (objectUid == 0)
+    return;
+  LocalLiteMutexGuard publication(
+      LocalLiteStorageManager::instance().mutex());
+  OccWriteSet writes;
+  writes.insert(std::make_pair(objectUid, std::string()));
+  localLiteOccCoordinator.publish(owner, LocalLiteUnifiedRocksDBSequence(),
+                                  writes);
+}
+
 class LocalLiteTxnContext
 {
 public:
@@ -4501,7 +4665,12 @@ public:
     LocalLiteMutexGuard guard(&mutex_);
 
     if (active_)
-      LocalLiteStorageManager::instance().endStatement(this, localTxnId_);
+      {
+        LocalLiteMutexGuard publication(
+            LocalLiteStorageManager::instance().mutex());
+        LocalLiteStorageManager::instance().endStatement(this, localTxnId_);
+        localLiteOccCoordinator.end(this);
+      }
     for (std::map<const void *, uint64_t>::const_iterator it =
            statementExecutions_.begin();
          it != statementExecutions_.end(); ++it)
@@ -4594,6 +4763,7 @@ public:
       beginSequence_ = LocalLiteUnifiedRocksDBSequence();
       LocalLiteStorageManager::instance().beginStatement(this,
                                                          transactionId);
+      localLiteOccCoordinator.begin(this, beginSequence_);
     }
     return true;
   }
@@ -4601,6 +4771,8 @@ public:
   bool commit(int64_t executorTxnId, std::string *error)
   {
     PendingMap pending;
+    OccReadSet readRanges;
+    OccWriteSet writeKeys;
     uint64_t transactionId = 0;
     uint64_t beginSequence = 0;
     {
@@ -4617,6 +4789,8 @@ public:
         }
 
       pending.swap(pendingTables_);
+      readRanges = readRanges_;
+      writeKeys = writeKeys_;
       transactionId = localTxnId_;
       beginSequence = beginSequence_;
       localTxnId_ = 0;
@@ -4628,6 +4802,7 @@ public:
     LocalLiteStorageManager::instance().endStatement(this, transactionId);
     if (!validatePendingReferentialIntegrity(pending, error))
       {
+        endOcc();
         transactionStore_.close();
         return false;
       }
@@ -4654,23 +4829,24 @@ public:
     // so startup recovery can replay an interrupted multi-table publication.
     LocalLiteMutexGuard atomicPublication(
         LocalLiteStorageManager::instance().mutex());
+    if (!writeKeys.empty() &&
+        !localLiteOccCoordinator.validate(this, beginSequence,
+                                            readRanges, error))
+      {
+        endOcc();
+        transactionStore_.close();
+        return false;
+      }
     for (PendingMap::const_iterator t = pending.begin();
          t != pending.end(); ++t)
       if (!LocalLiteStorageManager::instance().commitPendingMutations(
               t->second.table, t->second.updates, t->second.deletes,
               t->second.rows, true, 0, error))
         {
+          endOcc();
           transactionStore_.close();
           return false;
         }
-    if (!pending.empty() && LocalLiteUnifiedRocksDBSequence() != beginSequence)
-      {
-        setError(error,
-                 "local-lite serializable validation failed; restart "
-                 "transaction");
-        transactionStore_.close();
-        return false;
-      }
 
     uint64_t journalTransactionId = 0;
     const char *commitFault = getenv("TRAF_LOCAL_LITE_COMMIT_FAULT");
@@ -4680,6 +4856,7 @@ public:
         !LocalLiteStorageManager::instance().persistJournal(
             journalTables, &journalTransactionId, error))
       {
+        endOcc();
         transactionStore_.close();
         return false;
       }
@@ -4695,6 +4872,7 @@ public:
           {
             if (error)
               *error += "; durable transaction journal retained for recovery";
+            endOcc();
             transactionStore_.close();
             return false;
           }
@@ -4706,6 +4884,10 @@ public:
             strtoull(faultAfterTable, NULL, 10) == committedTables)
           _exit(90);
       }
+
+    localLiteOccCoordinator.publish(this, LocalLiteUnifiedRocksDBSequence(),
+                                    writeKeys);
+    endOcc();
 
     if (journalTransactionId != 0 &&
         !LocalLiteStorageManager::instance().removeJournal(
@@ -4749,7 +4931,12 @@ public:
       active_ = false;
     }
 
-    LocalLiteStorageManager::instance().endStatement(this, transactionId);
+    {
+      LocalLiteMutexGuard publication(
+          LocalLiteStorageManager::instance().mutex());
+      LocalLiteStorageManager::instance().endStatement(this, transactionId);
+      localLiteOccCoordinator.end(this);
+    }
     transactionStore_.close();
     return true;
   }
@@ -4777,30 +4964,15 @@ public:
 
   bool refreshDDLSequence(int64_t executorTxnId, std::string *error)
   {
-    {
-      LocalLiteMutexGuard guard(&mutex_);
-      if (!active_)
-        return true;
-      if (!matchesExecutorTxnId(executorTxnId))
-        {
-          setError(error, "local-lite transaction context mismatch");
-          return false;
-        }
-    }
-
-    uint64_t sequence = 0;
-    {
-      LocalLiteMutexGuard atomicRead(
-          LocalLiteStorageManager::instance().mutex());
-      sequence = LocalLiteUnifiedRocksDBSequence();
-    }
     LocalLiteMutexGuard guard(&mutex_);
-    if (!active_ || !matchesExecutorTxnId(executorTxnId))
+    if (active_ && !matchesExecutorTxnId(executorTxnId))
       {
-        setError(error, "local-lite transaction context changed during DDL");
+        setError(error, "local-lite transaction context mismatch");
         return false;
       }
-    beginSequence_ = sequence;
+    // Sequence and identity allocation are autonomous. DDL is published as
+    // an owner-tagged OCC table change. Neither operation is allowed to move
+    // a transaction's original validation boundary forward.
     return true;
   }
 
@@ -4944,10 +5116,16 @@ public:
         LocalLiteRow after;
         after.rowId = mutations[i].before.rowId;
         after.value = mutations[i].after;
-        if (!recordRowWriteLocked(pending.table, mutations[i].before,
-                                  error) ||
-            !recordRowWriteLocked(pending.table, after, error))
-          return false;
+        if (!recordRowWriteLocked(pending.table, mutations[i].before, error))
+          {
+            if (error) *error = "record OCC before-image keys: " + *error;
+            return false;
+          }
+        if (!recordRowWriteLocked(pending.table, after, error))
+          {
+            if (error) *error = "record OCC after-image keys: " + *error;
+            return false;
+          }
         bool merged = false;
         for (size_t rowIndex = 0; rowIndex < pending.rows.size(); rowIndex++)
           if (pending.rows[rowIndex].rowId == mutations[i].before.rowId &&
@@ -5203,33 +5381,12 @@ public:
   }
 
 private:
-  struct OccReadRange
+  void endOcc()
   {
-    OccReadRange() : objectUid(0), full(false) {}
-    uint64_t objectUid;
-    std::string start;
-    std::string end;
-    bool full;
-  };
-
-  struct OccReadRangeLess
-  {
-    bool operator()(const OccReadRange &left,
-                    const OccReadRange &right) const
-    {
-      if (left.objectUid != right.objectUid)
-        return left.objectUid < right.objectUid;
-      if (left.full != right.full)
-        return left.full < right.full;
-      if (left.start != right.start)
-        return left.start < right.start;
-      return left.end < right.end;
-    }
-  };
-
-  typedef std::pair<uint64_t, std::string> OccWriteKey;
-  typedef std::set<OccReadRange, OccReadRangeLess> OccReadSet;
-  typedef std::set<OccWriteKey> OccWriteSet;
+    LocalLiteMutexGuard publication(
+        LocalLiteStorageManager::instance().mutex());
+    localLiteOccCoordinator.end(this);
+  }
 
   void recordReadPointLocked(const LocalLiteTableDef &table,
                              const std::string &key)
@@ -5605,6 +5762,7 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   if (!owner.empty() &&
       !setTableOwner(copy.catalog, copy.schema, copy.name, owner, error))
     return false;
+  publishOccTableChange(txnContext, copy.objectUid);
   return LocalLiteTxnManager::refreshDDLSequenceForExecutor(
       txnContext, LocalLiteTxnManager::currentExecutorTxnId(txnContext), error);
 }
@@ -6079,6 +6237,8 @@ bool LocalLiteRocksDBStore::dropTrigger(
                                tablePath(transition), error))
         return false;
     }
+  if (dropTransition)
+    publishOccTableChange(NULL, transition.objectUid);
   return true;
 }
 
@@ -6882,6 +7042,9 @@ bool LocalLiteRocksDBStore::dropTable(const std::string &catalog,
                                tablePath(transition), error))
         return false;
     }
+  publishOccTableChange(NULL, table.objectUid);
+  if (dropTransition)
+    publishOccTableChange(NULL, transition.objectUid);
   return true;
 }
 
@@ -7352,7 +7515,10 @@ bool LocalLiteRocksDBStore::createIndex(const LocalLiteTableDef &table,
   rocksdb_writeoptions_destroy(writeOptions);
   rocksdb_writebatch_destroy(batch);
   if (checkRocksError(err, "write local-lite index metadata", error))
-    return true;
+    {
+      publishOccTableChange(NULL, loaded.objectUid);
+      return true;
+    }
 
   rocksdb_writebatch_t *rollback = rocksdb_writebatch_create();
   for (std::map<std::string, std::string>::const_iterator entry =
@@ -7493,7 +7659,10 @@ bool LocalLiteRocksDBStore::dropIndex(const std::string &catalog,
   rocksdb_write(tableDb, dataWriteOptions, dataBatch, &err);
   rocksdb_writeoptions_destroy(dataWriteOptions);
   rocksdb_writebatch_destroy(dataBatch);
-  return checkRocksError(err, "delete local-lite index records", error);
+  if (!checkRocksError(err, "delete local-lite index records", error))
+    return false;
+  publishOccTableChange(NULL, table.objectUid);
+  return true;
 }
 
 bool LocalLiteRocksDBStore::alterTable(
@@ -7537,8 +7706,11 @@ bool LocalLiteRocksDBStore::alterTable(
                                      &mutations[i].after, error))
         return false;
     }
-  return LocalLiteStorageManager::instance().replaceTableDefinition(
-      oldTable, persistedTable, mutations, error);
+  if (!LocalLiteStorageManager::instance().replaceTableDefinition(
+          oldTable, persistedTable, mutations, error))
+    return false;
+  publishOccTableChange(txnContext, oldTable.objectUid);
+  return true;
 }
 
 static bool validateLocalLiteChildRI(
