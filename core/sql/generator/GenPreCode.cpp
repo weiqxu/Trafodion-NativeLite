@@ -881,6 +881,38 @@ static std::string localLiteEncodeIndexBounds(const std::string &startKey,
   return "LLIB1:" + localLiteHex(startKey) + ":" + localLiteHex(endKey);
 }
 
+static NABoolean localLiteRewritePrimaryPrefixFromPredicates(
+    TableDesc *tdesc,
+    const ValueIdSet &predicates,
+    ListOfUniqueRows &listOfUniqueRows)
+{
+  LocalLiteTableDef table;
+  if (!localLiteLoadTable(tdesc, &table) ||
+      table.primaryKeyColumns.size() < 2)
+    return FALSE;
+  std::vector<std::string> keyFields;
+  const size_t leading = localLiteBuildLeadingKeyFieldsFromPredicates(
+      table.primaryKeyColumns, predicates, &keyFields);
+  if (leading == 0 || leading >= table.primaryKeyColumns.size())
+    return FALSE;
+  std::string startKey;
+  std::string endKey;
+  std::string error;
+  if (!LocalLiteBuildPrimaryKeyPrefixFromTextFields(
+          table, keyFields, &startKey, &error) ||
+      !localLitePrefixSuccessor(startKey, &endKey))
+    return FALSE;
+  const std::string encoded =
+      "LLPB1:" + localLiteHex(startKey) + ":" + localLiteHex(endKey);
+  HbaseUniqueRows localGetSpec;
+  localGetSpec.rowTS_ = -1;
+  localGetSpec.rowIds_.insert(NAString(
+      encoded.data(), static_cast<Int32>(encoded.size())));
+  listOfUniqueRows.clear();
+  listOfUniqueRows.insert(localGetSpec);
+  return TRUE;
+}
+
 static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
     TableDesc *tdesc,
     const ValueIdSet &predicates,
@@ -1179,7 +1211,9 @@ static NABoolean processConstHBaseKeys(Generator * generator,
 
 #ifdef TRAF_LOCAL_LITE
       if (tdesc &&
-          relExpr->getOperatorType() == REL_HBASE_ACCESS)
+          (relExpr->getOperatorType() == REL_HBASE_ACCESS ||
+           relExpr->getOperatorType() == REL_HBASE_UPDATE ||
+           relExpr->getOperatorType() == REL_HBASE_DELETE))
         {
           NABoolean localLiteGetRows = FALSE;
           if (listOfUpdSubsetRows.entries() == 0)
@@ -1208,6 +1242,9 @@ static NABoolean processConstHBaseKeys(Generator * generator,
                       hba->selectionPred().subtractSet(coveredPredicates);
                     }
                 }
+              else if (localLiteRewritePrimaryPrefixFromPredicates(
+                           tdesc, localLitePreds, listOfUpdUniqueRows))
+                listOfUpdSubsetRows.clear();
               else
                 localLiteRewriteSecondaryIndexGetRowsFromPredicates(
                     tdesc, localLitePreds, listOfUpdUniqueRows);
@@ -13302,6 +13339,9 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
       executorPred().subtractSet(coveredPredicates);
       selectionPred().subtractSet(coveredPredicates);
     }
+  else if (localLiteRewritePrimaryPrefixFromPredicates(
+               getTableDesc(), localLitePreds, listOfUniqueRows_))
+    listOfRangeRows_.clear();
   else
     localLiteRewriteSecondaryIndexGetRowsFromPredicates(
         getTableDesc(), localLitePreds, listOfUniqueRows_);

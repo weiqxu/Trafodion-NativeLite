@@ -412,7 +412,8 @@ void TM_Audit::adp_module_init()
                              lv_my_pname, (char *)"TMASE", &lv_info);
     if ((lv_err == 0) && (lv_info.num_returned == 1))
     {
-        strncpy (lv_tlog_pname, lv_info.list[0].value, 8);
+        memcpy(lv_tlog_pname, lv_info.list[0].value, 8);
+        lv_tlog_pname[8] = '\0';
         TMTrace(3, ("TM_Audit::adp_module_init: %s opening TLOG %s\n", lv_my_pname, lv_tlog_pname));
 
         lv_err = msg_mon_open_process(lv_tlog_pname, &lv_phandle, &lv_oid);

@@ -3226,6 +3226,9 @@ short HbaseAccess::codeGen(Generator * generator)
       // dont encode keys for hbase mapped tables since these tables
       // could be populated from outside of traf.
       NABoolean encodeKeys = TRUE;
+#ifdef TRAF_LOCAL_LITE
+      encodeKeys = FALSE;
+#endif
       if (getTableDesc()->getNATable()->isHbaseMapTable())
         encodeKeys = FALSE;
 

@@ -17,15 +17,12 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReentrantLock;
 
-/** M14F deterministic multi-warehouse TPC-C-like workload and operations. */
+/** M15G concurrent multi-warehouse TPC-C-like workload and qualification. */
 public final class NativeLiteTpccWorkload {
   private static final String USER = "DB__ROOT";
   private static int retryLimit;
   private static int retryBackoffMillis;
-  private static final ReentrantLock TRANSACTION_ADMISSION =
-      new ReentrantLock(true);
   private static final String[] MIX = {
       "new_order", "payment", "new_order", "payment", "new_order",
       "payment", "new_order", "payment", "new_order", "payment",
@@ -107,33 +104,29 @@ public final class NativeLiteTpccWorkload {
       NativeLiteTpccTransactions.Terminal terminal, String profile,
       int district, int customer, ProfileStats stats) throws Exception {
     long started = System.nanoTime();
-    TRANSACTION_ADMISSION.lockInterruptibly();
-    try {
-      for (int attempt = 0; ; attempt++) {
-        try {
-          executeProfile(terminal, profile, district, customer);
-          if (stats != null)
-            stats.commit((System.nanoTime() - started) / 1000L, attempt);
-          return;
-        } catch (SQLException failure) {
-          if (!retryable(failure) || attempt >= retryLimit) throw failure;
-          Thread.sleep((long) retryBackoffMillis * (attempt + 1));
-        }
+    for (int attempt = 0; ; attempt++) {
+      try {
+        executeProfile(terminal, profile, district, customer);
+        if (stats != null)
+          stats.commit((System.nanoTime() - started) / 1000L, attempt);
+        return;
+      } catch (SQLException failure) {
+        if (!retryable(failure) || attempt >= retryLimit) throw failure;
+        Thread.sleep((long) retryBackoffMillis * (attempt + 1));
       }
-    } finally {
-      TRANSACTION_ADMISSION.unlock();
     }
   }
 
   private static void runTerminal(String url, int terminalId, int warehouse,
-      int transactionCount, RunStats stats) throws Exception {
+      int districts, int customers, int transactionCount, RunStats stats)
+      throws Exception {
     try (NativeLiteTpccTransactions.Terminal terminal =
              new NativeLiteTpccTransactions.Terminal(
                  url, terminalId, warehouse)) {
       for (int index = 0; index < transactionCount; index++) {
-        String profile = MIX[index % MIX.length];
-        int district = 1 + (index % 2);
-        int customer = 2 + (index * 7 % 90);
+        String profile = MIX[Math.floorMod(index + terminalId, MIX.length)];
+        int district = 1 + (index % districts);
+        int customer = 1 + (index * 7 % customers);
         runLogical(terminal, profile, district, customer,
             stats == null ? null : stats.profiles.get(profile));
       }
@@ -141,48 +134,63 @@ public final class NativeLiteTpccWorkload {
   }
 
   private static long runRepetition(String url, int repetition,
-      int terminals, int transactionCount, RunStats stats) throws Exception {
+      int terminals, int warehouses, int districts, int customers,
+      int transactionCount, int timeoutSeconds, RunStats stats)
+      throws Exception {
     CountDownLatch ready = new CountDownLatch(terminals);
     CountDownLatch start = new CountDownLatch(1);
     AtomicReference<Throwable> failure = new AtomicReference<>();
     List<Thread> workers = new ArrayList<>();
-    for (int warehouse = 1; warehouse <= terminals; warehouse++) {
-      final int selectedWarehouse = warehouse;
+    for (int terminalIndex = 1; terminalIndex <= terminals; terminalIndex++) {
+      final int selectedTerminal = terminalIndex;
+      final int selectedWarehouse = 1 + ((terminalIndex - 1) % warehouses);
       Thread worker = new Thread(() -> {
         try {
           ready.countDown();
           start.await();
           runTerminal(url, repetition * 100 + selectedWarehouse,
-              selectedWarehouse, transactionCount, stats);
+              selectedWarehouse, districts, customers, transactionCount,
+              stats);
         } catch (Throwable problem) {
           failure.compareAndSet(null, problem);
         }
-      }, "m14f-terminal-" + warehouse);
+      }, "m15g-terminal-" + selectedTerminal);
       workers.add(worker);
       worker.start();
     }
     ready.await();
     long started = System.nanoTime();
     start.countDown();
-    for (Thread worker : workers) worker.join(120000);
+    long deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
+    for (Thread worker : workers) {
+      long remaining = deadline - System.nanoTime();
+      if (remaining <= 0) break;
+      long millis = Math.max(1L, remaining / 1_000_000L);
+      worker.join(millis);
+    }
     long elapsed = System.nanoTime() - started;
-    for (Thread worker : workers)
-      require(!worker.isAlive(), worker.getName() + " exceeded 120 seconds");
+    for (Thread worker : workers) {
+      if (worker.isAlive()) worker.interrupt();
+      require(!worker.isAlive(), worker.getName() + " exceeded shared " +
+          timeoutSeconds + " second repetition deadline");
+    }
     if (failure.get() != null)
-      throw new AssertionError("M14F terminal failed", failure.get());
+      throw new AssertionError("M15G terminal failed", failure.get());
     return elapsed;
   }
 
   private static long percentile(List<Long> values, double percentile) {
-    require(!values.isEmpty(), "latency sample is empty");
+    if (values.isEmpty()) return 0;
     List<Long> sorted = new ArrayList<>(values);
     Collections.sort(sorted);
     int index = (int) Math.ceil(percentile * sorted.size()) - 1;
     return sorted.get(Math.max(0, Math.min(index, sorted.size() - 1)));
   }
 
-  private static String json(RunStats stats, int terminals, int warmup,
-      int measured, int repetitions, double maxVariance) {
+  private static String json(RunStats stats, String occMetrics,
+      int warehouses, int terminals,
+      int warmup, int measured, int repetitions, double maxVariance,
+      double minThroughput, Map<String, Long> maxP95Micros) {
     long commits = 0;
     for (ProfileStats profile : stats.profiles.values())
       commits += profile.committed;
@@ -192,16 +200,25 @@ public final class NativeLiteTpccWorkload {
     double variance = min == 0.0 ? 0.0 : (max - min) / min;
     require(variance <= maxVariance,
         "throughput variance " + variance + " exceeds " + maxVariance);
+    require(throughput >= minThroughput,
+        "throughput " + throughput + " is below " + minThroughput);
+    for (Map.Entry<String, Long> gate : maxP95Micros.entrySet()) {
+      long observed = percentile(stats.profiles.get(gate.getKey()).latencyMicros,
+          0.95);
+      require(observed <= gate.getValue(), gate.getKey() + " p95 " +
+          observed + "us exceeds " + gate.getValue() + "us");
+    }
     StringBuilder out = new StringBuilder();
-    out.append("{\"contract_version\":1,\"claim\":\"tpc-c-like\",")
-        .append("\"warehouses\":2,\"terminals\":").append(terminals)
+    out.append("{\"contract_version\":2,\"claim\":\"tpc-c-like\",")
+        .append("\"isolation_model\":\"trafodion_mvcc_occ\",")
+        .append("\"warehouses\":").append(warehouses)
+        .append(",\"terminals\":").append(terminals)
         .append(",\"mix_percent\":{\"new_order\":45,\"payment\":40,")
         .append("\"order_status\":5,\"delivery\":5,\"stock_level\":5}")
-        .append(",\"transaction_admission\":")
-        .append("\"fair_client_serialized_writers\"")
+        .append(",\"transaction_admission\":\"none_concurrent_occ\"")
         .append(",\"terminal_pacing\":\"none\"")
         .append(",\"latency_scope\":")
-        .append("\"client_end_to_end_including_admission\"")
+        .append("\"client_end_to_end_including_retry_backoff\"")
         .append(",\"warmup_transactions_per_terminal\":").append(warmup)
         .append(",\"measured_transactions_per_terminal\":").append(measured)
         .append(",\"repetitions\":").append(repetitions)
@@ -209,6 +226,20 @@ public final class NativeLiteTpccWorkload {
             String.format(Locale.ROOT, "%.3f", throughput))
         .append(",\"throughput_variance_ratio\":")
         .append(String.format(Locale.ROOT, "%.6f", variance))
+        .append(",\"qualification_gates\":{")
+        .append("\"min_throughput_tps\":")
+        .append(String.format(Locale.ROOT, "%.3f", minThroughput))
+        .append(",\"max_variance_ratio\":")
+        .append(String.format(Locale.ROOT, "%.6f", maxVariance))
+        .append(",\"latency_p95_us\":{");
+    boolean firstGate = true;
+    for (Map.Entry<String, Long> gate : maxP95Micros.entrySet()) {
+      if (!firstGate) out.append(',');
+      firstGate = false;
+      out.append('\"').append(gate.getKey()).append("\":")
+          .append(gate.getValue());
+    }
+    out.append("}}")
         .append(",\"profiles\":{");
     boolean first = true;
     for (Map.Entry<String, ProfileStats> entry : stats.profiles.entrySet()) {
@@ -226,7 +257,12 @@ public final class NativeLiteTpccWorkload {
           .append(",\"max\":").append(percentile(value.latencyMicros, 1.0))
           .append("}}");
     }
-    out.append("},\"server_metrics\":{")
+    out.append("},\"server_metrics\":")
+        .append(occMetrics)
+        .append(",\"client_metrics\":{")
+        .append("\"occ_conflicts_client_observed\":")
+        .append(stats.profiles.values().stream()
+            .mapToLong(profile -> profile.aborted).sum()).append(',')
         .append("\"queue_time\":\"unavailable_direct_dispatch\",")
         .append("\"compile_time\":\"unavailable_reduced_t4\",")
         .append("\"wal_fsync_latency\":\"unavailable_rocksdb_c_api\",")
@@ -237,11 +273,14 @@ public final class NativeLiteTpccWorkload {
     return out.toString();
   }
 
-  private static void verify(String url, Path report) throws Exception {
+  private static void verify(String url, int warehouses, int districts,
+      Path report) throws Exception {
     try (Connection connection = connect(url)) {
-      require(queryLong(connection, "SELECT COUNT(*) FROM TPCC_WAREHOUSE") == 2,
+      require(queryLong(connection, "SELECT COUNT(*) FROM TPCC_WAREHOUSE") ==
+          warehouses,
           "multi-warehouse store lost a warehouse");
-      require(queryLong(connection, "SELECT COUNT(*) FROM TPCC_DISTRICT") == 4,
+      require(queryLong(connection, "SELECT COUNT(*) FROM TPCC_DISTRICT") ==
+          (long) warehouses * districts,
           "multi-warehouse store lost a district");
       require(queryLong(connection, "SELECT COUNT(*) FROM TPCC_ORDER_LINE L " +
           "LEFT JOIN TPCC_ORDERS O ON L.OL_W_ID=O.O_W_ID AND " +
@@ -273,7 +312,15 @@ public final class NativeLiteTpccWorkload {
       return;
     }
     if ("verify".equals(args[1])) {
-      verify(args[0], report);
+      Properties verifyProperties = new Properties();
+      try (java.io.Reader reader = Files.newBufferedReader(Paths.get(args[2]),
+          StandardCharsets.UTF_8)) {
+        verifyProperties.load(reader);
+      }
+      verify(args[0], Integer.parseInt(verifyProperties.getProperty(
+          "performance.warehouses")), Integer.parseInt(
+          verifyProperties.getProperty("performance.districts.per.warehouse")),
+          report);
       return;
     }
     if ("watermark".equals(args[1])) {
@@ -300,9 +347,12 @@ public final class NativeLiteTpccWorkload {
     }
     int terminals = Integer.parseInt(properties.getProperty(
         "performance.terminals"));
-    require(terminals == Integer.parseInt(properties.getProperty(
-        "performance.warehouses")),
-        "M14F requires one terminal session per warehouse");
+    int warehouses = Integer.parseInt(properties.getProperty(
+        "performance.warehouses"));
+    int districts = Integer.parseInt(properties.getProperty(
+        "performance.districts.per.warehouse"));
+    int customers = Integer.parseInt(properties.getProperty(
+        "performance.customers.per.district"));
     int warmup = Integer.parseInt(properties.getProperty(
         "performance.warmup.transactions.per.terminal"));
     int measured = Integer.parseInt(properties.getProperty(
@@ -315,18 +365,41 @@ public final class NativeLiteTpccWorkload {
         "performance.retry.backoff.millis"));
     double maxVariance = Double.parseDouble(properties.getProperty(
         "performance.max.throughput.variance.ratio"));
-    runRepetition(args[0], 0, terminals, warmup, null);
+    double minThroughput = Double.parseDouble(properties.getProperty(
+        "performance.min.throughput.tps", "0"));
+    int timeoutSeconds = Integer.parseInt(properties.getProperty(
+        "performance.terminal.timeout.seconds", "120"));
+    Map<String, Long> maxP95Micros = new LinkedHashMap<>();
+    for (String profile : Arrays.asList(
+        "new_order", "payment", "order_status", "delivery", "stock_level")) {
+      double millis = Double.parseDouble(properties.getProperty(
+          "performance.max.p95." + profile + ".ms", "9.223372036854775E12"));
+      maxP95Micros.put(profile, (long) (millis * 1000.0));
+    }
+    try (Connection connection = connect(args[0])) {
+      require("ok".equals(queryString(connection,
+          "SELECT NATIVE_LITE_OCC_METRICS_RESET()")),
+          "OCC metrics reset did not return ok");
+      connection.rollback();
+    }
+    runRepetition(args[0], 0, terminals, warehouses, districts, customers,
+        warmup, timeoutSeconds, null);
     RunStats stats = new RunStats();
     for (int repetition = 1; repetition <= repetitions; repetition++) {
-      long elapsed = runRepetition(args[0], repetition, terminals, measured,
-          stats);
+      long elapsed = runRepetition(args[0], repetition, terminals, warehouses,
+          districts, customers, measured, timeoutSeconds, stats);
       stats.measuredNanos += elapsed;
       stats.repetitionTps.add(
           terminals * measured * 1_000_000_000.0 / elapsed);
     }
-    verify(args[0], Paths.get(args[3] + ".verify"));
-    String json = json(stats, terminals, warmup, measured, repetitions,
-        maxVariance);
+    verify(args[0], warehouses, districts, Paths.get(args[3] + ".verify"));
+    String occMetrics;
+    try (Connection connection = connect(args[0])) {
+      occMetrics = queryString(connection, "SELECT NATIVE_LITE_OCC_METRICS()");
+      connection.rollback();
+    }
+    String json = json(stats, occMetrics, warehouses, terminals, warmup, measured,
+        repetitions, maxVariance, minThroughput, maxP95Micros);
     Files.write(report, json.getBytes(StandardCharsets.UTF_8));
     System.out.print(json);
   }

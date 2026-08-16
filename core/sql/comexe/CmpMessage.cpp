@@ -780,7 +780,11 @@ CmpMessageObj(ENVS_REFRESH,h),envs_(0),operator_(o), cwd_(0)
     {
       // setup cwd_
       char cwd[500];
-      getcwd(cwd, 500);
+      if (getcwd(cwd, sizeof(cwd)) == NULL)
+        {
+          cwd[0] = '.';
+          cwd[1] = '\0';
+        }
       Lng32 l = str_len(cwd)+1;
       cwd_ = new(getHeap()) char[l];
       str_cpy_all(cwd_, cwd, l);
@@ -1132,7 +1136,6 @@ void CmpMessageEndSession::unpackMyself(IpcMessageObjType objType,
 			      objSize, buffer);
   ::unpackBuffer(buffer, flags_);
 }
-
 
 
 

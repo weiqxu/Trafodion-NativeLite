@@ -111,9 +111,13 @@ check_env(FILE **file)
             if (ftmp == NULL)
             {
                 fcmd = fopen("/proc/self/cmdline", "r");
-                fgets(cmdline, sizeof(cmdline), fcmd);
-                fclose(fcmd);
-                b = basename(cmdline);
+                if (fcmd != NULL &&
+                    fgets(cmdline, sizeof(cmdline), fcmd) != NULL)
+                    b = basename(cmdline);
+                else
+                    b = NULL;
+                if (fcmd != NULL)
+                    fclose(fcmd);
                 if (b == NULL)
                     snprintf(fline, sizeof(fline), "%d", getpid());
                 else
@@ -691,5 +695,4 @@ evl_sqlog_write(posix_sqlog_facility_t facility, int event_type,
     }
     return 0;
 }
-
 

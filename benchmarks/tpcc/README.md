@@ -107,3 +107,19 @@ This design is not SSCC and does not select RocksDB OptimisticTransactionDB;
 TransactionDB remains the snapshot and atomic persistence layer. Run
 `make local-lite-m15a` to validate the contract against the retained Trafodion
 reference implementation.
+
+M15A-M15G are complete. The phases add the contract and metrics, one unified
+transaction snapshot, OCC read/write sets, post-start validation, transactional
+secondary-index reads, atomic delta publication, and Release qualification.
+Run `make local-lite-m15g`; artifacts are written to
+`/tmp/traf-local-lite-m15-report` by default. The deterministic qualification
+scale is 32 warehouses and 32 independently offset terminals over 10 districts,
+100 customers and orders per district, 30 new orders per district, and 1,000
+items. It is deliberately a repeatable TPC-C-like engineering scale, not the
+formal TPC-C population or an official `tpmC` run.
+
+The 2026-08-16 Release baseline passes at 1.130 TPS, 3.423% three-run variance,
+zero conflicts/retries/unclassified errors, and 161-214 ms recovery. Five
+profiles have non-zero samples. Stock-Level p95 is 135.075 s and dominates the
+current gap; the configuration records permissive regression thresholds
+separately from the 50 TPS and 1/0.5/0.5/2/2 s production targets.

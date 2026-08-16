@@ -2618,7 +2618,9 @@ ExEspManager::ExEspManager(IpcEnvironment *env, CliGlobals *cliGlobals)
   if (lv_ret == 0) {
 
 #ifndef _DEBUG
-    lastAssignedCpu_ = (Int32)lv_os_tid % maxCpuNum_;
+    lastAssignedCpu_ = maxCpuNum_ > 0
+                         ? (Int32)lv_os_tid % maxCpuNum_
+                         : lv_nid;
 #else
      lastAssignedCpu_ = lv_nid;
 #endif

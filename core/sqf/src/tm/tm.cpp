@@ -487,8 +487,11 @@ void tm_process_req_requestregioninfo(CTmTxMessage * pp_msg)
         char* res2 = map->getRegionInfo(lp_current_tx->legacyTransid());
         if(strlen(res2) == 0)
             continue;
-        strncpy(tname, res2, sizeof(tname) -1);
-        strncpy(pp_msg->response()->u.iv_hbaseregion_info.iv_trans[lv_inx].iv_tablename, tname, sizeof(tname)-1);
+        char *lv_table_name = pp_msg->response()->u.iv_hbaseregion_info
+            .iv_trans[lv_inx].iv_tablename;
+        size_t lv_table_name_len = strnlen(res2, sizeof(tname) - 1);
+        memcpy(lv_table_name, res2, lv_table_name_len);
+        lv_table_name[lv_table_name_len] = '\0';
 /*
 
         char* res3 = map->getEncodedRegionName(lv_inx);
@@ -3487,7 +3490,6 @@ int main(int argc, char *argv[])
         } while (lv_ret != BSRETYPE_NOWORK);
     }
 }
-
 
 
 

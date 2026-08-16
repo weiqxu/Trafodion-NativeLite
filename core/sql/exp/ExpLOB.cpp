@@ -39,6 +39,7 @@
 #include "Platform.h"
 
 #include <ctype.h>
+#include <stddef.h>
 #include <string.h>
 
 #include "ComCextdecs.h"
@@ -407,7 +408,7 @@ void ExpLOBoper::genLOBhandle(Int64 uid,
   handleLen = sizeof(LOBHandle);
   if (schNameLen > 0)
     {
-      char * s = &lobHandle->schName_;
+      char * s = ptr + offsetof(LOBHandle, schName_);
       str_cpy_all(s, schName, schNameLen);
       s[schNameLen] = 0;
 

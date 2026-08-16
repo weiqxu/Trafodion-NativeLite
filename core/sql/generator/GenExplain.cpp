@@ -924,7 +924,8 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
       {
         const NAString &rowId = listOfUniqueRows_[i].rowIds_[j];
         if (rowId.length() >= 6 &&
-            (memcmp(rowId.data(), "LLIX1:", 6) == 0 ||
+            (memcmp(rowId.data(), "LLPB1:", 6) == 0 ||
+             memcmp(rowId.data(), "LLIX1:", 6) == 0 ||
              memcmp(rowId.data(), "LLIR1:", 6) == 0 ||
              memcmp(rowId.data(), "LLIB1:", 6) == 0))
           localLiteSecondaryIndex = TRUE;
@@ -2450,4 +2451,3 @@ ExplainTuple *ExeUtilHbaseCoProcAggr::addSpecificExplainInfo(
 
   return explainTuple;
 }
-

@@ -6,6 +6,7 @@ point_reads	count	yes
 missing_point_reads	count	yes
 range_reads	count	yes
 full_scans	count	yes
+primary_range_reads	count	yes
 index_range_reads	count	yes
 read_ranges	count	yes
 write_keys	count	yes

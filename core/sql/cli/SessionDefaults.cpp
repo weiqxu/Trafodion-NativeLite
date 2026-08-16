@@ -618,7 +618,8 @@ Lng32 SessionDefaults::readFromDefaultsTable(CliGlobals * cliGlobals)
 
       while (rc = fscanf(f, " %100[A-Za-z0-9_#] ,", attrName) == 0)
         {
-          fgets(attrValue, sizeof(attrValue), f);
+          if (!fgets(attrValue, sizeof(attrValue), f))
+            break;
           NAString attrNameUp(attrName);
           
           attrNameUp.toUpper();

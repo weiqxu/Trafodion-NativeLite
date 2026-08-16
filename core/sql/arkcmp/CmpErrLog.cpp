@@ -473,18 +473,20 @@ void CmpErrLog::writeStackTrace()
       for (j = i; j < i+5 && j < size-2; j++)
       {
         // Read from the addr2line output
-        fgets(buffer, sizeof(buffer), cmdFP);
+        if (!fgets(buffer, sizeof(buffer), cmdFP))
+          break;
 
         // Replace newline with null character
         size_t len = strlen(buffer);
-        if (buffer[len-1] == '\n')
+        if (len > 0 && buffer[len-1] == '\n')
           buffer[len-1] = '\0';
 
         fprintf(fp, "%p: %s()\n", bt[j], buffer); 
-        fgets(buffer, sizeof(buffer), cmdFP);
+        if (!fgets(buffer, sizeof(buffer), cmdFP))
+          break;
         fprintf(fp, "            %s", buffer); 
       }
-      fclose(cmdFP);
+      pclose(cmdFP);
     }
     i = j;
   }

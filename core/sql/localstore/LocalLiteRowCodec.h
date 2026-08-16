@@ -77,6 +77,20 @@ bool LocalLiteBuildPrimaryKeyFromTextFields(
     std::string *key,
     std::string *error);
 
+bool LocalLiteBuildPrimaryKeyFromExecutorTuple(
+    const LocalLiteTableDef &table,
+    ExpTupleDesc *keyTd,
+    const char *keyRow,
+    size_t keyRowLen,
+    std::string *key,
+    std::string *error);
+
+bool LocalLiteBuildPrimaryKeyPrefixFromTextFields(
+    const LocalLiteTableDef &table,
+    const std::vector<std::string> &leadingKeyFields,
+    std::string *keyPrefix,
+    std::string *error);
+
 bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &table,
                              const std::string &encoded,
                              const std::vector<size_t> &keyColumns,

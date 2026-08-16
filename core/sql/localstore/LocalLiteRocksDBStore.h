@@ -458,6 +458,11 @@ public:
                       const std::string &endKey,
                       std::vector<LocalLiteRow> *rows,
                       std::string *error);
+  bool scanPrimaryRange(const LocalLiteTableDef &table,
+                        const std::string &startKey,
+                        const std::string &endKey,
+                        std::vector<LocalLiteRow> *rows,
+                        std::string *error);
 
 private:
   friend class LocalLiteTxnContext;
@@ -484,6 +489,13 @@ private:
                       uint64_t statementExecutionId,
                       std::vector<LocalLiteRow> *rows,
                       std::string *error);
+  bool scanPrimaryRange(const LocalLiteTableDef &table,
+                        const std::string &startKey,
+                        const std::string &endKey,
+                        const void *statementOwner,
+                        uint64_t statementExecutionId,
+                        std::vector<LocalLiteRow> *rows,
+                        std::string *error);
 
   bool opened_;
 };
@@ -522,6 +534,11 @@ public:
                       const std::string &endKey,
                       std::vector<LocalLiteRow> *rows,
                       std::string *error);
+  bool scanPrimaryRange(const LocalLiteTableDef &table,
+                        const std::string &startKey,
+                        const std::string &endKey,
+                        std::vector<LocalLiteRow> *rows,
+                        std::string *error);
   bool getRowByKey(const LocalLiteTableDef &table,
                    const std::string &storageKey,
                    LocalLiteRow *row,
@@ -583,6 +600,10 @@ public:
 // Creates a consistent checkpoint of the active unified TransactionDB while
 // excluding concurrent LocalLite storage mutations.
 bool LocalLiteRocksDBCheckpoint(const std::string &path, std::string *error);
+
+// Process-wide cumulative SQL-layer OCC qualification counters.
+std::string LocalLiteOccMetricsJson();
+void LocalLiteOccMetricsReset();
 
 #endif
 

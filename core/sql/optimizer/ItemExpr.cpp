@@ -2848,7 +2848,7 @@ double ItemExpr::defaultSel()
 ItemExpr * ItemExpr::containsRightmost(const ItemExpr *ie)
 {
   if (this == ie) return this;
-  if (!this || !ie) return NULL;
+  if (!ie) return NULL;
   for (Int32 arity = getArity(); arity-- > 0; )
     if (child(arity))
       return (child(arity) == ie) ? this : child(arity)->containsRightmost(ie);
@@ -15301,4 +15301,3 @@ ItemExpr * SplitPart::copyTopNode(ItemExpr *derivedNode, CollHeap *outHeap)
 
      return BuiltinFunction::copyTopNode(result, outHeap);
 }
-

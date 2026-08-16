@@ -49,7 +49,7 @@ NAErrorParamArray::NAErrorParamArray
                 : numParams_(numParams)
 {
   array_ = new NAErrorParamArrayElement[numParams];
-  NAErrorParam * errParamPtr;
+  NAErrorParam * errParamPtr = NULL;
   for (Lng32 index = 0; index < numParams; index ++)
     {
            if (index == 0) errParamPtr = errParam1;
@@ -158,5 +158,4 @@ NAError * NAErrorStack::getFirst()
   iterEntries_ = 0;
   return getNext();
 } // NAErrorStack::getFirst()
-
 

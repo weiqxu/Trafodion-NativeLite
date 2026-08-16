@@ -185,13 +185,15 @@ public:
         RM_Open_struct *lp_info = (RM_Open_struct *) &ia_xarmInfo;
         return (char *) &lp_info->process_name;
     }
-    void xarmName(char *pp_rm) {memset(iv_xarmName, 0, RMNAMESZ);
-                                strncpy((char *) &iv_xarmName, pp_rm, RMNAMESZ-1);}
+    void xarmName(char *pp_rm) {size_t lv_len = strnlen(pp_rm, RMNAMESZ-1);
+                                memcpy(iv_xarmName, pp_rm, lv_len);
+                                iv_xarmName[lv_len] = '\0';}
     char * xarmName() {return (char *) &iv_xarmName;}
     void xarmFlags(int64 pv_flags) {iv_xarmFlags = pv_flags;}
     int64 xarmFlags() {return iv_xarmFlags;}
-    void xarmInfo(char *pp_rm) {memset(ia_xarmInfo, 0, MAXINFOSIZE);
-                                strncpy(ia_xarmInfo, pp_rm, MAXINFOSIZE-1);}
+    void xarmInfo(char *pp_rm) {size_t lv_len = strnlen(pp_rm, MAXINFOSIZE-1);
+                                memcpy(ia_xarmInfo, pp_rm, lv_len);
+                                ia_xarmInfo[lv_len] = '\0';}
     char * xarmInfo() {return (char *) ia_xarmInfo;}
 
    // RM outstanding message list methods:
@@ -228,4 +230,3 @@ private:
    extern char * XIDtoa(XID *pp_xid);
 
 #endif //XATMLIB_H_
-

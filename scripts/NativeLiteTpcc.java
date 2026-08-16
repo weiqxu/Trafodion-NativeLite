@@ -9,7 +9,13 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /** Deterministic, repository-owned loader and verifier for M14 TPC-C-like data. */
 public final class NativeLiteTpcc {
@@ -25,6 +31,7 @@ public final class NativeLiteTpcc {
     final int items;
     final int batchRows;
     final int commitRows;
+    final int loaderParallelism;
     final long seed;
     final String scale;
 
@@ -34,9 +41,14 @@ public final class NativeLiteTpcc {
       warehouses = Integer.parseInt(required(properties, "warehouses"));
       batchRows = Integer.parseInt(required(properties, "loader.batch.rows"));
       commitRows = Integer.parseInt(required(properties, "loader.commit.rows"));
+      loaderParallelism = Integer.parseInt(properties.getProperty(
+          "loader.parallel.warehouses", "1"));
       if (batchRows <= 0 || commitRows <= 0 || commitRows < batchRows) {
         throw new IllegalArgumentException(
             "loader row bounds must satisfy 0 < batch.rows <= commit.rows");
+      }
+      if (loaderParallelism <= 0) {
+        throw new IllegalArgumentException("loader parallelism must be positive");
       }
       if ("qualification".equals(scale)) {
         districts = Integer.parseInt(required(properties,
@@ -79,18 +91,79 @@ public final class NativeLiteTpcc {
     void bind(PreparedStatement statement, long index) throws SQLException;
   }
 
+  private interface WarehouseLoader {
+    void load(NativeLiteTpcc worker, int warehouse) throws SQLException;
+  }
+
+  private interface ParallelLoader {
+    void load(NativeLiteTpcc worker, int task) throws SQLException;
+  }
+
   private final Connection connection;
+  private final String jdbcUrl;
   private final Config config;
   private final Path schemaPath;
   private int committedBatches;
   private final int failAfterBatches;
 
-  private NativeLiteTpcc(Connection connection, Config config, Path schemaPath) {
+  private NativeLiteTpcc(Connection connection, String jdbcUrl, Config config,
+      Path schemaPath) {
     this.connection = connection;
+    this.jdbcUrl = jdbcUrl;
     this.config = config;
     this.schemaPath = schemaPath;
     this.failAfterBatches = Integer.parseInt(
         System.getenv().getOrDefault("TPCC_FAIL_AFTER_BATCHES", "0"));
+  }
+
+  private void loadWarehouses(String table, WarehouseLoader loader)
+      throws SQLException {
+    loadParallel(table, config.warehouses, (worker, task) -> {
+      int warehouse = task + 1;
+      loader.load(worker, warehouse);
+      System.out.println("loader table=" + table + " warehouse=" + warehouse +
+          " action=loaded");
+    });
+  }
+
+  private void loadParallel(String table, int taskCount, ParallelLoader loader)
+      throws SQLException {
+    // The coordinator must not retain its pre-load MVCC snapshot while worker
+    // sessions commit disjoint warehouse partitions.
+    connection.commit();
+    int parallelism = Math.min(config.loaderParallelism, taskCount);
+    if (parallelism == 1) {
+      for (int task = 0; task < taskCount; task++) loader.load(this, task);
+      return;
+    }
+    ExecutorService pool = Executors.newFixedThreadPool(parallelism);
+    List<Future<?>> futures = new ArrayList<>();
+    try {
+      for (int task = 0; task < taskCount; task++) {
+        final int selectedTask = task;
+        futures.add(pool.submit(() -> {
+          try (Connection workerConnection = DriverManager.getConnection(
+              jdbcUrl, USER, "")) {
+            workerConnection.setAutoCommit(false);
+            NativeLiteTpcc worker = new NativeLiteTpcc(workerConnection,
+                jdbcUrl, config, schemaPath);
+            loader.load(worker, selectedTask);
+            return null;
+          }
+        }));
+      }
+      for (Future<?> future : futures) future.get();
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new SQLException("interrupted while loading " + table,
+          interrupted);
+    } catch (ExecutionException failed) {
+      Throwable cause = failed.getCause();
+      if (cause instanceof SQLException) throw (SQLException) cause;
+      throw new SQLException("parallel loader failed for " + table, cause);
+    } finally {
+      pool.shutdownNow();
+    }
   }
 
   private static void require(boolean condition, String message) {
@@ -272,20 +345,23 @@ public final class NativeLiteTpcc {
         Math.max(config.customers, config.orders));
     resetPartial("TPCC_LOAD_NUMBER", expected);
     if (count("TPCC_LOAD_NUMBER") != expected) {
-      for (long first = 1; first <= expected; first += config.commitRows) {
+      int chunks = (int) ((expected + config.commitRows - 1) /
+          config.commitRows);
+      loadParallel("TPCC_LOAD_NUMBER", chunks, (worker, task) -> {
+        long first = (long) task * config.commitRows + 1;
         long last = Math.min(expected, first + config.commitRows - 1L);
         String expression = "A.N * 1000 + B.N + 1";
         String sql = "INSERT INTO TPCC_LOAD_NUMBER SELECT " + expression +
             " FROM TPCC_LOAD_SEED A CROSS JOIN TPCC_LOAD_SEED B WHERE " +
             expression + " BETWEEN " + first + " AND " + last;
-        try (Statement statement = connection.createStatement()) {
+        try (Statement statement = worker.connection.createStatement()) {
           int affected = statement.executeUpdate(sql);
           require(affected == last - first + 1,
               "number domain chunk affected-row mismatch");
         }
-        connection.commit();
-        afterBatch("TPCC_LOAD_NUMBER");
-      }
+        worker.connection.commit();
+        worker.afterBatch("TPCC_LOAD_NUMBER");
+      });
       System.out.println("loader table=TPCC_LOAD_NUMBER rows=" + expected +
           " action=loaded");
     }
@@ -295,14 +371,16 @@ public final class NativeLiteTpcc {
     ensureNumberDomain();
     resetPartial("TPCC_ITEM", config.items);
     if (count("TPCC_ITEM") != config.items) {
-      for (int first = 1; first <= config.items; first += config.commitRows) {
+      int chunks = (config.items + config.commitRows - 1) / config.commitRows;
+      loadParallel("TPCC_ITEM", chunks, (worker, task) -> {
+        int first = task * config.commitRows + 1;
         int last = Math.min(config.items, first + config.commitRows - 1);
-        executeSetChunk("TPCC_ITEM",
+        worker.executeSetChunk("TPCC_ITEM",
             "SELECT N, MOD(N, 10000) + 1, 'ITEM-' || CAST(N AS VARCHAR(10)), " +
             "CAST(MOD(N * 37, 9901) + 100 AS DECIMAL(7,2)) / 100, " +
             "CASE WHEN MOD(N,10)=0 THEN 'ITEM-ORIGINAL' ELSE 'ITEM-DATA' END " +
             "FROM TPCC_LOAD_NUMBER WHERE N BETWEEN " + first + " AND " + last);
-      }
+      });
       requireCount("TPCC_ITEM", config.items);
       System.out.println("loader table=TPCC_ITEM rows=" + config.items +
           " action=loaded");
@@ -312,7 +390,7 @@ public final class NativeLiteTpcc {
         config.customers;
     resetPartial("TPCC_CUSTOMER", customerTotal);
     if (count("TPCC_CUSTOMER") != customerTotal) {
-      for (int w = 1; w <= config.warehouses; w++)
+      loadWarehouses("TPCC_CUSTOMER", (worker, w) -> {
         for (int d = 1; d <= config.districts; d++) {
           for (int first = 1; first <= config.customers;
                first += config.commitRows) {
@@ -327,9 +405,10 @@ public final class NativeLiteTpcc {
                 "CAST(MOD(N * 17,5000) AS DECIMAL(8,4)) / 10000," +
                 "-10.00,10.00,1,0,'CUSTOMER-DATA' FROM TPCC_LOAD_NUMBER " +
                 "WHERE N BETWEEN " + first + " AND " + last;
-            executeSetChunk("TPCC_CUSTOMER", select);
+            worker.executeSetChunk("TPCC_CUSTOMER", select);
           }
         }
+      });
       requireCount("TPCC_CUSTOMER", customerTotal);
       System.out.println("loader table=TPCC_CUSTOMER rows=" + customerTotal +
           " action=loaded");
@@ -337,7 +416,7 @@ public final class NativeLiteTpcc {
 
     resetPartial("TPCC_HISTORY", customerTotal);
     if (count("TPCC_HISTORY") != customerTotal) {
-      for (int w = 1; w <= config.warehouses; w++)
+      loadWarehouses("TPCC_HISTORY", (worker, w) -> {
         for (int d = 1; d <= config.districts; d++) {
           long base = ((long) (w - 1) * config.districts + d - 1) *
               config.customers;
@@ -349,9 +428,10 @@ public final class NativeLiteTpcc {
                 "," + d + "," + w + ",TIMESTAMP '" + FIXED_TS +
                 "',10.00,'HISTORY-DATA' FROM TPCC_LOAD_NUMBER WHERE N " +
                 "BETWEEN " + first + " AND " + last;
-            executeSetChunk("TPCC_HISTORY", select);
+            worker.executeSetChunk("TPCC_HISTORY", select);
           }
         }
+      });
       requireCount("TPCC_HISTORY", customerTotal);
       System.out.println("loader table=TPCC_HISTORY rows=" + customerTotal +
           " action=loaded");
@@ -360,7 +440,7 @@ public final class NativeLiteTpcc {
     long orderTotal = (long) config.warehouses * config.districts * config.orders;
     resetPartial("TPCC_ORDERS", orderTotal);
     if (count("TPCC_ORDERS") != orderTotal) {
-      for (int w = 1; w <= config.warehouses; w++)
+      loadWarehouses("TPCC_ORDERS", (worker, w) -> {
         for (int d = 1; d <= config.districts; d++) {
           String carrier = "CASE WHEN N <= " + (config.orders - config.newOrders) +
               " THEN MOD(N,10)+1 ELSE NULL END";
@@ -375,9 +455,10 @@ public final class NativeLiteTpcc {
                 "TIMESTAMP '" + FIXED_TS + "'," + carrier + "," + lineCount +
                 ",1 FROM TPCC_LOAD_NUMBER WHERE N BETWEEN " + first +
                 " AND " + last;
-            executeSetChunk("TPCC_ORDERS", select);
+            worker.executeSetChunk("TPCC_ORDERS", select);
           }
         }
+      });
       requireCount("TPCC_ORDERS", orderTotal);
       System.out.println("loader table=TPCC_ORDERS rows=" + orderTotal +
           " action=loaded");
@@ -387,13 +468,14 @@ public final class NativeLiteTpcc {
         config.newOrders;
     resetPartial("TPCC_NEW_ORDER", newOrderTotal);
     if (count("TPCC_NEW_ORDER") != newOrderTotal) {
-      for (int w = 1; w <= config.warehouses; w++)
+      loadWarehouses("TPCC_NEW_ORDER", (worker, w) -> {
         for (int d = 1; d <= config.districts; d++) {
           String select = "SELECT " + w + "," + d + ",N FROM " +
               "TPCC_LOAD_NUMBER WHERE N > " + (config.orders - config.newOrders) +
               " AND N <= " + config.orders;
-          executeSetChunk("TPCC_NEW_ORDER", select);
+          worker.executeSetChunk("TPCC_NEW_ORDER", select);
         }
+      });
       requireCount("TPCC_NEW_ORDER", newOrderTotal);
       System.out.println("loader table=TPCC_NEW_ORDER rows=" + newOrderTotal +
           " action=loaded");
@@ -402,7 +484,7 @@ public final class NativeLiteTpcc {
     long stockTotal = (long) config.warehouses * config.items;
     resetPartial("TPCC_STOCK", stockTotal);
     if (count("TPCC_STOCK") != stockTotal) {
-      for (int w = 1; w <= config.warehouses; w++) {
+      loadWarehouses("TPCC_STOCK", (worker, w) -> {
         for (int first = 1; first <= config.items; first += config.commitRows) {
           int last = Math.min(config.items, first + config.commitRows - 1);
           StringBuilder select = new StringBuilder("SELECT ").append(w)
@@ -412,9 +494,9 @@ public final class NativeLiteTpcc {
           select.append(",0,0,0,CASE WHEN MOD(N,10)=0 THEN 'STOCK-ORIGINAL' ")
               .append("ELSE 'STOCK-DATA' END FROM TPCC_LOAD_NUMBER WHERE N ")
               .append("BETWEEN ").append(first).append(" AND ").append(last);
-          executeSetChunk("TPCC_STOCK", select.toString());
+          worker.executeSetChunk("TPCC_STOCK", select.toString());
         }
-      }
+      });
       requireCount("TPCC_STOCK", stockTotal);
       System.out.println("loader table=TPCC_STOCK rows=" + stockTotal +
           " action=loaded");
@@ -423,7 +505,7 @@ public final class NativeLiteTpcc {
     long orderLineTotal = expectedOrderLines();
     resetPartial("TPCC_ORDER_LINE", orderLineTotal);
     if (count("TPCC_ORDER_LINE") != orderLineTotal) {
-      for (int w = 1; w <= config.warehouses; w++)
+      loadWarehouses("TPCC_ORDER_LINE", (worker, w) -> {
         for (int d = 1; d <= config.districts; d++) {
           int constant = w * 17 + d * 13 + Math.floorMod(config.seed, 11);
           int ordersPerCommit = Math.max(1, config.commitRows / 15);
@@ -441,9 +523,10 @@ public final class NativeLiteTpcc {
                 " AS VARCHAR(2)) FROM TPCC_LOAD_NUMBER O CROSS JOIN " +
                 "TPCC_LOAD_SEED L WHERE O.N BETWEEN " + first + " AND " + last +
                 " AND L.N < 5 + MOD(O.N*37+" + constant + ",11)";
-            executeSetChunk("TPCC_ORDER_LINE", select);
+            worker.executeSetChunk("TPCC_ORDER_LINE", select);
           }
         }
+      });
       requireCount("TPCC_ORDER_LINE", orderLineTotal);
       System.out.println("loader table=TPCC_ORDER_LINE rows=" + orderLineTotal +
           " action=loaded");
@@ -465,7 +548,7 @@ public final class NativeLiteTpcc {
     ensureSchema();
     insertRows("TPCC_WAREHOUSE", config.warehouses, index -> {
       int w = (int) index + 1;
-      return "(" + w + "," + quote("Warehouse" + w) + "," +
+      return "(" + w + "," + quote("W" + w) + "," +
           quote("Street 1") + "," + quote("Street 2") + "," +
           quote("NativeLite") + ",'NL','123456789',0.1000,300000.00)";
     });
@@ -562,7 +645,7 @@ public final class NativeLiteTpcc {
     Config config = new Config(loadProperties(Paths.get(args[3])), args[2]);
     try (Connection connection = DriverManager.getConnection(args[0], USER, "")) {
       connection.setAutoCommit(false);
-      NativeLiteTpcc tpcc = new NativeLiteTpcc(connection, config,
+      NativeLiteTpcc tpcc = new NativeLiteTpcc(connection, args[0], config,
           Paths.get(args[4]));
       if ("load".equals(args[1])) tpcc.load();
       else if ("verify".equals(args[1])) tpcc.verify();

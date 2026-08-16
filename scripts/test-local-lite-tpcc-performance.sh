@@ -7,10 +7,19 @@ driver_source="$repo_root/core/conn/jdbcT4/src/main/java"
 loader_source="$repo_root/scripts/NativeLiteTpcc.java"
 transaction_source="$repo_root/scripts/NativeLiteTpccTransactions.java"
 workload_source="$repo_root/scripts/NativeLiteTpccWorkload.java"
-properties="$repo_root/benchmarks/tpcc/qualification.properties"
+properties=${TPCC_PROPERTIES:-$repo_root/benchmarks/tpcc/qualification.properties}
+tpcc_scale=${TPCC_SCALE:-multi}
 schema="$repo_root/benchmarks/tpcc/schema.sql"
-sql_libs="$repo_root/core/sql/lib/linux/64bit/debug"
-sqf_libs="$repo_root/core/sqf/export/lib64d"
+build_type=${LOCAL_LITE_BUILD_TYPE:-debug}
+if [[ "$build_type" == "release" ]]; then
+  server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+  sql_libs="$repo_root/core/sql/lib/linux/64bit/release"
+  sqf_libs="$repo_root/core/sqf/export/lib64d"
+else
+  server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+  sql_libs="$repo_root/core/sql/lib/linux/64bit/debug"
+  sqf_libs="$repo_root/core/sqf/export/lib64d"
+fi
 traf_home="$repo_root/core/sqf"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -28,7 +37,7 @@ if [[ -z "$slf4j_jar" ]]; then
   slf4j_jar=${candidates[${#candidates[@]}-1]}
 fi
 
-test_root=$(mktemp -d /tmp/traf-local-lite-m14f.XXXXXX)
+test_root=$(mktemp -d /tmp/traf-local-lite-tpcc-performance.XXXXXX)
 primary_store="$test_root/primary-store"
 checkpoint_store="$test_root/checkpoint-store"
 classes_dir="$test_root/classes"
@@ -55,10 +64,11 @@ cleanup() {
   if [[ "$rc" -ne 0 ]]; then
     echo "M14F artifacts retained at $test_root" >&2
     [[ ! -s "$server_log" ]] || sed -n '1,360p' "$server_log" >&2
-  elif [[ -n "${TPCC_M14F_ARTIFACT_DIR:-}" ]]; then
-    mkdir -p "$TPCC_M14F_ARTIFACT_DIR"
+  elif [[ -n "${TPCC_ARTIFACT_DIR:-${TPCC_M14F_ARTIFACT_DIR:-}}" ]]; then
+    artifact_dir=${TPCC_ARTIFACT_DIR:-$TPCC_M14F_ARTIFACT_DIR}
+    mkdir -p "$artifact_dir"
     cp -a "$workload_report" "$operations_report" \
-      "$TPCC_M14F_ARTIFACT_DIR/"
+      "$artifact_dir/"
     rm -rf "$test_root"
   else
     rm -rf "$test_root"
@@ -105,7 +115,7 @@ javac -Xlint:all -cp "$classes_dir:$slf4j_jar" -d "$classes_dir" \
 
 start_server
 java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
-  "$jdbc_url" load multi "$properties" "$schema" "$test_root/load.json"
+  "$jdbc_url" load "$tpcc_scale" "$properties" "$schema" "$test_root/load.json"
 rss_before=$(awk '/VmRSS:/ {print $2}' "/proc/$server_pid/status")
 store_bytes_before=$(du -sb "$primary_store" | awk '{print $1}')
 java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \

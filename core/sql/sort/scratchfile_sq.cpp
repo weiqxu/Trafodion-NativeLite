@@ -298,8 +298,8 @@ NABoolean SQScratchFile::checkDirectory(char *path)
    if (currentDir == NULL)
       return SORT_FAILURE;
    Int32 answerOfLife = chdir(path);
-   chdir(currentDir);                 // change current directory
-   if(answerOfLife == 0) {
+   Int32 restoreResult = chdir(currentDir); // change current directory
+   if(answerOfLife == 0 && restoreResult == 0) {
      return SORT_SUCCESS;
    }
    return SORT_FAILURE;
@@ -836,7 +836,8 @@ NABoolean SQScratchFile::isNewVecElemPossible(Int64 byteOffset, Int32 blockSize)
 // Truncate file and cancel any pending I/O operation
 void SQScratchFile::truncate(void)
 {
-  ftruncate(fileHandle_[0].fileNum, 0);
+  Int32 truncateResult = ftruncate(fileHandle_[0].fileNum, 0);
+  (void) truncateResult;
 }
 
 //--------------------------------------------------------------------------

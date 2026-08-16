@@ -816,7 +816,8 @@ void clearCapture(Logfile *log)
   if (!stream)
     return;
   fflush(stream);
-  ftruncate(fileno(stream), 0);
+  int truncateResult = ftruncate(fileno(stream), 0);
+  (void) truncateResult;
   rewind(stream);
   clearerr(stream);
 }
@@ -1340,6 +1341,41 @@ private:
             std::ostringstream value;
             value << maximumExecutorRequests_.load();
             result.rows.push_back(std::vector<Cell>(1, Cell(value.str())));
+          }
+        return result;
+      }
+
+    if (normalized == "SELECT NATIVE_LITE_OCC_METRICS()" ||
+        normalized == "SELECT NATIVELITE_OCC_METRICS()")
+      {
+        *handled = true;
+        Column column;
+        column.name = "native_lite_occ_metrics";
+        column.oid = 25;
+        column.typeLength = -1;
+        column.length = 4096;
+        result.columns.push_back(column);
+        result.commandTag = "SELECT 1";
+        if (!describeOnly)
+          result.rows.push_back(
+              std::vector<Cell>(1, Cell(LocalLiteOccMetricsJson())));
+        return result;
+      }
+
+    if (normalized == "SELECT NATIVE_LITE_OCC_METRICS_RESET()" ||
+        normalized == "SELECT NATIVELITE_OCC_METRICS_RESET()")
+      {
+        *handled = true;
+        Column column;
+        column.name = "native_lite_occ_metrics_reset";
+        column.oid = 25;
+        column.typeLength = -1;
+        result.columns.push_back(column);
+        result.commandTag = "SELECT 1";
+        if (!describeOnly)
+          {
+            LocalLiteOccMetricsReset();
+            result.rows.push_back(std::vector<Cell>(1, Cell("ok")));
           }
         return result;
       }

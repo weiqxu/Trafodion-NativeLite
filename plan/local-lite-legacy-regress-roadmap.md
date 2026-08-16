@@ -468,6 +468,7 @@ convergence or a production database.
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
 | M14 TPC-C qualification | Complete for repeatable TPC-C-like single-node qualification | The pinned contract, loader, five profiles, Level 3 matrix, six durable-decision crash cases, concurrent runtime, and two-warehouse operations gate pass. `make local-lite-m14` explicitly includes M10-M13 and M14A-M14F, composes one report, and separates functional/TPC-C-like passes from formal-compliance failure. Client-side writer admission and the mix/pacing remain non-compliant; no `tpmC` claim is made. |
+| M15 Trafodion MVCC/OCC | Complete for the declared single-node correctness and repeatable engineering baseline; production SLO incomplete | Seven focused commits replace database-wide validation and client admission with transaction snapshots, key/range read sets, post-start OCC validation, transactional index reads, and atomic delta publication. `make local-lite-m15g` passes Release qualification at 32 warehouses/32 offset terminals with all five profiles, zero conflicts/retries/unclassified errors, and operations recovery. The 2026-08-16 result is 1.130 TPS and 135.075 s Stock-Level p95, below the separate 50 TPS and 2 s production targets; no formal TPC-C or `tpmC` claim is made. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -951,3 +952,43 @@ requires all specification, timing, pricing, audit, and disclosure obligations
 outside the code-only gate. Password/TLS, node HA, distributed execution, and
 official publication remain separate productization work unless explicitly
 added to the tested system boundary.
+
+## Milestone 15: Trafodion MVCC/OCC
+
+Status: complete for the declared single-node correctness and repeatable
+engineering baseline. Production performance targets remain incomplete. M15
+keeps TransactionDB for snapshot and atomic persistence, does not introduce
+SSCC, and removes M14's database-wide sequence validator and client writer
+admission.
+
+### M15A-M15F: OCC Runtime
+
+- M15A pins the Trafodion MVCC/OCC contract and machine-readable metrics.
+- M15B retains one unified snapshot for the whole transaction.
+- M15C records point keys, scan/predicate ranges, and write keys.
+- M15D validates overlap only against writes committed after the transaction
+  start sequence, including write skew and phantom cases.
+- M15E makes secondary-index point/range/covering reads participate in the
+  same snapshot and conflict model.
+- M15F publishes atomic per-key deltas through TransactionDB and retains the
+  durable multi-table recovery decision.
+
+### M15G: Release OCC Qualification
+
+`make local-lite-m15g` reruns M15A-M15F, builds Release, loads an explicitly
+reduced TPC-C-like engineering population, runs 32 warehouses and 32 terminal
+schedules offset across the 45/40/5/5/5 mix, and verifies online checkpoint,
+clean/unclean restart, checkpoint restore, disk watermark, consistency, and
+claim boundaries. The shared per-repetition deadline prevents timeout from
+being multiplied by the terminal count. Loader tasks use independent T4
+sessions for disjoint warehouse partitions and refresh the coordinator's MVCC
+snapshot at phase boundaries.
+
+The verified 2026-08-16 report records 1.130 TPS, 3.423% three-run variance,
+zero conflicts, retries, and unclassified errors, and five non-zero profile
+samples. P95 latency is 3.301 s New-Order, 1.312 s Payment, 0.876 s
+Order-Status, 1.672 s Delivery, and 135.075 s Stock-Level; recovery is
+161-214 ms. Regression thresholds preserve this baseline, while the config
+separately records production targets of 50 TPS and 1/0.5/0.5/2/2 seconds.
+M15 completion therefore establishes OCC correctness and repeatability, not
+production SLO certification, formal TPC-C compliance, or `tpmC`.

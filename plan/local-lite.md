@@ -1031,10 +1031,9 @@ orchestration remain later work.
 
 Remaining, in implementation order:
 
-1. Complete M15 Trafodion MVCC/OCC concurrency and Release TPC-C-like
-   qualification, replacing database-wide validation and client writer
-   admission without introducing SSCC.
-2. Productize the M13/M14 boundary with service drain/upgrade,
+1. Optimize the completed M15 OCC runtime toward the recorded production
+   targets, beginning with Stock-Level range aggregation/full-scan removal.
+2. Productize the M13-M15 boundary with service drain/upgrade,
    active-layout backup controls, recovery-journal consolidation, and security
    hardening.
 3. Continue portable SQL compatibility increments, beginning with the
@@ -1042,6 +1041,24 @@ Remaining, in implementation order:
 
 The authoritative milestone definitions and completion gates are in
 `plan/local-lite-legacy-regress-roadmap.md`.
+
+- [x] **Complete M15 Trafodion MVCC/OCC concurrency and Release qualification.**
+  - [x] Pin the non-SSCC Trafodion OCC contract and required metrics.
+  - [x] Use one transaction-wide unified snapshot and capture point/range
+    read sets plus write keys.
+  - [x] Validate only overlapping post-start writes, including predicates and
+    write skew, with retryable conflict diagnostics.
+  - [x] Make secondary-index reads transactional and preserve covering/range
+    behavior under concurrent commits.
+  - [x] Publish disjoint transaction deltas atomically through TransactionDB
+    without whole-database rewrites.
+  - [x] Pass `make local-lite-m15g` in Release mode at 32 warehouses and 32
+    independently offset terminals, with five non-zero transaction profiles,
+    operations/recovery evidence, and no client writer admission.
+  - [ ] Meet the separate production targets: 50 TPS and p95 at or below
+    1/0.5/0.5/2/2 seconds. The 2026-08-16 baseline is 1.130 TPS and
+    Stock-Level p95 is 135.075 seconds; M15 completion is not production SLO
+    certification or an official `tpmC` claim.
 
 - [x] **Complete M14 TPC-C-like qualification for the supported single-node
   trusted-local boundary.**

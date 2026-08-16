@@ -147,7 +147,8 @@ short Ls::process(SqlciEnv * sqlci_env)
 
   memcpy(cmd, "ls", 2);			// Make sure that 'ls' is passed in
                                 	// lower case to the shell.
-  system(cmd);
+  int systemRc = system(cmd);
+  (void) systemRc;
 
   return 0;
 }
@@ -176,10 +177,12 @@ short Shell::process(SqlciEnv * sqlci_env)
   if ( logfile )
      logfile->Close_(); 
 
+  int systemRc;
   if (!*cmd)				// empty (i.e. "sh;" was input)
-    system("sh");
+    systemRc = system("sh");
   else
-    system(cmd);
+    systemRc = system(cmd);
+  (void) systemRc;
 
   // reopen the log file in append mode
   if ( logfile )
@@ -190,4 +193,3 @@ short Shell::process(SqlciEnv * sqlci_env)
 
   return 0;
 }
-

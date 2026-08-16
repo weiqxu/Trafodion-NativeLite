@@ -207,7 +207,7 @@ public final class NativeLiteTpccIsolation {
     writeSkew(args[0]);
     String report = "{\"contract_version\":1," +
         "\"isolation_level\":\"serializable\"," +
-        "\"mechanism\":\"snapshot_plus_database_sequence_validation\"," +
+        "\"mechanism\":\"trafodion_mvcc_occ\"," +
         "\"conflict_policy\":\"optimistic_abort\"," +
         "\"conflict_timeout_ms\":5000,\"bounded_retry_limit\":1," +
         "\"dirty_read\":\"pass\",\"dirty_write\":\"pass\"," +

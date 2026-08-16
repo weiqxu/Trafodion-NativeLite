@@ -367,7 +367,8 @@ void OptimizerSimulator::dumpVersions()
     //dump version info
     NAString cmd = "sqvers -u > ";
     cmd += logFilePaths_[VERSIONSFILE];
-    system(cmd.data()); //dump versions
+    int systemRc = system(cmd.data()); //dump versions
+    (void) systemRc;
 }
 
 void OptimizerSimulator::dumpHHDFSMasterHostList()
@@ -1067,9 +1068,10 @@ void OptimizerSimulator::loadDDLs()
     }
 }
 
-static const char* extractAsComment(const char* header, const NAString & stmt)
+static NABoolean extractAsComment(const char* header, const NAString & stmt,
+                                  NAString &result)
 {
-    NAString tmp;
+    result = "";
     int begin = stmt.index(header);
     if(begin > -1)
     {
@@ -1079,10 +1081,10 @@ static const char* extractAsComment(const char* header, const NAString & stmt)
         else
           end = stmt.length()-1;
 
-        stmt.extract(begin, end, tmp);
-        return tmp.data();
+        stmt.extract(begin, end, result);
+        return TRUE;
     }
-    return NULL;
+    return FALSE;
 }
 
 void OptimizerSimulator::loadHiveDDLs()
@@ -1173,7 +1175,9 @@ void OptimizerSimulator::loadHiveDDLs()
     {   
         if(statement.length() > 0)
         {
-            debugMessage("%s\n", extractAsComment("CREATE TABLE", statement));
+            NAString stmtText;
+            extractAsComment("CREATE TABLE", statement, stmtText);
+            debugMessage("%s\n", stmtText.data());
             execHiveSQL(statement.data());//create hive table
             debugMessage("done\n");
         }
@@ -1187,11 +1191,10 @@ void OptimizerSimulator::loadHiveDDLs()
         if(statement.length() > 0) {
             // this could be a create external table or just a register table
             // if this Hive table just has stats but no external table
-            const char *stmtText = extractAsComment("CREATE EXTERNAL TABLE", statement);
-
-            if (!stmtText)
-              stmtText = extractAsComment("REGISTER  HIVE TABLE", statement);
-            debugMessage("%s\n", stmtText);
+            NAString stmtText;
+            if (!extractAsComment("CREATE EXTERNAL TABLE", statement, stmtText))
+              extractAsComment("REGISTER  HIVE TABLE", statement, stmtText);
+            debugMessage("%s\n", stmtText.data());
 
             retcode = executeFromMetaContext(statement.data()); //create hive external table
             if(retcode < 0)

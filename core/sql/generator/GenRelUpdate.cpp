@@ -80,6 +80,51 @@ extern  int CreateAllCharsExpr(const NAType &formalType,
                                ItemExpr &actualValue,
                                CmpContext *cmpContext,
                                ItemExpr *&newExpr);
+
+#ifdef TRAF_LOCAL_LITE
+static void localLiteGenRuntimePrimaryRowId(
+    Generator *generator,
+    const SearchKey *searchKey,
+    const ValueIdSet &externalInputs,
+    const ValueIdList &keyColumns,
+    ex_cri_desc *workCriDesc,
+    const Int32 workAtp,
+    const Int32 rowIdAsciiTuppIndex,
+    const Int32 rowIdTuppIndex,
+    ULng32 &rowIdAsciiRowLen,
+    ExpTupleDesc *&rowIdAsciiTupleDesc,
+    UInt32 &rowIdLength,
+    ex_expr *&rowIdExpr)
+{
+  if (rowIdExpr || !searchKey || !searchKey->isUnique())
+    return;
+
+  const ValueIdList &keyValues = searchKey->getBeginKeyValues();
+  if (keyValues.isEmpty() || keyValues.entries() != keyColumns.entries())
+    return;
+
+  ExpGenerator *expGen = generator->getExpGenerator();
+  ValueIdList convertedValues;
+  for (CollIndex i = 0; i < keyValues.entries(); i++)
+    {
+      ItemExpr *keyValue = keyValues[i].getItemExpr()->replaceVEGExpressions(
+          externalInputs, externalInputs, FALSE, NULL, FALSE);
+      const NAType *targetType = &keyColumns[i].getType();
+      ItemExpr *castValue = new(generator->wHeap()) Cast(keyValue, targetType);
+      castValue = castValue->bindNode(generator->getBindWA());
+      castValue = castValue->preCodeGen(generator);
+      convertedValues.insert(castValue->getValueId());
+    }
+  rowIdAsciiRowLen = 0;
+  rowIdAsciiTupleDesc = NULL;
+  ExpTupleDesc *rowIdTupleDesc = NULL;
+  expGen->generateContiguousMoveExpr(
+      convertedValues, FALSE, workAtp, rowIdTuppIndex,
+      ExpTupleDesc::SQLARK_EXPLODED_FORMAT, rowIdLength, &rowIdExpr,
+      &rowIdTupleDesc, ExpTupleDesc::LONG_FORMAT);
+  workCriDesc->setTupleDescriptor(rowIdTuppIndex, rowIdTupleDesc);
+}
+#endif
                                
 inline static NABoolean getReturnRow(const GenericUpdate *gu,
 				     const IndexDesc *index)
@@ -1078,6 +1123,9 @@ short HbaseDelete::codeGen(Generator * generator)
       // dont encode keys for hbase mapped tables since these tables
       // could be populated from outside of traf.
       NABoolean encodeKeys = TRUE;
+#ifdef TRAF_LOCAL_LITE
+      encodeKeys = FALSE;
+#endif
       if (getTableDesc()->getNATable()->isHbaseMapTable())
         encodeKeys = FALSE;
 
@@ -1090,6 +1138,15 @@ short HbaseDelete::codeGen(Generator * generator)
 				rowIdLength, 
 				rowIdExpr,
                                 encodeKeys);
+#ifdef TRAF_LOCAL_LITE
+      localLiteGenRuntimePrimaryRowId(
+          generator, getSearchKey(),
+          getGroupAttr()->getCharacteristicInputs(),
+          getIndexDesc()->getIndexKey(), work_cri_desc, work_atp,
+          rowIdAsciiTuppIndex, rowIdTuppIndex,
+          rowIdAsciiRowLen, rowIdAsciiTupleDesc,
+          rowIdLength, rowIdExpr);
+#endif
     }
   else
     {
@@ -1841,6 +1898,9 @@ short HbaseUpdate::codeGen(Generator * generator)
       // dont encode keys for hbase mapped tables since these tables
       // could be populated from outside of traf.
       NABoolean encodeKeys = TRUE;
+#ifdef TRAF_LOCAL_LITE
+      encodeKeys = FALSE;
+#endif
       if (getTableDesc()->getNATable()->isHbaseMapTable())
         encodeKeys = FALSE;
 
@@ -1853,6 +1913,15 @@ short HbaseUpdate::codeGen(Generator * generator)
 				rowIdLength, 
 				rowIdExpr,
                                 encodeKeys);
+#ifdef TRAF_LOCAL_LITE
+      localLiteGenRuntimePrimaryRowId(
+          generator, getSearchKey(),
+          getGroupAttr()->getCharacteristicInputs(),
+          getIndexDesc()->getIndexKey(), work_cri_desc, work_atp,
+          rowIdAsciiTuppIndex, rowIdTuppIndex,
+          rowIdAsciiRowLen, rowIdAsciiTupleDesc,
+          rowIdLength, rowIdExpr);
+#endif
    }
   else
     {

@@ -106,6 +106,99 @@ static void localLiteTraceScan(const char *path, const char *tableName)
           tableName ? tableName : "");
 }
 
+static bool localLiteRuntimePrimaryRow(
+    bool uniqueKeyInfo,
+    ex_expr *rowIdExpr,
+    ExpTupleDesc *keyTd,
+    UInt16 rowIdTuppIndex,
+    UInt16 rowIdAsciiTuppIndex,
+    UInt32 rowIdLen,
+    UInt32 rowIdAsciiLen,
+    atp_struct *workAtp,
+    atp_struct *inputAtp,
+    char *rowIdRow,
+    char *rowIdAsciiRow,
+    const LocalLiteTableDef &table,
+    LocalLiteTxn *txn,
+    bool *handled,
+    LocalLiteRow *row,
+    bool *found,
+    std::string *error)
+{
+  *handled = false;
+  *found = false;
+  if (!uniqueKeyInfo || !rowIdExpr || !rowIdRow || !keyTd ||
+      !workAtp || table.primaryKeyColumns.empty())
+    return true;
+  str_pad(rowIdRow, rowIdLen, '\0');
+  workAtp->getTupp(rowIdTuppIndex).setDataPointer(rowIdRow);
+  if (rowIdAsciiRow && rowIdAsciiLen > 0)
+    {
+      str_pad(rowIdAsciiRow, rowIdAsciiLen, '\0');
+      workAtp->getTupp(rowIdAsciiTuppIndex).setDataPointer(rowIdAsciiRow);
+    }
+  if (rowIdExpr->eval(inputAtp, workAtp) == ex_expr::EXPR_ERROR)
+    {
+      *error = "local-lite runtime primary key evaluation failed";
+      return false;
+    }
+  std::string storageKey;
+  if (!LocalLiteBuildPrimaryKeyFromExecutorTuple(
+          table, keyTd, rowIdRow, rowIdLen, &storageKey, error) ||
+      !txn->getRowByKey(table, storageKey, row, found, error))
+    return false;
+  *handled = true;
+  return true;
+}
+
+static bool localLiteStaticPrimaryRow(
+    Queue *getRows,
+    const LocalLiteTableDef &table,
+    LocalLiteTxn *txn,
+    bool *handled,
+    LocalLiteRow *row,
+    bool *found,
+    std::string *error)
+{
+  *handled = false;
+  *found = false;
+  if (!getRows || getRows->numEntries() != 1)
+    return true;
+  ComTdbHbaseAccess::HbaseGetRows *hgr =
+      static_cast<ComTdbHbaseAccess::HbaseGetRows *>(getRows->get(0));
+  if (!hgr || !hgr->rowIds() || hgr->rowIds()->numEntries() != 1)
+    return true;
+  const char *raw = static_cast<const char *>(hgr->rowIds()->get(0));
+  if (!raw || strncmp(raw, "LLPK1:", 6) != 0)
+    return true;
+  const char *hex = raw + 6;
+  const size_t hexLen = strlen(hex);
+  if ((hexLen % 2) != 0)
+    {
+      *error = "invalid local-lite static primary key length";
+      return false;
+    }
+  std::string storageKey;
+  storageKey.reserve(hexLen / 2);
+  for (size_t i = 0; i < hexLen; i += 2)
+    {
+      const char hiChar = static_cast<char>(tolower(hex[i]));
+      const char loChar = static_cast<char>(tolower(hex[i + 1]));
+      const int hi = isdigit(hiChar) ? hiChar - '0' : hiChar - 'a' + 10;
+      const int lo = isdigit(loChar) ? loChar - '0' : loChar - 'a' + 10;
+      if (hi < 0 || hi > 15 || lo < 0 || lo > 15)
+        {
+          *error = "invalid local-lite static primary key";
+          return false;
+        }
+      storageKey.push_back(static_cast<char>((hi << 4) | lo));
+    }
+  if (!txn->getRowByKey(table, storageKey, row, found, error))
+    return false;
+  *handled = true;
+  return true;
+}
+
 extern "C" const char *trafLocalLiteUnsupportedStorage()
 {
   return "HDFS, Hive, and HBase are not supported in local-lite builds";
@@ -265,6 +358,8 @@ public:
       workAtp_(NULL),
       asciiRow_(NULL),
       convertRow_(NULL),
+      rowIdAsciiRow_(NULL),
+      rowIdRow_(NULL),
       matches_(0),
       started_(false),
       rowsLoaded_(false),
@@ -287,16 +382,28 @@ public:
           pool_->get_free_tuple(workAtp_->getTupp(tdb.asciiTuppIndex_), 0);
         if (tdb.convertTuppIndex_ > 0)
           pool_->get_free_tuple(workAtp_->getTupp(tdb.convertTuppIndex_), 0);
+        if (tdb.rowIdTuppIndex_ > 0)
+          pool_->get_free_tuple(workAtp_->getTupp(tdb.rowIdTuppIndex_), 0);
+        if (tdb.rowIdAsciiTuppIndex_ > 0)
+          pool_->get_free_tuple(
+              workAtp_->getTupp(tdb.rowIdAsciiTuppIndex_), 0);
       }
 
     if (tdb.asciiRowLen_ > 0)
       asciiRow_ = new(heap) char[tdb.asciiRowLen_];
     if (tdb.convertRowLen_ > 0)
       convertRow_ = new(heap) char[tdb.convertRowLen_];
+    if (tdb.rowIdLen_ > 0)
+      rowIdRow_ = new(heap) char[tdb.rowIdLen_];
+    if (tdb.rowIdAsciiRowLen_ > 0)
+      rowIdAsciiRow_ = new(heap) char[tdb.rowIdAsciiRowLen_];
 
     if (tdb.convertExpr_)
       tdb.convertExpr_->fixup(0, getExpressionMode(), this, space, heap,
                               FALSE, globals);
+    if (tdb.rowIdExpr_)
+      tdb.rowIdExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                            FALSE, globals);
     if (tdb.scanExpr_)
       tdb.scanExpr_->fixup(0, getExpressionMode(), this, space, heap,
                            FALSE, globals);
@@ -315,6 +422,10 @@ public:
     asciiRow_ = NULL;
     NADELETEBASICARRAY(convertRow_, getGlobals()->getDefaultHeap());
     convertRow_ = NULL;
+    NADELETEBASICARRAY(rowIdRow_, getGlobals()->getDefaultHeap());
+    NADELETEBASICARRAY(rowIdAsciiRow_, getGlobals()->getDefaultHeap());
+    rowIdRow_ = NULL;
+    rowIdAsciiRow_ = NULL;
     if (workAtp_)
       {
         deallocateAtp(workAtp_, getGlobals()->getSpace());
@@ -455,20 +566,65 @@ private:
     bool handledIndexLookup = false;
     bool handledIndexRange = false;
     bool handledIndexBounded = false;
+    bool handledPrimaryRange = false;
     if (!loadGetRows(&txn, &handledGetRows, &handledIndexLookup,
-                     &handledIndexRange, &handledIndexBounded, error))
+                     &handledIndexRange, &handledIndexBounded,
+                     &handledPrimaryRange, error))
       return false;
     if (handledGetRows)
       {
-        const char *scanPath = handledIndexBounded ? "INDEX_BOUNDED" :
+        const char *scanPath = handledPrimaryRange ? "PRIMARY_RANGE" :
+            (handledIndexBounded ? "INDEX_BOUNDED" :
             (handledIndexRange ? "INDEX_RANGE" :
-             (handledIndexLookup ? "INDEX_EQ" : "GET_ROW"));
+             (handledIndexLookup ? "INDEX_EQ" : "GET_ROW")));
         localLiteTraceScan(scanPath, scanTdb().getTableName());
         return true;
       }
 
+    if (loadRuntimePrimaryGet(&txn, error))
+      {
+        localLiteTraceScan("RUNTIME_GET_ROW", scanTdb().getTableName());
+        return true;
+      }
+    if (!error->empty())
+      return false;
+
     localLiteTraceScan("FULL", scanTdb().getTableName());
     return txn.scanRows(table_, &rows_, error);
+  }
+
+  bool loadRuntimePrimaryGet(LocalLiteTxn *txn, std::string *error)
+  {
+    if (!scanTdb().uniqueKeyInfo() || !scanTdb().rowIdExpr_ ||
+        !rowIdRow_ || !rowIdAsciiRow_ || table_.primaryKeyColumns.empty())
+      return false;
+    ExpTupleDesc *keyTd = scanTdb().workCriDesc_->getTupleDescriptor(
+        scanTdb().rowIdTuppIndex_);
+    if (!keyTd)
+      return false;
+    str_pad(rowIdRow_, scanTdb().rowIdLen_, '\0');
+    str_pad(rowIdAsciiRow_, scanTdb().rowIdAsciiRowLen_, '\0');
+    workAtp_->getTupp(scanTdb().rowIdTuppIndex_).setDataPointer(rowIdRow_);
+    workAtp_->getTupp(scanTdb().rowIdAsciiTuppIndex_)
+      .setDataPointer(rowIdAsciiRow_);
+    if (scanTdb().rowIdExpr_->eval(downEntry()->getAtp(), workAtp_) ==
+        ex_expr::EXPR_ERROR)
+      {
+        *error = "local-lite runtime primary key evaluation failed";
+        return false;
+      }
+    std::string storageKey;
+    if (!LocalLiteBuildPrimaryKeyFromExecutorTuple(
+            table_, keyTd, rowIdRow_, scanTdb().rowIdLen_,
+            &storageKey, error))
+      return false;
+    LocalLiteRow row;
+    bool found = false;
+    if (!txn->getRowByKey(table_, storageKey, &row, &found, error))
+      return false;
+    if (found)
+      rows_.push_back(row);
+    return true;
   }
 
   bool loadGetRows(LocalLiteTxn *txn,
@@ -476,12 +632,14 @@ private:
                    bool *handledIndexLookup,
                    bool *handledIndexRange,
                    bool *handledIndexBounded,
+                   bool *handledPrimaryRange,
                    std::string *error)
   {
     *handled = false;
     *handledIndexLookup = false;
     *handledIndexRange = false;
     *handledIndexBounded = false;
+    *handledPrimaryRange = false;
     Queue *getRows = scanTdb().listOfGetRows();
     if (!getRows || getRows->numEntries() == 0)
       return true;
@@ -489,6 +647,7 @@ private:
     std::vector<std::string> storageKeys;
     std::vector<std::string> indexPrefixes;
     std::vector< std::pair<std::string, std::string> > indexRanges;
+    std::vector< std::pair<std::string, std::string> > primaryRanges;
     getRows->position();
     for (Lng32 i = 0; i < getRows->numEntries(); i++)
       {
@@ -505,7 +664,9 @@ private:
         for (Lng32 j = 0; j < rowIds->numEntries(); j++)
           {
             const char *rawKey = static_cast<const char *>(rowIds->getNext());
-            if (rawKey && strncmp(rawKey, "LLIB1:", 6) == 0)
+            if (rawKey &&
+                (strncmp(rawKey, "LLIB1:", 6) == 0 ||
+                 strncmp(rawKey, "LLPB1:", 6) == 0))
               {
                 std::string bounds(rawKey + 6);
                 size_t separator = bounds.find(':');
@@ -523,9 +684,16 @@ private:
                         bounds.substr(separator + 1).c_str(),
                         &endKey, error))
                   return false;
-                indexRanges.push_back(std::make_pair(startKey, endKey));
-                *handledIndexRange = true;
-                *handledIndexBounded = true;
+                if (strncmp(rawKey, "LLPB1:", 6) == 0)
+                  primaryRanges.push_back(
+                      std::make_pair(startKey, endKey));
+                else
+                  {
+                    indexRanges.push_back(
+                        std::make_pair(startKey, endKey));
+                    *handledIndexRange = true;
+                    *handledIndexBounded = true;
+                  }
                 continue;
               }
             if (rawKey &&
@@ -550,6 +718,18 @@ private:
       }
 
     *handled = true;
+    if (!primaryRanges.empty())
+      {
+        if (!storageKeys.empty() || !indexPrefixes.empty() ||
+            !indexRanges.empty() || primaryRanges.size() != 1)
+          {
+            *error = "invalid local-lite mixed primary range lookup";
+            return false;
+          }
+        *handledPrimaryRange = true;
+        return txn->scanPrimaryRange(table_, primaryRanges[0].first,
+                                     primaryRanges[0].second, &rows_, error);
+      }
     if (!indexPrefixes.empty() || !indexRanges.empty())
       {
         if (!storageKeys.empty() ||
@@ -1053,6 +1233,8 @@ private:
   atp_struct *workAtp_;
   char *asciiRow_;
   char *convertRow_;
+  char *rowIdAsciiRow_;
+  char *rowIdRow_;
   Lng32 matches_;
   bool started_;
   bool rowsLoaded_;
@@ -1368,6 +1550,8 @@ public:
       workAtp_(NULL),
       asciiRow_(NULL),
       convertRow_(NULL),
+      rowIdAsciiRow_(NULL),
+      rowIdRow_(NULL),
       matches_(0),
       pendingReturn_(FALSE),
       pendingDone_(FALSE)
@@ -1385,17 +1569,29 @@ public:
           pool_->get_free_tuple(workAtp_->getTupp(tdb.asciiTuppIndex_), 0);
         if (tdb.convertTuppIndex_ > 0)
           pool_->get_free_tuple(workAtp_->getTupp(tdb.convertTuppIndex_), 0);
+        if (tdb.rowIdTuppIndex_ > 0)
+          pool_->get_free_tuple(workAtp_->getTupp(tdb.rowIdTuppIndex_), 0);
+        if (tdb.rowIdAsciiTuppIndex_ > 0)
+          pool_->get_free_tuple(
+              workAtp_->getTupp(tdb.rowIdAsciiTuppIndex_), 0);
       }
     if (tdb.asciiRowLen_ > 0)
       asciiRow_ = new(heap) char[tdb.asciiRowLen_];
     if (tdb.convertRowLen_ > 0)
       convertRow_ = new(heap) char[tdb.convertRowLen_];
+    if (tdb.rowIdLen_ > 0)
+      rowIdRow_ = new(heap) char[tdb.rowIdLen_];
+    if (tdb.rowIdAsciiRowLen_ > 0)
+      rowIdAsciiRow_ = new(heap) char[tdb.rowIdAsciiRowLen_];
     if (tdb.scanExpr_)
       tdb.scanExpr_->fixup(0, getExpressionMode(), this, space, heap,
                            FALSE, globals);
     if (tdb.convertExpr_)
       tdb.convertExpr_->fixup(0, getExpressionMode(), this, space, heap,
                               FALSE, globals);
+    if (tdb.rowIdExpr_)
+      tdb.rowIdExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                            FALSE, globals);
   }
 
   ~LocalLiteHbaseDeleteTcb() { freeResources(); }
@@ -1408,8 +1604,12 @@ public:
         deleteTdb().getTableName(), getGlobals()->castToExExeStmtGlobals()));
     NADELETEBASICARRAY(asciiRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(convertRow_, getGlobals()->getDefaultHeap());
+    NADELETEBASICARRAY(rowIdRow_, getGlobals()->getDefaultHeap());
+    NADELETEBASICARRAY(rowIdAsciiRow_, getGlobals()->getDefaultHeap());
     asciiRow_ = NULL;
     convertRow_ = NULL;
+    rowIdRow_ = NULL;
+    rowIdAsciiRow_ = NULL;
     if (workAtp_)
       {
         deallocateAtp(workAtp_, getGlobals()->getSpace());
@@ -1608,6 +1808,72 @@ private:
       sourceRows.push_back(sourceRow);
     else
       {
+        bool handled = false;
+        bool found = false;
+        if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+          fprintf(stderr,
+                  "LOCAL_LITE_DML_KEY table=%s kind=delete unique=%d subset=%d rowexpr=%d getrows=%d\n",
+                  deleteTdb().getTableName(), deleteTdb().uniqueKeyInfo(),
+                  deleteTdb().subsetOper(),
+                  deleteTdb().rowIdExpr_.getPointer() != NULL,
+                  deleteTdb().listOfGetRows()
+                      ? deleteTdb().listOfGetRows()->numEntries() : 0);
+        if (!localLiteStaticPrimaryRow(
+                deleteTdb().listOfGetRows(), table_, &txn, &handled,
+                &sourceRow, &found, error))
+          return false;
+        ExpTupleDesc *keyTd = deleteTdb().workCriDesc_->getTupleDescriptor(
+            deleteTdb().rowIdTuppIndex_);
+        if (!handled && !localLiteRuntimePrimaryRow(
+                deleteTdb().uniqueKeyInfo(), deleteTdb().rowIdExpr_, keyTd,
+                deleteTdb().rowIdTuppIndex_,
+                deleteTdb().rowIdAsciiTuppIndex_, deleteTdb().rowIdLen_,
+                deleteTdb().rowIdAsciiRowLen_, workAtp_,
+                downEntry()->getAtp(), rowIdRow_, rowIdAsciiRow_,
+                table_, &txn, &handled, &sourceRow, &found, error))
+          return false;
+        if (handled)
+          {
+            if (found)
+              {
+                workAtp_->getTupp(deleteTdb().asciiTuppIndex_)
+                  .setDataPointer(asciiRow_);
+                workAtp_->getTupp(deleteTdb().convertTuppIndex_)
+                  .setDataPointer(convertRow_);
+                unsigned int sourceLen = 0;
+                if (!LocalLiteProjectBinaryRow(
+                        table_, sourceRow.value, sourceRow.rowId,
+                        asciiIndexes, asciiTd, asciiRow_,
+                        deleteTdb().asciiRowLen_, &sourceLen, error))
+                  return false;
+                str_pad(convertRow_, deleteTdb().convertRowLen_, '\0');
+                ULng32 convertLen = deleteTdb().convertRowLen_;
+                ex_expr::exp_return_type rc = deleteTdb().convertExpr_->eval(
+                    downEntry()->getAtp(), workAtp_, NULL, -1, &convertLen);
+                if (rc == ex_expr::EXPR_ERROR)
+                  {
+                    *error = "local-lite delete source conversion failed";
+                    return false;
+                  }
+                if (deleteTdb().scanExpr_)
+                  {
+                    rc = deleteTdb().scanExpr_->eval(downEntry()->getAtp(),
+                                                     workAtp_);
+                    if (rc == ex_expr::EXPR_ERROR)
+                      {
+                        *error =
+                          "local-lite delete predicate evaluation failed";
+                        return false;
+                      }
+                    if (rc != ex_expr::EXPR_FALSE)
+                      sourceRows.push_back(sourceRow);
+                  }
+                else
+                  sourceRows.push_back(sourceRow);
+              }
+          }
+        else
+          {
         std::vector<LocalLiteRow> rows;
         if (!txn.scanRows(table_, &rows, error))
           return false;
@@ -1645,6 +1911,7 @@ private:
                   continue;
               }
             sourceRows.push_back(rows[i]);
+          }
           }
       }
 
@@ -1753,6 +2020,8 @@ private:
   atp_struct *workAtp_;
   char *asciiRow_;
   char *convertRow_;
+  char *rowIdAsciiRow_;
+  char *rowIdRow_;
   Lng32 matches_;
   NABoolean pendingReturn_;
   NABoolean pendingDone_;
@@ -1770,6 +2039,8 @@ public:
       workAtp_(NULL),
       asciiRow_(NULL),
       convertRow_(NULL),
+      rowIdAsciiRow_(NULL),
+      rowIdRow_(NULL),
       updateRow_(NULL),
       mergeInsertRow_(NULL),
       matches_(0),
@@ -1790,6 +2061,11 @@ public:
           pool_->get_free_tuple(workAtp_->getTupp(tdb.asciiTuppIndex_), 0);
         if (tdb.convertTuppIndex_ > 0)
           pool_->get_free_tuple(workAtp_->getTupp(tdb.convertTuppIndex_), 0);
+        if (tdb.rowIdTuppIndex_ > 0)
+          pool_->get_free_tuple(workAtp_->getTupp(tdb.rowIdTuppIndex_), 0);
+        if (tdb.rowIdAsciiTuppIndex_ > 0)
+          pool_->get_free_tuple(
+              workAtp_->getTupp(tdb.rowIdAsciiTuppIndex_), 0);
         if (tdb.updateTuppIndex_ > 0)
           pool_->get_free_tuple(workAtp_->getTupp(tdb.updateTuppIndex_), 0);
         if (tdb.mergeInsertTuppIndex_ > 0)
@@ -1800,6 +2076,10 @@ public:
       asciiRow_ = new(heap) char[tdb.asciiRowLen_];
     if (tdb.convertRowLen_ > 0)
       convertRow_ = new(heap) char[tdb.convertRowLen_];
+    if (tdb.rowIdLen_ > 0)
+      rowIdRow_ = new(heap) char[tdb.rowIdLen_];
+    if (tdb.rowIdAsciiRowLen_ > 0)
+      rowIdAsciiRow_ = new(heap) char[tdb.rowIdAsciiRowLen_];
     if (tdb.updateRowLen_ > 0)
       updateRow_ = new(heap) char[tdb.updateRowLen_];
     if (tdb.mergeInsertRowLen_ > 0)
@@ -1811,6 +2091,9 @@ public:
     if (tdb.convertExpr_)
       tdb.convertExpr_->fixup(0, getExpressionMode(), this, space, heap,
                               FALSE, globals);
+    if (tdb.rowIdExpr_)
+      tdb.rowIdExpr_->fixup(0, getExpressionMode(), this, space, heap,
+                            FALSE, globals);
     if (tdb.updateExpr_)
       tdb.updateExpr_->fixup(0, getExpressionMode(), this, space, heap,
                              FALSE, globals);
@@ -1838,10 +2121,14 @@ public:
         updateTdb().getTableName(), getGlobals()->castToExExeStmtGlobals()));
     NADELETEBASICARRAY(asciiRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(convertRow_, getGlobals()->getDefaultHeap());
+    NADELETEBASICARRAY(rowIdRow_, getGlobals()->getDefaultHeap());
+    NADELETEBASICARRAY(rowIdAsciiRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(updateRow_, getGlobals()->getDefaultHeap());
     NADELETEBASICARRAY(mergeInsertRow_, getGlobals()->getDefaultHeap());
     asciiRow_ = NULL;
     convertRow_ = NULL;
+    rowIdRow_ = NULL;
+    rowIdAsciiRow_ = NULL;
     updateRow_ = NULL;
     mergeInsertRow_ = NULL;
     if (workAtp_)
@@ -2067,6 +2354,73 @@ private:
       }
     else
       {
+        bool handled = false;
+        bool found = false;
+        if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+          fprintf(stderr,
+                  "LOCAL_LITE_DML_KEY table=%s kind=update unique=%d subset=%d rowexpr=%d getrows=%d\n",
+                  updateTdb().getTableName(), updateTdb().uniqueKeyInfo(),
+                  updateTdb().subsetOper(),
+                  updateTdb().rowIdExpr_.getPointer() != NULL,
+                  updateTdb().listOfGetRows()
+                      ? updateTdb().listOfGetRows()->numEntries() : 0);
+        if (!isMerge && !localLiteStaticPrimaryRow(
+                updateTdb().listOfGetRows(), table_, &txn, &handled,
+                &sourceRow, &found, error))
+          return false;
+        ExpTupleDesc *keyTd = updateTdb().workCriDesc_->getTupleDescriptor(
+            updateTdb().rowIdTuppIndex_);
+        if (!isMerge && !handled &&
+            !localLiteRuntimePrimaryRow(
+                updateTdb().uniqueKeyInfo(), updateTdb().rowIdExpr_, keyTd,
+                updateTdb().rowIdTuppIndex_,
+                updateTdb().rowIdAsciiTuppIndex_, updateTdb().rowIdLen_,
+                updateTdb().rowIdAsciiRowLen_, workAtp_,
+                downEntry()->getAtp(), rowIdRow_, rowIdAsciiRow_,
+                table_, &txn, &handled, &sourceRow, &found, error))
+          return false;
+        if (handled)
+          {
+            if (found)
+              {
+                workAtp_->getTupp(updateTdb().asciiTuppIndex_)
+                  .setDataPointer(asciiRow_);
+                workAtp_->getTupp(updateTdb().convertTuppIndex_)
+                  .setDataPointer(convertRow_);
+                unsigned int sourceLen = 0;
+                if (!LocalLiteProjectBinaryRow(
+                        table_, sourceRow.value, sourceRow.rowId,
+                        asciiIndexes, asciiTd, asciiRow_,
+                        updateTdb().asciiRowLen_, &sourceLen, error))
+                  return false;
+                str_pad(convertRow_, updateTdb().convertRowLen_, '\0');
+                ULng32 convertLen = updateTdb().convertRowLen_;
+                ex_expr::exp_return_type rc = updateTdb().convertExpr_->eval(
+                    downEntry()->getAtp(), workAtp_, NULL, -1, &convertLen);
+                if (rc == ex_expr::EXPR_ERROR)
+                  {
+                    *error = "local-lite update source conversion failed";
+                    return false;
+                  }
+                if (updateTdb().scanExpr_)
+                  {
+                    rc = updateTdb().scanExpr_->eval(downEntry()->getAtp(),
+                                                     workAtp_);
+                    if (rc == ex_expr::EXPR_ERROR)
+                      {
+                        *error =
+                          "local-lite update predicate evaluation failed";
+                        return false;
+                      }
+                    if (rc != ex_expr::EXPR_FALSE)
+                      sourceRows.push_back(sourceRow);
+                  }
+                else
+                  sourceRows.push_back(sourceRow);
+              }
+          }
+        else
+          {
         std::vector<LocalLiteRow> rows;
         if (!txn.scanRows(table_, &rows, error))
           return false;
@@ -2105,6 +2459,7 @@ private:
                   continue;
               }
             sourceRows.push_back(rows[i]);
+          }
           }
         if (sourceRows.empty())
           return isMerge ? evaluateMergeInsert(&txn, error) : true;
@@ -2336,6 +2691,8 @@ private:
   atp_struct *workAtp_;
   char *asciiRow_;
   char *convertRow_;
+  char *rowIdAsciiRow_;
+  char *rowIdRow_;
   char *updateRow_;
   char *mergeInsertRow_;
   Lng32 matches_;

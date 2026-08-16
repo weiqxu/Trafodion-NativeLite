@@ -36,7 +36,7 @@ plan/README.trafodion.md
 
 ## Current Status (verified 2026-08-16)
 
-The bounded M1-M14 scope is complete for its declared boundaries. Each
+The bounded M1-M15 scope is complete for its declared boundaries. Each
 `ContextCli` owns an `ExTransaction`,
 which is now the canonical owner of that session's `LocalLiteTxnContext`;
 executor/DDL paths receive it explicitly, and reset, disconnect, or destruction
@@ -121,6 +121,19 @@ formal TPC-C compliance until all specification and disclosure requirements are
 met. Upgrade/drain orchestration, service-level backup controls, journal
 consolidation, node HA, distributed execution, and password/TLS authentication
 remain separate productization work.
+
+M15 replaces M14's database-wide validation and client writer admission with
+transaction-wide TransactionDB snapshots and Trafodion MVCC/OCC read/write-set
+validation. Point keys, primary/index ranges, predicate scans, index reads, and
+writes participate in commit validation; disjoint deltas publish atomically
+without rewriting an entire database image. `make local-lite-m15g` passes the
+Release 32-warehouse/32-terminal five-profile gate with no client admission,
+conflict, retry, or unclassified error. The verified 2026-08-16 baseline is
+1.130 TPS with 3.423% three-run variance; p95 is 3.301 s New-Order, 1.312 s
+Payment, 0.876 s Order-Status, 1.672 s Delivery, and 135.075 s Stock-Level.
+This completes M15's correctness and repeatability scope, but is far below the
+50 TPS and 1/0.5/0.5/2/2 s production targets. It is not a `tpmC` result or a
+production-readiness claim.
 
 ### Functional boundary
 

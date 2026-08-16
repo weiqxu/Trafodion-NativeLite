@@ -8166,7 +8166,7 @@ ItemExpr *ColReference::bindNode(BindWA *bindWA)
     ItemExpr *jPred = context->inJoinPred();
     ItemExpr *mPred = context->inMultaryPred();
     Lng32 mPredChNo  = mPred? mPred->currChildNo() : 0;
-    if (jPred->containsRightmost(mPred) &&	// BiR/Func is rtmost in JoinPrd
+    if (jPred && jPred->containsRightmost(mPred) && // BiR/Func is rtmost in JoinPrd
         mPredChNo &&				// RHS of BiRelat/Function
        (mPredChNo >= mPred->getArity()-1 ||	// absolute rightmost item
 	!mPred->child(mPredChNo+1)))	{	// effective rightmost item

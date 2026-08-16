@@ -26,6 +26,7 @@
 #include <map>
 #include <pthread.h>
 #include <set>
+#include <sstream>
 
 #include <rocksdb/c.h>
 
@@ -4741,6 +4742,65 @@ typedef std::pair<uint64_t, std::string> OccWriteKey;
 typedef std::set<OccReadRange, OccReadRangeLess> OccReadSet;
 typedef std::set<OccWriteKey> OccWriteSet;
 
+struct LocalLiteOccMetrics
+{
+  LocalLiteOccMetrics()
+    : transactionsStarted(0), transactionsCommitted(0),
+      transactionsAbortedConflict(0), pointReads(0), missingPointReads(0),
+      rangeReads(0), fullScans(0), primaryRangeReads(0),
+      indexRangeReads(0), readRanges(0),
+      writeKeys(0), validationCandidates(0), validationConflicts(0),
+      historyOverflowAborts(0), validationLatencyUs(0),
+      publicationLatencyUs(0) {}
+
+  uint64_t transactionsStarted;
+  uint64_t transactionsCommitted;
+  uint64_t transactionsAbortedConflict;
+  uint64_t pointReads;
+  uint64_t missingPointReads;
+  uint64_t rangeReads;
+  uint64_t fullScans;
+  uint64_t primaryRangeReads;
+  uint64_t indexRangeReads;
+  uint64_t readRanges;
+  uint64_t writeKeys;
+  uint64_t validationCandidates;
+  uint64_t validationConflicts;
+  uint64_t historyOverflowAborts;
+  uint64_t validationLatencyUs;
+  uint64_t publicationLatencyUs;
+};
+
+static LocalLiteOccMetrics localLiteOccMetrics;
+
+static uint64_t monotonicMicros()
+{
+  struct timespec now;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    return 0;
+  return static_cast<uint64_t>(now.tv_sec) * 1000000ULL +
+      static_cast<uint64_t>(now.tv_nsec) / 1000ULL;
+}
+
+static void observeOccTransaction(uint64_t pointReads,
+                                  uint64_t missingPointReads,
+                                  uint64_t fullScans,
+                                  uint64_t primaryRangeReads,
+                                  uint64_t indexRangeReads,
+                                  uint64_t readRanges,
+                                  uint64_t writeKeys)
+{
+  localLiteOccMetrics.pointReads += pointReads;
+  localLiteOccMetrics.missingPointReads += missingPointReads;
+  localLiteOccMetrics.rangeReads +=
+      fullScans + primaryRangeReads + indexRangeReads;
+  localLiteOccMetrics.fullScans += fullScans;
+  localLiteOccMetrics.primaryRangeReads += primaryRangeReads;
+  localLiteOccMetrics.indexRangeReads += indexRangeReads;
+  localLiteOccMetrics.readRanges += readRanges;
+  localLiteOccMetrics.writeKeys += writeKeys;
+}
+
 struct OccCommittedWriteSet
 {
   const void *owner;
@@ -4774,6 +4834,8 @@ public:
     if (overflowSequence_ != 0 && startSequence < overflowSequence_)
       {
         historyOverflowAborts_++;
+        localLiteOccMetrics.historyOverflowAborts++;
+        localLiteOccMetrics.transactionsAbortedConflict++;
         setError(error,
                  "local-lite serializable validation failed (SQLSTATE "
                  "40001, OCC history overflow); restart transaction");
@@ -4787,6 +4849,7 @@ public:
         if (history_[committed].owner == owner)
           continue;
         validationCandidates_++;
+        localLiteOccMetrics.validationCandidates++;
         for (OccWriteSet::const_iterator write =
                history_[committed].writes.begin();
              write != history_[committed].writes.end(); ++write)
@@ -4802,7 +4865,18 @@ public:
                            (read->end.empty() || write->second < read->end));
               if (intersects)
                 {
+                  if (getenv("TRAF_LOCAL_LITE_TRACE_OCC"))
+                    fprintf(stderr,
+                            "LOCAL_LITE_OCC_CONFLICT object_uid=%llu "
+                            "write=%s read_start=%s read_end=%s full=%d\n",
+                            static_cast<unsigned long long>(write->first),
+                            localLiteHexKey(write->second).c_str(),
+                            localLiteHexKey(read->start).c_str(),
+                            localLiteHexKey(read->end).c_str(),
+                            read->full ? 1 : 0);
                   validationConflicts_++;
+                  localLiteOccMetrics.validationConflicts++;
+                  localLiteOccMetrics.transactionsAbortedConflict++;
                   setError(error,
                            "local-lite serializable validation failed "
                            "(SQLSTATE 40001, OCC read/write conflict); "
@@ -4887,6 +4961,7 @@ public:
       pointReads_(0),
       missingPointReads_(0),
       fullScans_(0),
+      primaryRangeReads_(0),
       indexRangeReads_(0),
       executorTxnId_(LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID)
   {
@@ -4907,6 +4982,10 @@ public:
       {
         LocalLiteMutexGuard publication(
             LocalLiteStorageManager::instance().mutex());
+        observeOccTransaction(pointReads_, missingPointReads_, fullScans_,
+                              primaryRangeReads_, indexRangeReads_,
+                              readRanges_.size(),
+                              writeKeys_.size());
         LocalLiteStorageManager::instance().endStatement(this, localTxnId_);
         localLiteOccCoordinator.end(this);
       }
@@ -4924,6 +5003,7 @@ public:
     pointReads_ = 0;
     missingPointReads_ = 0;
     fullScans_ = 0;
+    primaryRangeReads_ = 0;
     indexRangeReads_ = 0;
     executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
     active_ = false;
@@ -4984,6 +5064,7 @@ public:
       pointReads_ = 0;
       missingPointReads_ = 0;
       fullScans_ = 0;
+      primaryRangeReads_ = 0;
       indexRangeReads_ = 0;
       localTxnId_ = nextLocalTxnId_++;
       if (nextLocalTxnId_ == 0)
@@ -5010,6 +5091,7 @@ public:
       LocalLiteStorageManager::instance().beginStatement(this,
                                                          transactionId);
       localLiteOccCoordinator.begin(this, beginSequence_);
+      localLiteOccMetrics.transactionsStarted++;
     }
     return true;
   }
@@ -5021,6 +5103,11 @@ public:
     OccWriteSet writeKeys;
     uint64_t transactionId = 0;
     uint64_t beginSequence = 0;
+    uint64_t pointReads = 0;
+    uint64_t missingPointReads = 0;
+    uint64_t fullScans = 0;
+    uint64_t primaryRangeReads = 0;
+    uint64_t indexRangeReads = 0;
     {
       LocalLiteMutexGuard guard(&mutex_);
       if (!active_)
@@ -5039,6 +5126,11 @@ public:
       writeKeys = writeKeys_;
       transactionId = localTxnId_;
       beginSequence = beginSequence_;
+      pointReads = pointReads_;
+      missingPointReads = missingPointReads_;
+      fullScans = fullScans_;
+      primaryRangeReads = primaryRangeReads_;
+      indexRangeReads = indexRangeReads_;
       localTxnId_ = 0;
       beginSequence_ = 0;
       executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
@@ -5051,9 +5143,19 @@ public:
     // TransactionDB, so one physical write batch is the commit decision.
     LocalLiteMutexGuard atomicPublication(
         LocalLiteStorageManager::instance().mutex());
-    if (!writeKeys.empty() &&
-        !localLiteOccCoordinator.validate(this, beginSequence,
-                                            readRanges, error))
+    observeOccTransaction(pointReads, missingPointReads, fullScans,
+                          primaryRangeReads, indexRangeReads,
+                          readRanges.size(),
+                          writeKeys.size());
+    const uint64_t validationStarted = monotonicMicros();
+    const bool validationPassed = writeKeys.empty() ||
+        localLiteOccCoordinator.validate(this, beginSequence,
+                                          readRanges, error);
+    const uint64_t validationFinished = monotonicMicros();
+    if (validationFinished >= validationStarted)
+      localLiteOccMetrics.validationLatencyUs +=
+          validationFinished - validationStarted;
+    if (!validationPassed)
       {
         endOcc();
         transactionStore_.close();
@@ -5083,7 +5185,14 @@ public:
         (strcmp(commitFault, "before-batch") == 0 ||
          strcmp(commitFault, "before-journal") == 0))
       _exit(92);
-    if (!LocalLiteUnifiedWriteBatchCommit(batch, true, error))
+    const uint64_t publicationStarted = monotonicMicros();
+    const bool publicationPassed =
+        LocalLiteUnifiedWriteBatchCommit(batch, true, error);
+    const uint64_t publicationFinished = monotonicMicros();
+    if (publicationFinished >= publicationStarted)
+      localLiteOccMetrics.publicationLatencyUs +=
+          publicationFinished - publicationStarted;
+    if (!publicationPassed)
       {
         LocalLiteUnifiedWriteBatchDestroy(batch);
         endOcc();
@@ -5098,6 +5207,7 @@ public:
 
     localLiteOccCoordinator.publish(this, LocalLiteUnifiedRocksDBSequence(),
                                     writeKeys);
+    localLiteOccMetrics.transactionsCommitted++;
     endOcc();
     transactionStore_.close();
     return true;
@@ -5106,6 +5216,13 @@ public:
   bool rollback(int64_t executorTxnId, std::string *error)
   {
     uint64_t transactionId = 0;
+    uint64_t pointReads = 0;
+    uint64_t missingPointReads = 0;
+    uint64_t fullScans = 0;
+    uint64_t primaryRangeReads = 0;
+    uint64_t indexRangeReads = 0;
+    uint64_t readRanges = 0;
+    uint64_t writeKeys = 0;
     {
       LocalLiteMutexGuard guard(&mutex_);
       if (!active_)
@@ -5121,6 +5238,13 @@ public:
 
       pendingTables_.clear();
       transactionId = localTxnId_;
+      pointReads = pointReads_;
+      missingPointReads = missingPointReads_;
+      fullScans = fullScans_;
+      primaryRangeReads = primaryRangeReads_;
+      indexRangeReads = indexRangeReads_;
+      readRanges = readRanges_.size();
+      writeKeys = writeKeys_.size();
       localTxnId_ = 0;
       beginSequence_ = 0;
       executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
@@ -5130,6 +5254,9 @@ public:
     {
       LocalLiteMutexGuard publication(
           LocalLiteStorageManager::instance().mutex());
+      observeOccTransaction(pointReads, missingPointReads, fullScans,
+                            primaryRangeReads, indexRangeReads,
+                            readRanges, writeKeys);
       LocalLiteStorageManager::instance().endStatement(this, transactionId);
       localLiteOccCoordinator.end(this);
     }
@@ -5508,6 +5635,35 @@ public:
                       std::vector<LocalLiteRow> *rows,
                       std::string *error)
   {
+    return scanPhysicalRange(store, table, startKey, endKey, false,
+                             statementOwner, statementExecutionId,
+                             rows, error);
+  }
+
+  bool scanPrimaryRange(LocalLiteRocksDBStore *store,
+                        const LocalLiteTableDef &table,
+                        const std::string &startKey,
+                        const std::string &endKey,
+                        const void *statementOwner,
+                        uint64_t statementExecutionId,
+                        std::vector<LocalLiteRow> *rows,
+                        std::string *error)
+  {
+    return scanPhysicalRange(store, table, startKey, endKey, true,
+                             statementOwner, statementExecutionId,
+                             rows, error);
+  }
+
+  bool scanPhysicalRange(LocalLiteRocksDBStore *store,
+                         const LocalLiteTableDef &table,
+                         const std::string &startKey,
+                         const std::string &endKey,
+                         bool primaryRange,
+                         const void *statementOwner,
+                         uint64_t statementExecutionId,
+                         std::vector<LocalLiteRow> *rows,
+                         std::string *error)
+  {
     const void *readOwner = statementOwner;
     uint64_t readExecutionId = statementExecutionId;
     {
@@ -5518,8 +5674,12 @@ public:
           readExecutionId = localTxnId_;
         }
     }
-    if (!store->scanIndexRange(table, startKey, endKey, readOwner,
-                               readExecutionId, rows, error))
+    const bool scanned = primaryRange
+        ? store->scanPrimaryRange(table, startKey, endKey, readOwner,
+                                  readExecutionId, rows, error)
+        : store->scanIndexRange(table, startKey, endKey, readOwner,
+                                readExecutionId, rows, error);
+    if (!scanned)
       return false;
 
     LocalLiteMutexGuard guard(&mutex_);
@@ -5531,7 +5691,10 @@ public:
     range.start = startKey;
     range.end = endKey;
     readRanges_.insert(range);
-    indexRangeReads_++;
+    if (primaryRange)
+      primaryRangeReads_++;
+    else
+      indexRangeReads_++;
 
     std::map<std::string, LocalLiteRow> visible;
     for (size_t i = 0; i < rows->size(); i++)
@@ -5566,8 +5729,15 @@ public:
               return false;
             visible.erase(beforeKey);
             bool matches = false;
-            if (!rowMatchesIndexRange(pending->second.table, after,
-                                      startKey, endKey, &matches, error))
+            if (primaryRange)
+              {
+                std::string key;
+                if (!rowStorageKey(pending->second.table, after, &key, error))
+                  return false;
+                matches = key >= startKey && key < endKey;
+              }
+            else if (!rowMatchesIndexRange(pending->second.table, after,
+                                           startKey, endKey, &matches, error))
               return false;
             if (matches)
               {
@@ -5581,9 +5751,17 @@ public:
         for (size_t i = 0; i < pending->second.rows.size(); i++)
           {
             bool matches = false;
-            if (!rowMatchesIndexRange(pending->second.table,
-                                      pending->second.rows[i],
-                                      startKey, endKey, &matches, error))
+            if (primaryRange)
+              {
+                std::string key;
+                if (!rowStorageKey(pending->second.table,
+                                   pending->second.rows[i], &key, error))
+                  return false;
+                matches = key >= startKey && key < endKey;
+              }
+            else if (!rowMatchesIndexRange(pending->second.table,
+                                           pending->second.rows[i],
+                                           startKey, endKey, &matches, error))
               return false;
             if (matches)
               {
@@ -5764,6 +5942,12 @@ private:
 
   void recordFullScanLocked(const LocalLiteTableDef &table)
   {
+    if (getenv("TRAF_LOCAL_LITE_TRACE_OCC"))
+      fprintf(stderr,
+              "LOCAL_LITE_OCC_READ_FULL owner=%p object_uid=%llu table=%s.%s.%s\n",
+              this, static_cast<unsigned long long>(table.objectUid),
+              table.catalog.c_str(), table.schema.c_str(),
+              table.name.c_str());
     OccReadRange range;
     range.objectUid = table.objectUid;
     range.full = true;
@@ -5837,41 +6021,12 @@ private:
     if (!transactionStore_.listTables("", "", &tables, error))
       return false;
     std::map<std::string, size_t> tableIndexes;
-    std::vector<std::vector<LocalLiteRow> > finalRows(tables.size());
     for (size_t t = 0; t < tables.size(); t++)
-      {
-        const std::string key = tableKey(tables[t]);
-        tableIndexes[key] = t;
-        if (!transactionStore_.scanRows(tables[t], &finalRows[t], error))
-          return false;
-        PendingMap::const_iterator changes = pending.find(key);
-        if (changes == pending.end())
-          continue;
-        for (size_t u = 0; u < changes->second.updates.size(); u++)
-          for (size_t row = 0; row < finalRows[t].size(); row++)
-            if (finalRows[t][row].rowId ==
-                  changes->second.updates[u].before.rowId &&
-                finalRows[t][row].value ==
-                  changes->second.updates[u].before.value)
-              {
-                finalRows[t][row].value = changes->second.updates[u].after;
-                break;
-              }
-        for (size_t d = 0; d < changes->second.deletes.size(); d++)
-          for (size_t row = 0; row < finalRows[t].size(); row++)
-            if (finalRows[t][row].rowId == changes->second.deletes[d].rowId &&
-                finalRows[t][row].value == changes->second.deletes[d].value)
-              {
-                finalRows[t].erase(finalRows[t].begin() + row);
-                break;
-              }
-        finalRows[t].insert(finalRows[t].end(), changes->second.rows.begin(),
-                            changes->second.rows.end());
-      }
+      tableIndexes[tableKey(tables[t])] = t;
 
-    // Validate the complete post-commit image. This permits a transaction to
-    // insert a parent and its child together while still rejecting parent-key
-    // removal and child-key insertion regardless of pending-table order.
+    // Only changed child rows can introduce a missing reference. Resolve the
+    // common primary-key reference as one point lookup, overlaid with pending
+    // parent changes, instead of reconstructing every table on every commit.
     for (size_t child = 0; child < tables.size(); child++)
       for (size_t r = 0; r < tables[child].riConstraints.size(); r++)
         {
@@ -5886,34 +6041,267 @@ private:
                               ri.name);
               return false;
             }
-          std::set<std::string> parentKeys;
-          for (size_t row = 0; row < finalRows[parent->second].size(); row++)
+          const LocalLiteTableDef &parentTable = tables[parent->second];
+          PendingMap::const_iterator childChanges =
+              pending.find(tableKey(tables[child]));
+          PendingMap::const_iterator parentChanges =
+              pending.find(tableKey(parentTable));
+
+          if (childChanges != pending.end())
             {
-              std::string key;
-              bool hasKey = false;
-              if (!LocalLiteBuildConstraintKey(
-                      tables[parent->second],
-                      finalRows[parent->second][row].value,
-                      ri.referencedColumns, &key, &hasKey, error))
-                return false;
-              if (hasKey) parentKeys.insert(key);
-            }
-          for (size_t row = 0; row < finalRows[child].size(); row++)
-            {
-              std::string key;
-              bool hasKey = false;
-              if (!LocalLiteBuildConstraintKey(
-                      tables[child], finalRows[child][row].value,
-                      ri.referencingColumns, &key, &hasKey, error))
-                return false;
-              if (hasKey && parentKeys.find(key) == parentKeys.end())
-                {
-                  setError(error, "referential integrity constraint " +
-                                  ri.name + " is violated");
+              for (size_t row = 0; row < childChanges->second.rows.size(); row++)
+                if (!validateChangedChildReference(
+                        tables[child], childChanges->second.rows[row].value,
+                        parentTable, ri, parentChanges, pending.end(), error))
                   return false;
-                }
+              for (size_t row = 0;
+                   row < childChanges->second.updates.size(); row++)
+                if (!validateChangedChildReference(
+                        tables[child],
+                        childChanges->second.updates[row].after,
+                        parentTable, ri, parentChanges, pending.end(), error))
+                  return false;
             }
+
+          if (parentChanges != pending.end() &&
+              !validateRemovedParentReferences(
+                  tables[child], parentTable, ri, childChanges,
+                  parentChanges, pending.end(), error))
+            return false;
         }
+    return true;
+  }
+
+  bool buildReferencedPrimaryKey(const LocalLiteTableDef &parent,
+                                 const std::vector<size_t> &columns,
+                                 const std::string &constraintKey,
+                                 std::string *storageKey)
+  {
+    if (parent.primaryKeyColumns != columns || constraintKey.size() < 8)
+      return false;
+    size_t offset = 0;
+    const uint64_t count = readUint64(constraintKey, &offset);
+    if (count != columns.size())
+      return false;
+    storageKey->clear();
+    storageKey->push_back('P');
+    appendUint64(*storageKey, count);
+    for (size_t i = 0; i < columns.size(); i++)
+      {
+        if (offset + 8 > constraintKey.size())
+          return false;
+        const uint64_t length = readUint64(constraintKey, &offset);
+        if (length > constraintKey.size() - offset)
+          return false;
+        appendUint64(*storageKey, static_cast<uint64_t>(columns[i]));
+        appendUint64(*storageKey, length);
+        storageKey->append(constraintKey, offset,
+                           static_cast<size_t>(length));
+        offset += static_cast<size_t>(length);
+      }
+    return offset == constraintKey.size();
+  }
+
+  bool rowConstraintKey(const LocalLiteTableDef &table,
+                        const std::string &row,
+                        const std::vector<size_t> &columns,
+                        const std::string &expected,
+                        bool *matches,
+                        std::string *error)
+  {
+    std::string key;
+    bool hasKey = false;
+    if (!LocalLiteBuildConstraintKey(table, row, columns, &key, &hasKey,
+                                     error))
+      return false;
+    *matches = hasKey && key == expected;
+    return true;
+  }
+
+  bool referencedKeyExists(
+      const LocalLiteTableDef &parent, const LocalLiteRIDef &ri,
+      const std::string &key, PendingMap::const_iterator parentChanges,
+      PendingMap::const_iterator pendingEnd, bool *exists,
+      std::string *error)
+  {
+    *exists = false;
+    bool removedFromStoredImage = false;
+    if (parentChanges != pendingEnd)
+      {
+        for (size_t i = 0; i < parentChanges->second.rows.size(); i++)
+          {
+            bool matches = false;
+            if (!rowConstraintKey(parent,
+                                  parentChanges->second.rows[i].value,
+                                  ri.referencedColumns, key, &matches, error))
+              return false;
+            if (matches) { *exists = true; return true; }
+          }
+        for (size_t i = 0; i < parentChanges->second.updates.size(); i++)
+          {
+            bool matchesAfter = false;
+            bool matchesBefore = false;
+            if (!rowConstraintKey(parent,
+                                  parentChanges->second.updates[i].after,
+                                  ri.referencedColumns, key, &matchesAfter,
+                                  error) ||
+                !rowConstraintKey(
+                    parent, parentChanges->second.updates[i].before.value,
+                    ri.referencedColumns, key, &matchesBefore, error))
+              return false;
+            if (matchesAfter) { *exists = true; return true; }
+            removedFromStoredImage = removedFromStoredImage || matchesBefore;
+          }
+        for (size_t i = 0; i < parentChanges->second.deletes.size(); i++)
+          {
+            bool matches = false;
+            if (!rowConstraintKey(parent,
+                                  parentChanges->second.deletes[i].value,
+                                  ri.referencedColumns, key, &matches, error))
+              return false;
+            removedFromStoredImage = removedFromStoredImage || matches;
+          }
+      }
+    if (removedFromStoredImage)
+      return true;
+
+    std::string storageKey;
+    if (buildReferencedPrimaryKey(parent, ri.referencedColumns, key,
+                                  &storageKey))
+      {
+        LocalLiteRow row;
+        return transactionStore_.getRowByKey(parent, storageKey, &row,
+                                              exists, error);
+      }
+
+    std::vector<LocalLiteRow> rows;
+    if (!transactionStore_.scanRows(parent, &rows, error))
+      return false;
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        bool matches = false;
+        if (!rowConstraintKey(parent, rows[i].value, ri.referencedColumns,
+                              key, &matches, error))
+          return false;
+        if (matches) { *exists = true; break; }
+      }
+    return true;
+  }
+
+  bool validateChangedChildReference(
+      const LocalLiteTableDef &child, const std::string &row,
+      const LocalLiteTableDef &parent, const LocalLiteRIDef &ri,
+      PendingMap::const_iterator parentChanges,
+      PendingMap::const_iterator pendingEnd, std::string *error)
+  {
+    std::string key;
+    bool hasKey = false;
+    if (!LocalLiteBuildConstraintKey(child, row, ri.referencingColumns,
+                                     &key, &hasKey, error))
+      return false;
+    if (!hasKey)
+      return true;
+    bool exists = false;
+    if (!referencedKeyExists(parent, ri, key, parentChanges, pendingEnd,
+                             &exists, error))
+      return false;
+    if (!exists)
+      {
+        setError(error, "referential integrity constraint " + ri.name +
+                        " is violated");
+        return false;
+      }
+    return true;
+  }
+
+  bool validateRemovedParentReferences(
+      const LocalLiteTableDef &child, const LocalLiteTableDef &parent,
+      const LocalLiteRIDef &ri, PendingMap::const_iterator childChanges,
+      PendingMap::const_iterator parentChanges,
+      PendingMap::const_iterator pendingEnd, std::string *error)
+  {
+    std::set<std::string> removed;
+    for (size_t i = 0; i < parentChanges->second.deletes.size(); i++)
+      {
+        std::string key;
+        bool hasKey = false;
+        if (!LocalLiteBuildConstraintKey(
+                parent, parentChanges->second.deletes[i].value,
+                ri.referencedColumns, &key, &hasKey, error))
+          return false;
+        if (hasKey) removed.insert(key);
+      }
+    for (size_t i = 0; i < parentChanges->second.updates.size(); i++)
+      {
+        std::string beforeKey;
+        std::string afterKey;
+        bool hasBefore = false;
+        bool hasAfter = false;
+        if (!LocalLiteBuildConstraintKey(
+                parent, parentChanges->second.updates[i].before.value,
+                ri.referencedColumns, &beforeKey, &hasBefore, error) ||
+            !LocalLiteBuildConstraintKey(
+                parent, parentChanges->second.updates[i].after,
+                ri.referencedColumns, &afterKey, &hasAfter, error))
+          return false;
+        if (hasBefore && (!hasAfter || beforeKey != afterKey))
+          removed.insert(beforeKey);
+      }
+    for (size_t i = 0; i < parentChanges->second.rows.size(); i++)
+      {
+        std::string key;
+        bool hasKey = false;
+        if (!LocalLiteBuildConstraintKey(
+                parent, parentChanges->second.rows[i].value,
+                ri.referencedColumns, &key, &hasKey, error))
+          return false;
+        if (hasKey) removed.erase(key);
+      }
+    for (size_t i = 0; i < parentChanges->second.updates.size(); i++)
+      {
+        std::string key;
+        bool hasKey = false;
+        if (!LocalLiteBuildConstraintKey(
+                parent, parentChanges->second.updates[i].after,
+                ri.referencedColumns, &key, &hasKey, error))
+          return false;
+        if (hasKey) removed.erase(key);
+      }
+    if (removed.empty())
+      return true;
+
+    std::vector<LocalLiteRow> rows;
+    if (!transactionStore_.scanRows(child, &rows, error))
+      return false;
+    if (childChanges != pendingEnd)
+      {
+        for (size_t i = 0; i < childChanges->second.updates.size(); i++)
+          for (size_t row = 0; row < rows.size(); row++)
+            if (rows[row].rowId ==
+                childChanges->second.updates[i].before.rowId)
+              rows[row].value = childChanges->second.updates[i].after;
+        for (size_t i = 0; i < childChanges->second.deletes.size(); i++)
+          for (size_t row = 0; row < rows.size(); row++)
+            if (rows[row].rowId == childChanges->second.deletes[i].rowId)
+              { rows.erase(rows.begin() + row); break; }
+        rows.insert(rows.end(), childChanges->second.rows.begin(),
+                    childChanges->second.rows.end());
+      }
+    for (size_t i = 0; i < rows.size(); i++)
+      {
+        std::string key;
+        bool hasKey = false;
+        if (!LocalLiteBuildConstraintKey(child, rows[i].value,
+                                         ri.referencingColumns, &key,
+                                         &hasKey, error))
+          return false;
+        if (hasKey && removed.find(key) != removed.end())
+          {
+            setError(error, "referential integrity constraint " + ri.name +
+                            " is violated");
+            return false;
+          }
+      }
     return true;
   }
 
@@ -5981,6 +6369,7 @@ private:
   uint64_t pointReads_;
   uint64_t missingPointReads_;
   uint64_t fullScans_;
+  uint64_t primaryRangeReads_;
   uint64_t indexRangeReads_;
   int64_t executorTxnId_;
   PendingMap pendingTables_;
@@ -8654,6 +9043,82 @@ bool LocalLiteRocksDBStore::scanIndexRange(
   return true;
 }
 
+bool LocalLiteRocksDBStore::scanPrimaryRange(
+    const LocalLiteTableDef &table,
+    const std::string &startKey,
+    const std::string &endKey,
+    std::vector<LocalLiteRow> *rows,
+    std::string *error)
+{
+  return scanPrimaryRange(table, startKey, endKey, NULL, 0, rows, error);
+}
+
+bool LocalLiteRocksDBStore::scanPrimaryRange(
+    const LocalLiteTableDef &table,
+    const std::string &startKey,
+    const std::string &endKey,
+    const void *statementOwner,
+    uint64_t statementExecutionId,
+    std::vector<LocalLiteRow> *rows,
+    std::string *error)
+{
+  rows->clear();
+  if (startKey.empty() || startKey[0] != 'P' || endKey <= startKey ||
+      !open(error))
+    {
+      if (error && error->empty())
+        *error = "invalid local-lite primary key range";
+      return false;
+    }
+  rocksdb_t *db = LocalLiteStorageManager::instance().openTable(
+      tablePath(table), false, error);
+  if (!db)
+    return false;
+  const bool ownsSnapshot = statementOwner == NULL;
+  const rocksdb_snapshot_t *snapshot = ownsSnapshot
+      ? rocksdb_create_snapshot(db) : NULL;
+  if (!ownsSnapshot &&
+      !LocalLiteStorageManager::instance().getStatementSnapshot(
+          tablePath(table), db, statementOwner, statementExecutionId,
+          &snapshot, error))
+    return false;
+  if (!snapshot)
+    {
+      setError(error, "create local-lite RocksDB primary range snapshot failed");
+      return false;
+    }
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  rocksdb_readoptions_set_snapshot(readOptions, snapshot);
+  rocksdb_iterator_t *it = rocksdb_create_iterator(db, readOptions);
+  for (rocksdb_iter_seek(it, startKey.data(), startKey.size());
+       rocksdb_iter_valid(it); rocksdb_iter_next(it))
+    {
+      size_t keyLen = 0;
+      size_t valueLen = 0;
+      const char *rawKey = rocksdb_iter_key(it, &keyLen);
+      std::string key(rawKey, keyLen);
+      if (key >= endKey)
+        break;
+      const char *rawValue = rocksdb_iter_value(it, &valueLen);
+      LocalLiteRow row;
+      row.rowId = 0;
+      if (!decodeRowValue(std::string(rawValue, valueLen), &row.value, error))
+        {
+          rocksdb_iter_destroy(it);
+          rocksdb_readoptions_destroy(readOptions);
+          if (ownsSnapshot) rocksdb_release_snapshot(db, snapshot);
+          return false;
+        }
+      rows->push_back(row);
+    }
+  char *err = NULL;
+  rocksdb_iter_get_error(it, &err);
+  rocksdb_iter_destroy(it);
+  rocksdb_readoptions_destroy(readOptions);
+  if (ownsSnapshot) rocksdb_release_snapshot(db, snapshot);
+  return checkRocksError(err, "scan local-lite primary key range", error);
+}
+
 bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
                                      const void *statementOwner,
                                      uint64_t statementExecutionId,
@@ -8893,6 +9358,22 @@ bool LocalLiteTxn::scanIndexRange(const LocalLiteTableDef &table,
                                      rows, error);
 }
 
+bool LocalLiteTxn::scanPrimaryRange(const LocalLiteTableDef &table,
+                                    const std::string &startKey,
+                                    const std::string &endKey,
+                                    std::vector<LocalLiteRow> *rows,
+                                    std::string *error)
+{
+  if (!store_ || !txnContext_)
+    {
+      setError(error, "local-lite primary scan missing transaction context");
+      return false;
+    }
+  return txnContext_->scanPrimaryRange(store_, table, startKey, endKey,
+                                       statementOwner_, statementExecutionId_,
+                                       rows, error);
+}
+
 bool LocalLiteTxn::getRowByKey(const LocalLiteTableDef &table,
                                const std::string &storageKey,
                                LocalLiteRow *row,
@@ -9027,6 +9508,46 @@ bool LocalLiteTxnManager::occState(LocalLiteTxnContext *txnContext,
                                    LocalLiteOccState *state)
 {
   return txnContext && txnContext->occState(state);
+}
+
+std::string LocalLiteOccMetricsJson()
+{
+  LocalLiteMutexGuard guard(LocalLiteStorageManager::instance().mutex());
+  std::ostringstream out;
+  out << "{\"transactions_started\":"
+      << localLiteOccMetrics.transactionsStarted
+      << ",\"transactions_committed\":"
+      << localLiteOccMetrics.transactionsCommitted
+      << ",\"transactions_aborted_conflict\":"
+      << localLiteOccMetrics.transactionsAbortedConflict
+      << ",\"point_reads\":" << localLiteOccMetrics.pointReads
+      << ",\"missing_point_reads\":"
+      << localLiteOccMetrics.missingPointReads
+      << ",\"range_reads\":" << localLiteOccMetrics.rangeReads
+      << ",\"full_scans\":" << localLiteOccMetrics.fullScans
+      << ",\"primary_range_reads\":"
+      << localLiteOccMetrics.primaryRangeReads
+      << ",\"index_range_reads\":"
+      << localLiteOccMetrics.indexRangeReads
+      << ",\"read_ranges\":" << localLiteOccMetrics.readRanges
+      << ",\"write_keys\":" << localLiteOccMetrics.writeKeys
+      << ",\"validation_candidates\":"
+      << localLiteOccMetrics.validationCandidates
+      << ",\"validation_conflicts\":"
+      << localLiteOccMetrics.validationConflicts
+      << ",\"history_overflow_aborts\":"
+      << localLiteOccMetrics.historyOverflowAborts
+      << ",\"validation_latency_us\":"
+      << localLiteOccMetrics.validationLatencyUs
+      << ",\"publication_latency_us\":"
+      << localLiteOccMetrics.publicationLatencyUs << "}";
+  return out.str();
+}
+
+void LocalLiteOccMetricsReset()
+{
+  LocalLiteMutexGuard guard(LocalLiteStorageManager::instance().mutex());
+  localLiteOccMetrics = LocalLiteOccMetrics();
 }
 
 void LocalLiteTxnManager::beginStatement(LocalLiteTxnContext *txnContext,

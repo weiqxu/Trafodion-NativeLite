@@ -763,6 +763,8 @@ QRExplicitExprPtr QRDescGenerator::getExprTree(ItemExpr* itemExpr)
                                        QRDescriptorException,
                                        "Unhandled bytes-per-char: %d",
                                        ((CharType*)type)->getBytesPerChar());
+                    scalar = new (mvqrHeap_)
+                                   QRStringVal(ADD_MEMCHECK_ARGS(mvqrHeap_));
                     scalar->setValue(constVal->getConstStr(FALSE));
                     valueWasSet = TRUE;
                   }

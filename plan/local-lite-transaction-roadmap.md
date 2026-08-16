@@ -483,40 +483,33 @@ not `tpmC`. M14G now makes M10-M13 and M14A-M14F explicit aggregate inputs,
 embeds the workload/operations evidence in one report, and separates functional,
 TPC-C-like, and failed formal-compliance claims.
 
-The next transaction milestone is M15. It replaces the conservative database-
-wide validator and client writer admission with Trafodion's original MVCC/OCC
-rule: retain one transaction snapshot, record point and scan ranges, and check
-them only against writes committed after the transaction start sequence.
-TransactionDB remains the atomic storage layer; M15 does not introduce SSCC or
-RocksDB OptimisticTransactionDB. Backup control and service/security boundaries
-remain separate productization work.
+M15 is complete for its declared correctness and repeatability boundary. It
+replaces the database-wide validator and client writer admission with
+Trafodion's MVCC/OCC rule: one transaction snapshot, point and predicate read
+sets, and validation only against writes committed after the start sequence.
+TransactionDB remains the atomic storage layer; M15 introduces neither SSCC nor
+RocksDB OptimisticTransactionDB.
 
-M15 is split into seven independently gated commits: contract and metrics,
+The seven independently committed phases cover contract/metrics,
 transaction-wide snapshots, read/write sets, OCC validation, transactional
 index reads, atomic delta publication, and Release TPC-C-like qualification.
-The final engineering gate uses 32 warehouses and 32 independently scheduled
-terminals; official TPC-C or tpmC claims remain excluded.
+`make local-lite-m15g` passes at 32 warehouses and 32 offset terminal schedules
+with all five profiles represented, no client admission, no conflicts/retries,
+and no unclassified errors. The 2026-08-16 baseline is 1.130 TPS with 3.423%
+variance; Stock-Level p95 is 135.075 s. Therefore M15 is functionally complete
+but does not meet the separate production targets of 50 TPS and
+1/0.5/0.5/2/2-second p95. Official TPC-C and `tpmC` claims remain excluded.
 
-The transaction implementation order for M14 is:
+The next transaction/productization order is:
 
-1. Run deterministic New-Order, Payment, Order-Status, Delivery, and
-   Stock-Level programs over one loaded warehouse through T4 JDBC.
-2. Encode the pinned TPC-C isolation matrix and consistency conditions as
-   executable two-session tests before selecting a locking or optimistic
-   conflict design.
-3. Define wait/abort behavior, deadlock detection or avoidance, conflict
-   timeout, retryable diagnostics, and bounded backoff with exactly-once
-   logical effects.
-4. Protect point and predicate reads against write skew and phantoms without
-   making the server-wide compiler/executor mutex the isolation mechanism.
-5. Move compiler/executor mutable state to session/request ownership until
-   independent terminals show real execution overlap.
-6. Inject failures around the durable decision and recovery of each updating
-   TPC-C profile, then verify all cross-table invariants after restart.
-7. Scale to multiple warehouses only after one-warehouse functional,
-   isolation, and recovery gates pass.
+1. Remove Stock-Level full scans and add an index/range aggregate path.
+2. Reach the recorded 50 TPS and per-profile p95 production targets on a
+   controlled host with longer samples and full environment disclosure.
+3. Add service drain/upgrade, active-layout backup controls, recovery-journal
+   consolidation, password/TLS, and operational SLO monitoring.
+4. Keep `make local-lite-m15g` and the M10-M14 prerequisites as regression
+   gates while widening the portable SQL surface.
 
-The aggregate transaction gate is `make local-lite-m14`; its detailed A-G
-phases and claim boundaries are authoritative in
-`plan/local-lite-legacy-regress-roadmap.md`. Until that gate exists and passes,
-the project claims neither TPC-C support nor `tpmC`.
+The aggregate transaction gate is `make local-lite-m15`; detailed A-G phase
+and claim boundaries are authoritative in
+`plan/local-lite-legacy-regress-roadmap.md`.
