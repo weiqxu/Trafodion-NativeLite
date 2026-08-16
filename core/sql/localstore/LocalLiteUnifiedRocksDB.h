@@ -40,6 +40,23 @@ bool LocalLiteUnifiedRocksDBCheckpoint(const std::string &path,
                                        std::string *error);
 std::string LocalLiteUnifiedRocksDBPath(const std::string &root);
 
+// A physical write batch may contain records from any logical catalog/table
+// handle.  Commit writes the translated keys to the single unified
+// TransactionDB in one RocksDB sequence-number transition.
+struct LocalLiteUnifiedWriteBatch;
+LocalLiteUnifiedWriteBatch *LocalLiteUnifiedWriteBatchCreate();
+void LocalLiteUnifiedWriteBatchDestroy(LocalLiteUnifiedWriteBatch *batch);
+void LocalLiteUnifiedWriteBatchPut(LocalLiteUnifiedWriteBatch *batch,
+                                   rocksdb_t *logicalDb,
+                                   const std::string &key,
+                                   const std::string &value);
+void LocalLiteUnifiedWriteBatchDelete(LocalLiteUnifiedWriteBatch *batch,
+                                      rocksdb_t *logicalDb,
+                                      const std::string &key);
+bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
+                                      bool sync,
+                                      std::string *error);
+
 rocksdb_t *LocalLiteRocksDBOpen(const rocksdb_options_t *options,
                                 const char *name,
                                 char **error);

@@ -2271,6 +2271,45 @@ static bool buildSecondaryIndexEntries(
   return true;
 }
 
+static bool buildRowRecords(const LocalLiteTableDef &table,
+                            const LocalLiteRow &row,
+                            const std::string &rowKey,
+                            std::map<std::string, std::string> *records,
+                            std::string *error)
+{
+  records->clear();
+  (*records)[rowKey] = encodeRowValue(row.value);
+  for (size_t keyIndex = 0;
+       keyIndex < table.uniqueKeyColumns.size(); keyIndex++)
+    {
+      std::string uniqueKey;
+      bool hasKey = false;
+      if (!LocalLiteBuildUniqueKey(table, row.value,
+                                   table.uniqueKeyColumns[keyIndex], keyIndex,
+                                   &uniqueKey, &hasKey, error))
+        return false;
+      if (hasKey && !records->insert(
+              std::make_pair(uniqueKey, rowKey)).second)
+        {
+          setError(error, "duplicate local-lite unique key");
+          return false;
+        }
+    }
+  std::vector<LocalLitePhysicalIndexEntry> entries;
+  if (!buildSecondaryIndexEntries(table, row.value, rowKey, &entries, error))
+    return false;
+  for (size_t i = 0; i < entries.size(); i++)
+    if (!records->insert(std::make_pair(entries[i].key,
+                                        entries[i].value)).second)
+      {
+        setError(error, entries[i].unique
+                        ? "duplicate local-lite unique index key"
+                        : "duplicate local-lite secondary index key");
+        return false;
+      }
+  return true;
+}
+
 class LocalLiteMutexGuard
 {
 public:
@@ -4041,6 +4080,206 @@ public:
     return true;
   }
 
+  bool appendPendingMutationsAtomic(
+      const LocalLiteTableDef &table,
+      const std::vector<LocalLiteRowMutation> &updates,
+      const std::vector<LocalLiteRow> &deletes,
+      const std::vector<LocalLiteRow> &inserts,
+      LocalLiteUnifiedWriteBatch *batch,
+      std::string *error)
+  {
+    if (updates.empty() && deletes.empty() && inserts.empty())
+      return true;
+    if (!batch)
+      {
+        setError(error, "missing local-lite unified commit batch");
+        return false;
+      }
+
+    LocalLiteMutexGuard guard(&mutex_);
+    LocalLiteTableDef loaded;
+    if (!loadTableLocked(table.catalog, table.schema, table.name,
+                         &loaded, error))
+      return false;
+    if (loaded.objectUid != table.objectUid)
+      {
+        setError(error,
+                 "local-lite table changed while transaction was active");
+        return false;
+      }
+    rocksdb_t *db = openTableLocked(LocalLiteRocksDBStore::tablePath(loaded),
+                                    false, error);
+    if (!db)
+      return false;
+
+    typedef std::map<std::string, std::string> RecordMap;
+    RecordMap puts;
+    std::set<std::string> removed;
+    std::set<std::string> selectedRows;
+    std::vector<std::string> updateKeys(updates.size());
+    const bool keyless = loaded.primaryKeyColumns.empty();
+
+    for (size_t phase = 0; phase < 2; phase++)
+      {
+        const size_t count = phase == 0 ? updates.size() : deletes.size();
+        for (size_t i = 0; i < count; i++)
+          {
+            const LocalLiteRow &before = phase == 0
+                ? updates[i].before : deletes[i];
+            std::string rowKey;
+            if (keyless)
+              appendUint64(rowKey, before.rowId);
+            else if (!LocalLiteBuildPrimaryKey(loaded, before.value,
+                                               &rowKey, error))
+              return false;
+            if (!selectedRows.insert(rowKey).second)
+              {
+                setError(error,
+                         "local-lite transaction selected a row more than once");
+                return false;
+              }
+
+            rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+            char *rocksError = NULL;
+            size_t valueLen = 0;
+            char *value = rocksdb_get(db, readOptions,
+                                      rowKey.data(), rowKey.size(),
+                                      &valueLen, &rocksError);
+            rocksdb_readoptions_destroy(readOptions);
+            if (!checkRocksError(rocksError,
+                                 "read local-lite commit before-image", error))
+              return false;
+            const std::string expected = encodeRowValue(before.value);
+            const bool matches = value &&
+                std::string(value, valueLen) == expected;
+            if (value)
+              rocksdb_free(value);
+            if (!matches)
+              {
+                setError(error, phase == 0
+                    ? "local-lite update row changed; restart transaction"
+                    : "local-lite delete row changed; restart transaction");
+                return false;
+              }
+
+            RecordMap oldRecords;
+            if (!buildRowRecords(loaded, before, rowKey, &oldRecords, error))
+              return false;
+            for (RecordMap::const_iterator record = oldRecords.begin();
+                 record != oldRecords.end(); ++record)
+              removed.insert(record->first);
+            if (phase == 0)
+              {
+                if (keyless)
+                  updateKeys[i] = rowKey;
+                else if (!LocalLiteBuildPrimaryKey(loaded, updates[i].after,
+                                                   &updateKeys[i], error))
+                  return false;
+              }
+          }
+      }
+
+    if (keyless && !inserts.empty())
+      {
+        if (inserts.front().rowId != loaded.nextRowId)
+          {
+            setError(error,
+                     "local-lite keyless row-id allocation changed while "
+                     "transaction was active; restart and retry the transaction");
+            return false;
+          }
+        for (size_t i = 0; i < inserts.size(); i++)
+          if (inserts[i].rowId != loaded.nextRowId + i)
+            {
+              setError(error,
+                       "local-lite keyless row-id allocation is not contiguous");
+              return false;
+            }
+      }
+
+    for (size_t group = 0; group < 2; group++)
+      {
+        const size_t count = group == 0 ? updates.size() : inserts.size();
+        for (size_t i = 0; i < count; i++)
+          {
+            LocalLiteRow row;
+            std::string rowKey;
+            if (group == 0)
+              {
+                row.rowId = updates[i].before.rowId;
+                row.value = updates[i].after;
+                rowKey = updateKeys[i];
+              }
+            else
+              {
+                row = inserts[i];
+                if (keyless)
+                  appendUint64(rowKey, row.rowId);
+                else if (!LocalLiteBuildPrimaryKey(loaded, row.value,
+                                                   &rowKey, error))
+                  return false;
+              }
+
+            RecordMap newRecords;
+            if (!buildRowRecords(loaded, row, rowKey, &newRecords, error))
+              return false;
+            for (RecordMap::const_iterator record = newRecords.begin();
+                 record != newRecords.end(); ++record)
+              {
+                if (!puts.insert(*record).second)
+                  {
+                    setError(error, !record->first.empty() &&
+                                    record->first[0] == 'U'
+                                      ? "duplicate local-lite unique key"
+                                      : (!record->first.empty() &&
+                                         record->first[0] == 'I'
+                                           ? "duplicate local-lite unique index key"
+                                           : "duplicate local-lite primary key"));
+                    return false;
+                  }
+                if (removed.find(record->first) != removed.end())
+                  continue;
+                bool exists = false;
+                if (!keyExistsLocked(db, record->first,
+                                     "read local-lite commit target key",
+                                     &exists, error))
+                  return false;
+                if (exists)
+                  {
+                    setError(error, !record->first.empty() &&
+                                    record->first[0] == 'U'
+                                      ? "duplicate local-lite unique key"
+                                      : (!record->first.empty() &&
+                                         record->first[0] == 'I'
+                                           ? "duplicate local-lite unique index key"
+                                           : "duplicate local-lite primary key"));
+                    return false;
+                  }
+              }
+          }
+      }
+
+    for (std::set<std::string>::const_iterator key = removed.begin();
+         key != removed.end(); ++key)
+      LocalLiteUnifiedWriteBatchDelete(batch, db, *key);
+    for (RecordMap::const_iterator record = puts.begin();
+         record != puts.end(); ++record)
+      LocalLiteUnifiedWriteBatchPut(batch, db, record->first, record->second);
+
+    if (keyless && !inserts.empty())
+      {
+        LocalLiteTableDef updated = loaded;
+        updated.nextRowId += inserts.size();
+        LocalLiteUnifiedWriteBatchPut(
+            batch, catalogDb_,
+            tableKey(loaded.catalog, loaded.schema, loaded.name),
+            encodeTable(updated));
+      }
+    LocalLiteUnifiedWriteBatchDelete(
+        batch, catalogDb_, statsKey(loaded.catalog, loaded.schema, loaded.name));
+    return true;
+  }
+
   void closeTable(const std::string &path)
   {
     LocalLiteMutexGuard guard(&mutex_);
@@ -4698,6 +4937,11 @@ public:
       return;
 
     LocalLiteMutexGuard guard(&mutex_);
+    // Statement hooks run before the first storage TCB opens its handle. Keep
+    // one context-owned reference so the transaction/statement snapshot is
+    // captured at the real statement boundary even in a fresh SQL process.
+    std::string openError;
+    transactionStore_.open(&openError);
     statementExecutions_[statementOwner] = statementExecutionId;
     LocalLiteStorageManager::instance().beginStatement(statementOwner,
                                                        statementExecutionId);
@@ -4719,6 +4963,8 @@ public:
     LocalLiteStorageManager::instance().endStatement(statementOwner,
                                                      statementExecutionId);
     statementExecutions_.erase(it);
+    if (!active_)
+      transactionStore_.close();
   }
 
   bool begin(int64_t executorTxnId, std::string *error)
@@ -4800,33 +5046,9 @@ public:
     }
 
     LocalLiteStorageManager::instance().endStatement(this, transactionId);
-    if (!validatePendingReferentialIntegrity(pending, error))
-      {
-        endOcc();
-        transactionStore_.close();
-        return false;
-      }
-
-    std::vector<LocalLiteJournalTable> journalTables;
-    journalTables.reserve(pending.size());
-    for (PendingMap::const_iterator t = pending.begin();
-         t != pending.end(); ++t)
-      {
-        LocalLiteJournalTable journalTable;
-        journalTable.catalog = t->second.table.catalog;
-        journalTable.schema = t->second.table.schema;
-        journalTable.name = t->second.table.name;
-        journalTable.objectUid = t->second.table.objectUid;
-        journalTable.updates = t->second.updates;
-        journalTable.deletes = t->second.deletes;
-        journalTable.inserts = t->second.rows;
-        journalTables.push_back(journalTable);
-      }
-
     // Keep readers and writers behind one process-wide publication latch.
-    // The durable TransactionDB journal is the commit decision; each legacy
-    // table records the journal id in the same write batch as its mutations,
-    // so startup recovery can replay an interrupted multi-table publication.
+    // Every logical table and catalog record is a prefix view over the same
+    // TransactionDB, so one physical write batch is the commit decision.
     LocalLiteMutexGuard atomicPublication(
         LocalLiteStorageManager::instance().mutex());
     if (!writeKeys.empty() &&
@@ -4837,72 +5059,46 @@ public:
         transactionStore_.close();
         return false;
       }
-    for (PendingMap::const_iterator t = pending.begin();
-         t != pending.end(); ++t)
-      if (!LocalLiteStorageManager::instance().commitPendingMutations(
-              t->second.table, t->second.updates, t->second.deletes,
-              t->second.rows, true, 0, error))
-        {
-          endOcc();
-          transactionStore_.close();
-          return false;
-        }
-
-    uint64_t journalTransactionId = 0;
-    const char *commitFault = getenv("TRAF_LOCAL_LITE_COMMIT_FAULT");
-    if (commitFault && strcmp(commitFault, "before-journal") == 0)
-      _exit(92);
-    if (!journalTables.empty() &&
-        !LocalLiteStorageManager::instance().persistJournal(
-            journalTables, &journalTransactionId, error))
+    if (!validatePendingReferentialIntegrity(pending, error))
       {
         endOcc();
         transactionStore_.close();
         return false;
       }
-    if (commitFault && strcmp(commitFault, "after-journal") == 0)
-      _exit(93);
+    LocalLiteUnifiedWriteBatch *batch = LocalLiteUnifiedWriteBatchCreate();
+    for (PendingMap::const_iterator t = pending.begin();
+         t != pending.end(); ++t)
+      if (!LocalLiteStorageManager::instance().appendPendingMutationsAtomic(
+              t->second.table, t->second.updates, t->second.deletes,
+              t->second.rows, batch, error))
+        {
+          LocalLiteUnifiedWriteBatchDestroy(batch);
+          endOcc();
+          transactionStore_.close();
+          return false;
+        }
 
-    size_t committedTables = 0;
-    for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
+    const char *commitFault = getenv("TRAF_LOCAL_LITE_COMMIT_FAULT");
+    if (commitFault &&
+        (strcmp(commitFault, "before-batch") == 0 ||
+         strcmp(commitFault, "before-journal") == 0))
+      _exit(92);
+    if (!LocalLiteUnifiedWriteBatchCommit(batch, true, error))
       {
-        if (!LocalLiteStorageManager::instance().commitPendingMutations(
-                t->second.table, t->second.updates, t->second.deletes,
-                t->second.rows, false, journalTransactionId, error))
-          {
-            if (error)
-              *error += "; durable transaction journal retained for recovery";
-            endOcc();
-            transactionStore_.close();
-            return false;
-          }
-
-        committedTables++;
-        const char *faultAfterTable =
-            getenv("TRAF_LOCAL_LITE_LEGACY_COMMIT_FAULT_AFTER_TABLE");
-        if (faultAfterTable && faultAfterTable[0] &&
-            strtoull(faultAfterTable, NULL, 10) == committedTables)
-          _exit(90);
+        LocalLiteUnifiedWriteBatchDestroy(batch);
+        endOcc();
+        transactionStore_.close();
+        return false;
       }
+    LocalLiteUnifiedWriteBatchDestroy(batch);
+    if (commitFault &&
+        (strcmp(commitFault, "after-batch") == 0 ||
+         strcmp(commitFault, "after-journal") == 0))
+      _exit(93);
 
     localLiteOccCoordinator.publish(this, LocalLiteUnifiedRocksDBSequence(),
                                     writeKeys);
     endOcc();
-
-    if (journalTransactionId != 0 &&
-        !LocalLiteStorageManager::instance().removeJournal(
-            journalTransactionId, error))
-      {
-        transactionStore_.close();
-        return false;
-      }
-
-    for (PendingMap::iterator t = pending.begin(); t != pending.end(); ++t)
-      if (!transactionStore_.invalidateTableStats(t->second.table, error))
-          {
-            transactionStore_.close();
-            return false;
-          }
     transactionStore_.close();
     return true;
   }

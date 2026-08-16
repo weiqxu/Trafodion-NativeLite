@@ -413,6 +413,13 @@ bool openUnifiedTarget(const std::string &root, std::string *error)
 
 } // namespace
 
+struct LocalLiteUnifiedWriteBatch
+{
+  LocalLiteUnifiedWriteBatch() : physical(rocksdb_writebatch_create()) {}
+  ~LocalLiteUnifiedWriteBatch() { rocksdb_writebatch_destroy(physical); }
+  rocksdb_writebatch_t *physical;
+};
+
 std::string LocalLiteUnifiedRocksDBPath(const std::string &root)
 {
   return root + "/transactiondb";
@@ -460,6 +467,61 @@ uint64_t LocalLiteUnifiedRocksDBSequence()
 {
   return unifiedState.baseDb
       ? rocksdb_get_latest_sequence_number(unifiedState.baseDb) : 0;
+}
+
+LocalLiteUnifiedWriteBatch *LocalLiteUnifiedWriteBatchCreate()
+{
+  return new LocalLiteUnifiedWriteBatch();
+}
+
+void LocalLiteUnifiedWriteBatchDestroy(LocalLiteUnifiedWriteBatch *batch)
+{
+  delete batch;
+}
+
+void LocalLiteUnifiedWriteBatchPut(LocalLiteUnifiedWriteBatch *batch,
+                                   rocksdb_t *logicalDb,
+                                   const std::string &key,
+                                   const std::string &value)
+{
+  LogicalDb *logical = reinterpret_cast<LogicalDb *>(logicalDb);
+  const std::string storedKey = physicalKey(logical, key.data(), key.size());
+  rocksdb_writebatch_put(batch->physical, storedKey.data(), storedKey.size(),
+                         value.data(), value.size());
+}
+
+void LocalLiteUnifiedWriteBatchDelete(LocalLiteUnifiedWriteBatch *batch,
+                                      rocksdb_t *logicalDb,
+                                      const std::string &key)
+{
+  LogicalDb *logical = reinterpret_cast<LogicalDb *>(logicalDb);
+  const std::string storedKey = physicalKey(logical, key.data(), key.size());
+  rocksdb_writebatch_delete(batch->physical, storedKey.data(),
+                            storedKey.size());
+}
+
+bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
+                                      bool sync,
+                                      std::string *error)
+{
+  if (!batch || !unifiedState.baseDb)
+    {
+      setStringError(error, "LocalLite unified write batch is unavailable");
+      return false;
+    }
+  rocksdb_writeoptions_t *options = rocksdb_writeoptions_create();
+  rocksdb_writeoptions_set_sync(options, sync ? 1 : 0);
+  char *rocksError = NULL;
+  rocksdb_write(unifiedState.baseDb, options, batch->physical, &rocksError);
+  rocksdb_writeoptions_destroy(options);
+  if (rocksError)
+    {
+      setStringError(error, std::string("commit LocalLite unified batch: ") +
+                            rocksError);
+      rocksdb_free(rocksError);
+      return false;
+    }
+  return true;
 }
 
 bool LocalLiteUnifiedRocksDBCheckpoint(const std::string &path,

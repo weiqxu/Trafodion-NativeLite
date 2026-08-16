@@ -42,7 +42,7 @@ set +e
 fault_output=$(
   env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
     TRAF_LOCAL_STORE_DIR="$store_dir" \
-    TRAF_LOCAL_LITE_LEGACY_COMMIT_FAULT_AFTER_TABLE=1 \
+    TRAF_LOCAL_LITE_COMMIT_FAULT=after-batch \
     LD_LIBRARY_PATH="$sql_lib_dir:$sqf_lib_dir:${LD_LIBRARY_PATH:-}" \
     "$sqlci" <<'SQL'
 BEGIN WORK;
@@ -54,14 +54,13 @@ SQL
 )
 fault_rc=$?
 set -e
-[[ $fault_rc -eq 90 ]] || {
+[[ $fault_rc -eq 93 ]] || {
   echo "$fault_output" >&2
-  fail "commit fault exited with $fault_rc instead of 90"
+  fail "commit fault exited with $fault_rc instead of 93"
 }
 
-# Opening the next SQL process must replay the durable journal before it can
-# observe either table. The keyless A table was already published when the
-# process stopped, while B still needs replay.
+# The process stopped after the one physical write batch. A restart must see
+# both logical tables, never a per-table prefix of the transaction.
 recovery_output=$(run_sqlci <<'SQL'
 SELECT id, value FROM M12_CRASH_A ORDER BY id;
 SELECT id, value FROM M12_CRASH_B ORDER BY id;
@@ -76,8 +75,8 @@ if grep -q '\*\*\* ERROR' <<<"$recovery_output" ||
   fail "startup did not recover the complete SQL transaction"
 fi
 
-# A second restart proves replay is idempotent and the completed journal was
-# removed rather than duplicating either base row or its indexes.
+# A second restart proves the atomic batch did not duplicate base rows or
+# indexes and did not leave a recovery artifact.
 idempotent_output=$(run_sqlci <<'SQL'
 SELECT COUNT(*) FROM M12_CRASH_A;
 SELECT COUNT(*) FROM M12_CRASH_B;

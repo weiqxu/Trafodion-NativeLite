@@ -123,10 +123,10 @@ for profile in new-order payment delivery; do
     mkdir -p "$active_store"
     cp -a "$base_store/." "$active_store/"
     if [[ "$point" == before ]]; then
-      fault=before-journal
+      fault=before-batch
       expected_server_rc=92
     else
-      fault=after-journal
+      fault=after-batch
       expected_server_rc=93
     fi
     start_server "$fault"

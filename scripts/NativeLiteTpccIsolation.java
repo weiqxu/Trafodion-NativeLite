@@ -118,7 +118,7 @@ public final class NativeLiteTpccIsolation {
       updateBalance(first, 22, original.add(BigDecimal.ONE));
       updateBalance(second, 22, original.add(BigDecimal.TEN));
       first.commit();
-      expectRestart(second, "row changed");
+      expectRestart(second, "serializable validation failed");
     }
   }
 

@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a local-lite-m15b local-lite-m15c local-lite-m15d local-lite-m15e
+.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a local-lite-m15b local-lite-m15c local-lite-m15d local-lite-m15e local-lite-m15f
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 M14_REPORT_DIR ?= /tmp/traf-local-lite-m14-report
 
@@ -145,6 +145,11 @@ local-lite-m15d: local-lite-m15c
 local-lite-m15e: local-lite-m15d
 	@echo "Running M15E transactional secondary-index checks"
 	scripts/test-local-lite-occ-validation.sh
+
+local-lite-m15f: local-lite-m15e
+	@echo "Running M15F atomic delta-commit checks"
+	scripts/test-local-lite-occ-validation.sh
+	scripts/test-local-lite-sql-commit-recovery.sh
 
 package: 
 	@echo "Packaging Trafodion components"
