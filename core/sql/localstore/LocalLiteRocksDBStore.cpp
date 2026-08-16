@@ -4481,6 +4481,10 @@ public:
       nextLocalTxnId_(1),
       localTxnId_(0),
       beginSequence_(0),
+      pointReads_(0),
+      missingPointReads_(0),
+      fullScans_(0),
+      indexRangeReads_(0),
       executorTxnId_(LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID)
   {
     pthread_mutex_init(&mutex_, NULL);
@@ -4505,8 +4509,14 @@ public:
 
     statementExecutions_.clear();
     pendingTables_.clear();
+    readRanges_.clear();
+    writeKeys_.clear();
     localTxnId_ = 0;
     beginSequence_ = 0;
+    pointReads_ = 0;
+    missingPointReads_ = 0;
+    fullScans_ = 0;
+    indexRangeReads_ = 0;
     executorTxnId_ = LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
     active_ = false;
     transactionStore_.close();
@@ -4554,6 +4564,12 @@ public:
         }
 
       pendingTables_.clear();
+      readRanges_.clear();
+      writeKeys_.clear();
+      pointReads_ = 0;
+      missingPointReads_ = 0;
+      fullScans_ = 0;
+      indexRangeReads_ = 0;
       localTxnId_ = nextLocalTxnId_++;
       if (nextLocalTxnId_ == 0)
         nextLocalTxnId_ = 1;
@@ -4807,6 +4823,21 @@ public:
                    : LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
   }
 
+  bool occState(LocalLiteOccState *state)
+  {
+    if (!state)
+      return false;
+    LocalLiteMutexGuard guard(&mutex_);
+    state->startSequence = beginSequence_;
+    state->readRanges = readRanges_.size();
+    state->writeKeys = writeKeys_.size();
+    state->pointReads = pointReads_;
+    state->missingPointReads = missingPointReads_;
+    state->fullScans = fullScans_;
+    state->indexRangeReads = indexRangeReads_;
+    return active_;
+  }
+
   bool insertRow(LocalLiteRocksDBStore *store,
                  const LocalLiteTableDef &table,
                  const std::string &encodedRow,
@@ -4879,6 +4910,8 @@ public:
     LocalLiteRow row;
     row.rowId = pending.nextRowId++;
     row.value = encodedRow;
+    if (!recordRowWriteLocked(pending.table, row, error))
+      return false;
     pending.rows.push_back(row);
     if (rowId)
       *rowId = row.rowId;
@@ -4908,6 +4941,13 @@ public:
 
     for (size_t i = 0; i < mutations.size(); i++)
       {
+        LocalLiteRow after;
+        after.rowId = mutations[i].before.rowId;
+        after.value = mutations[i].after;
+        if (!recordRowWriteLocked(pending.table, mutations[i].before,
+                                  error) ||
+            !recordRowWriteLocked(pending.table, after, error))
+          return false;
         bool merged = false;
         for (size_t rowIndex = 0; rowIndex < pending.rows.size(); rowIndex++)
           if (pending.rows[rowIndex].rowId == mutations[i].before.rowId &&
@@ -4959,6 +4999,8 @@ public:
 
     for (size_t i = 0; i < rows.size(); i++)
       {
+        if (!recordRowWriteLocked(pending.table, rows[i], error))
+          return false;
         bool merged = false;
         for (size_t rowIndex = 0; rowIndex < pending.rows.size(); rowIndex++)
           if (pending.rows[rowIndex].rowId == rows[i].rowId &&
@@ -5014,6 +5056,7 @@ public:
         {
           readOwner = this;
           readExecutionId = localTxnId_;
+          recordFullScanLocked(table);
         }
     }
 
@@ -5082,6 +5125,7 @@ public:
         {
           readOwner = this;
           readExecutionId = localTxnId_;
+          recordReadPointLocked(table, storageKey);
           PendingMap::iterator it = pendingTables_.find(tableKey(table));
           if (it != pendingTables_.end())
             {
@@ -5147,11 +5191,112 @@ public:
         }
     }
 
-    return store->getRowByKey(table, storageKey, readOwner,
-                              readExecutionId, row, found, error);
+    if (!store->getRowByKey(table, storageKey, readOwner,
+                            readExecutionId, row, found, error))
+      return false;
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (active_ && !*found)
+        missingPointReads_++;
+    }
+    return true;
   }
 
 private:
+  struct OccReadRange
+  {
+    OccReadRange() : objectUid(0), full(false) {}
+    uint64_t objectUid;
+    std::string start;
+    std::string end;
+    bool full;
+  };
+
+  struct OccReadRangeLess
+  {
+    bool operator()(const OccReadRange &left,
+                    const OccReadRange &right) const
+    {
+      if (left.objectUid != right.objectUid)
+        return left.objectUid < right.objectUid;
+      if (left.full != right.full)
+        return left.full < right.full;
+      if (left.start != right.start)
+        return left.start < right.start;
+      return left.end < right.end;
+    }
+  };
+
+  typedef std::pair<uint64_t, std::string> OccWriteKey;
+  typedef std::set<OccReadRange, OccReadRangeLess> OccReadSet;
+  typedef std::set<OccWriteKey> OccWriteSet;
+
+  void recordReadPointLocked(const LocalLiteTableDef &table,
+                             const std::string &key)
+  {
+    OccReadRange range;
+    range.objectUid = table.objectUid;
+    range.start = key;
+    range.end = key;
+    readRanges_.insert(range);
+    pointReads_++;
+  }
+
+  void recordFullScanLocked(const LocalLiteTableDef &table)
+  {
+    OccReadRange range;
+    range.objectUid = table.objectUid;
+    range.full = true;
+    readRanges_.insert(range);
+    fullScans_++;
+  }
+
+  void recordWriteKeyLocked(const LocalLiteTableDef &table,
+                            const std::string &key)
+  {
+    writeKeys_.insert(std::make_pair(table.objectUid, key));
+    // Trafodion adds every write to its scan/read set so two blind writers
+    // still conflict under optimistic validation.
+    OccReadRange range;
+    range.objectUid = table.objectUid;
+    range.start = key;
+    range.end = key;
+    readRanges_.insert(range);
+  }
+
+  bool recordRowWriteLocked(const LocalLiteTableDef &table,
+                            const LocalLiteRow &row,
+                            std::string *error)
+  {
+    std::string rowKey;
+    if (table.primaryKeyColumns.empty())
+      appendUint64(rowKey, row.rowId);
+    else if (!LocalLiteBuildPrimaryKey(table, row.value, &rowKey, error))
+      return false;
+    recordWriteKeyLocked(table, rowKey);
+
+    for (size_t keyIndex = 0;
+         keyIndex < table.uniqueKeyColumns.size(); keyIndex++)
+      {
+        std::string uniqueKey;
+        bool hasKey = false;
+        if (!LocalLiteBuildUniqueKey(table, row.value,
+                                     table.uniqueKeyColumns[keyIndex],
+                                     keyIndex, &uniqueKey, &hasKey, error))
+          return false;
+        if (hasKey)
+          recordWriteKeyLocked(table, uniqueKey);
+      }
+
+    std::vector<LocalLitePhysicalIndexEntry> entries;
+    if (!buildSecondaryIndexEntries(table, row.value, rowKey,
+                                    &entries, error))
+      return false;
+    for (size_t i = 0; i < entries.size(); i++)
+      recordWriteKeyLocked(table, entries[i].key);
+    return true;
+  }
+
   struct PendingTable
   {
     PendingTable() : initialized(false), nextRowId(0) {}
@@ -5311,6 +5456,12 @@ private:
   uint64_t nextLocalTxnId_;
   uint64_t localTxnId_;
   uint64_t beginSequence_;
+  OccReadSet readRanges_;
+  OccWriteSet writeKeys_;
+  uint64_t pointReads_;
+  uint64_t missingPointReads_;
+  uint64_t fullScans_;
+  uint64_t indexRangeReads_;
   int64_t executorTxnId_;
   PendingMap pendingTables_;
   std::map<const void *, uint64_t> statementExecutions_;
@@ -8281,6 +8432,12 @@ int64_t LocalLiteTxnManager::currentExecutorTxnId(
 {
   return txnContext ? txnContext->currentExecutorTxnId()
                     : INVALID_EXECUTOR_TXN_ID;
+}
+
+bool LocalLiteTxnManager::occState(LocalLiteTxnContext *txnContext,
+                                   LocalLiteOccState *state)
+{
+  return txnContext && txnContext->occState(state);
 }
 
 void LocalLiteTxnManager::beginStatement(LocalLiteTxnContext *txnContext,

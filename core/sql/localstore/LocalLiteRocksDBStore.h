@@ -112,6 +112,24 @@ struct LocalLiteRowMutation
   std::string after;
 };
 
+// A bounded, testable view of the SQL-layer OCC state. The actual keys and
+// ranges remain owned by LocalLiteTxnContext; callers use these counters for
+// qualification and leak/lifecycle checks only.
+struct LocalLiteOccState
+{
+  LocalLiteOccState()
+    : startSequence(0), readRanges(0), writeKeys(0), pointReads(0),
+      missingPointReads(0), fullScans(0), indexRangeReads(0) {}
+
+  uint64_t startSequence;
+  uint64_t readRanges;
+  uint64_t writeKeys;
+  uint64_t pointReads;
+  uint64_t missingPointReads;
+  uint64_t fullScans;
+  uint64_t indexRangeReads;
+};
+
 struct LocalLiteColumnStatsDef
 {
   LocalLiteColumnStatsDef()
@@ -536,6 +554,8 @@ public:
   static bool active(LocalLiteTxnContext *txnContext);
   static uint64_t currentLocalTxnId(LocalLiteTxnContext *txnContext);
   static int64_t currentExecutorTxnId(LocalLiteTxnContext *txnContext);
+  static bool occState(LocalLiteTxnContext *txnContext,
+                       LocalLiteOccState *state);
   static void beginStatement(LocalLiteTxnContext *txnContext,
                              const void *statementOwner,
                              uint64_t statementExecutionId);

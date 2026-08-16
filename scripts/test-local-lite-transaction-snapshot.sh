@@ -324,6 +324,23 @@ int main()
       !getFound(&ownWriteScan, table, pendingRowId, true) ||
       !getFound(&ownWriteScan, table, 2, false))
     return 1;
+  LocalLiteOccState occState;
+  if (!LocalLiteTxnManager::occState(txnContext, &occState) ||
+      occState.startSequence == 0 || occState.fullScans == 0 ||
+      occState.pointReads == 0 || occState.missingPointReads == 0 ||
+      occState.readRanges == 0 || occState.writeKeys == 0)
+    {
+      fprintf(stderr,
+              "incomplete OCC state: start=%llu ranges=%llu writes=%llu "
+              "points=%llu missing=%llu scans=%llu\n",
+              static_cast<unsigned long long>(occState.startSequence),
+              static_cast<unsigned long long>(occState.readRanges),
+              static_cast<unsigned long long>(occState.writeKeys),
+              static_cast<unsigned long long>(occState.pointReads),
+              static_cast<unsigned long long>(occState.missingPointReads),
+              static_cast<unsigned long long>(occState.fullScans));
+      return 1;
+    }
   finishStatement(txnContext, &ownWriteStatement, 13);
   ownWriteScanStore.close();
 
@@ -344,6 +361,13 @@ int main()
   if (!LocalLiteTxnManager::begin(txnContext, &error))
     {
       fprintf(stderr, "second begin transaction failed: %s\n", error.c_str());
+      return 1;
+    }
+  if (!LocalLiteTxnManager::occState(txnContext, &occState) ||
+      occState.readRanges != 0 || occState.writeKeys != 0 ||
+      occState.pointReads != 0 || occState.fullScans != 0)
+    {
+      fprintf(stderr, "OCC state leaked across transaction boundary\n");
       return 1;
     }
 
