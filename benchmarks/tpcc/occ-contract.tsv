@@ -1,0 +1,14 @@
+contract_version	1
+isolation_model	trafodion_mvcc_occ
+reference_state	core/sqf/src/seatrans/hbase-trx/src/main/java/org/apache/hadoop/hbase/regionserver/transactional/TrxTransactionState.java.tmpl
+reference_endpoint	core/sqf/src/seatrans/hbase-trx/src/main/java/org/apache/hadoop/hbase/coprocessor/transactional/TrxRegionEndpoint.java.tmpl
+snapshot_scope	transaction_unified_transactiondb
+validation_scope	committed_writes_after_start_sequence
+conflict_policy	read_range_intersects_committed_write_key
+write_write_policy	writes_are_added_to_read_set
+retry_sqlstate	40001
+storage_atomicity	unified_transactiondb_write_batch
+sscc	disabled
+rocksdb_optimistic_transactiondb	disabled
+process_boundary	single_process_exclusive_store_owner
+benchmark_claim	tpc-c-like

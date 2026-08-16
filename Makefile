@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14
+.PHONY: all local-lite local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 M14_REPORT_DIR ?= /tmp/traf-local-lite-m14-report
 
@@ -124,6 +124,10 @@ local-lite-m14: TPCC_M14F_ARTIFACT_DIR := $(M14_REPORT_DIR)
 local-lite-m14: local-lite-m10 local-lite-m11 local-lite-m12 local-lite-m13 local-lite-m14f
 	@echo "Composing M14 aggregate qualification report"
 	scripts/test-local-lite-tpcc-qualification.sh "$(M14_REPORT_DIR)"
+
+local-lite-m15a:
+	@echo "Running M15A Trafodion MVCC/OCC contract checks"
+	scripts/test-local-lite-occ-contract.sh
 
 package: 
 	@echo "Packaging Trafodion components"

@@ -1,0 +1,16 @@
+metric	unit	required
+transactions_started	count	yes
+transactions_committed	count	yes
+transactions_aborted_conflict	count	yes
+point_reads	count	yes
+missing_point_reads	count	yes
+range_reads	count	yes
+full_scans	count	yes
+index_range_reads	count	yes
+read_ranges	count	yes
+write_keys	count	yes
+validation_candidates	count	yes
+validation_conflicts	count	yes
+history_overflow_aborts	count	yes
+validation_latency_us	microseconds	yes
+publication_latency_us	microseconds	yes

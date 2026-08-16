@@ -1031,10 +1031,13 @@ orchestration remain later work.
 
 Remaining, in implementation order:
 
-1. Productize the M13/M14 boundary with service drain/upgrade,
+1. Complete M15 Trafodion MVCC/OCC concurrency and Release TPC-C-like
+   qualification, replacing database-wide validation and client writer
+   admission without introducing SSCC.
+2. Productize the M13/M14 boundary with service drain/upgrade,
    active-layout backup controls, recovery-journal consolidation, and security
    hardening.
-2. Continue portable SQL compatibility increments, beginning with the
+3. Continue portable SQL compatibility increments, beginning with the
    single-byte `TRIM`/`LTRIM`/`RTRIM` family.
 
 The authoritative milestone definitions and completion gates are in

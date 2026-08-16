@@ -92,3 +92,18 @@ repeatable TPC-C-like support, and failed formal-compliance requirements. The
 aggregate report embeds the actual workload and operations reports, revision
 hashes, isolation/crash summary, deviation-manifest reference, and the explicit
 `official_tpmc: not_claimed` boundary.
+
+## M15 Trafodion MVCC/OCC contract
+
+M15 replaces M14D's database-wide sequence equality check with the original
+Trafodion optimistic validation model. A transaction reads from one unified
+TransactionDB snapshot, records point and predicate ranges, and at commit
+checks only write keys published after its start sequence. Writes are also
+reads for conflict purposes, matching `TrxTransactionState` write ordering.
+
+`occ-contract.tsv` is the machine-readable isolation contract and
+`occ-metrics.tsv` fixes the counters required in the M15 qualification report.
+This design is not SSCC and does not select RocksDB OptimisticTransactionDB;
+TransactionDB remains the snapshot and atomic persistence layer. Run
+`make local-lite-m15a` to validate the contract against the retained Trafodion
+reference implementation.

@@ -481,9 +481,21 @@ transactions to avoid the disclosed database-wide validator's false
 independent conflicts. These are explicit non-compliant performance boundaries,
 not `tpmC`. M14G now makes M10-M13 and M14A-M14F explicit aggregate inputs,
 embeds the workload/operations evidence in one report, and separates functional,
-TPC-C-like, and failed formal-compliance claims. The immediate transaction work
-is now productizing backup control, journal consolidation, and service/security
-boundaries rather than strengthening the benchmark label.
+TPC-C-like, and failed formal-compliance claims.
+
+The next transaction milestone is M15. It replaces the conservative database-
+wide validator and client writer admission with Trafodion's original MVCC/OCC
+rule: retain one transaction snapshot, record point and scan ranges, and check
+them only against writes committed after the transaction start sequence.
+TransactionDB remains the atomic storage layer; M15 does not introduce SSCC or
+RocksDB OptimisticTransactionDB. Backup control and service/security boundaries
+remain separate productization work.
+
+M15 is split into seven independently gated commits: contract and metrics,
+transaction-wide snapshots, read/write sets, OCC validation, transactional
+index reads, atomic delta publication, and Release TPC-C-like qualification.
+The final engineering gate uses 32 warehouses and 32 independently scheduled
+terminals; official TPC-C or tpmC claims remain excluded.
 
 The transaction implementation order for M14 is:
 
