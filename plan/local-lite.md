@@ -1061,15 +1061,18 @@ The authoritative milestone definitions and completion gates are in
     certification or an official `tpmC` claim.
 
 - [ ] **Complete M16 Stock-Level range aggregation and index optimization.**
-  - [ ] Pin the two-phase range-to-point contract and machine-readable metrics.
-  - [ ] Add and validate the ordered `TPCC_ORDER_LINE_STOCK_IX` access path.
-  - [ ] Replace the join/full-scan Stock-Level statement with a transaction-wide
+  - [x] Pin the two-phase range-to-point contract and machine-readable metrics.
+  - [x] Add and validate the ordered `TPCC_ORDER_LINE_STOCK_IX` access path.
+  - [x] Replace the join/full-scan Stock-Level statement with a transaction-wide
     range scan, distinct item aggregation, and stock primary-key point reads.
-  - [ ] Prove the optimizer selects the ordered range path and that the
+  - [x] Prove the optimizer selects the ordered range path and that the
     implementation preserves one MVCC/OCC snapshot and join-equivalent results.
-  - [ ] Add M16 performance/plan gates and rerun the M15 Release qualification
-    with Stock-Level full scans at zero and p95 recorded separately from the
-    production 2-second target.
+  - [x] Add M16 performance/plan gates for rerunning the M15 Release
+    qualification with Stock-Level full scans at zero and p95 recorded
+    separately from the production 2-second target.
+  - [ ] Complete the Release runtime evidence on a host that permits the
+    NativeLite TCP listener; the current host returns `Operation not permitted`
+    during server socket creation.
   - [ ] Keep formal TPC-C compliance and `tpmC` claims excluded.
 
 - [x] **Complete M14 TPC-C-like qualification for the supported single-node

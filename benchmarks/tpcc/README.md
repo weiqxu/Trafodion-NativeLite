@@ -134,3 +134,8 @@ The first phase ranges over the most recent 20 orders using
 second phase performs `TPCC_STOCK` primary-key point reads under the same
 MVCC/OCC snapshot. The result must remain equivalent to the original join and
 Stock-Level full scans are disallowed by the M16 gate.
+
+The M16 implementation, SQLCI optimizer proof, and staged Makefile gates are
+committed. The Release workload gate is not yet evidenced on this host because
+the server cannot create its TCP listener (`Operation not permitted`); no
+throughput or p95 improvement is claimed until that gate runs successfully.

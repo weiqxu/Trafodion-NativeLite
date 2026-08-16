@@ -528,6 +528,10 @@ equivalent to the original join/count-distinct statement.
 
 M16A-M16G are independently committed: contract and plan, schema/index,
 transaction query path, optimizer-plan proof, qualification gate, performance
-evidence, and final documentation. The gate must show zero Stock-Level full
-scans, preserve all five transaction profiles, and retain the separate
-50 TPS and 2-second production targets without claiming they are met.
+evidence, and final documentation. The implementation and SQLCI plan gate are
+complete. The Release runtime gate still requires a host that permits the
+NativeLite TCP listener; this host returns `Operation not permitted` during
+server startup, so no performance result is claimed here. A successful gate
+must show zero Stock-Level full scans, preserve all five transaction profiles,
+and retain the separate 50 TPS and 2-second production targets without
+claiming they are met.

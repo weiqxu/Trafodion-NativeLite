@@ -975,8 +975,10 @@ admission.
 
 ### Milestone 16: Stock-Level Range Aggregation and Index Optimization
 
-Status: in progress. M16 addresses the M15 performance bottleneck without
-changing its Trafodion MVCC/OCC transaction model.
+Status: implementation complete; Release runtime evidence is pending an
+environment that permits the NativeLite TCP listener. M16 addresses the M15
+performance bottleneck without changing its Trafodion MVCC/OCC transaction
+model.
 
 - M16A fixes `stock-level-contract.tsv`, optimization metrics, phase commits,
   and the zero-full-scan policy.
@@ -990,6 +992,9 @@ changing its Trafodion MVCC/OCC transaction model.
 - M16E adds the M16 plan and correctness gate to the build surface.
 - M16F runs the Release workload, records scan/latency deltas, and enforces
   zero Stock-Level full scans while retaining production targets as targets.
+  The current host reaches the Release build but the runtime gate is blocked
+  by `NativeLite server startup failed: create TCP socket: Operation not
+  permitted`; no substitute performance evidence is accepted.
 - M16G synchronizes all roadmap and benchmark documentation and records the
   final evidence. Formal TPC-C and `tpmC` claims remain excluded.
 

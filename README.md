@@ -142,6 +142,11 @@ reads in one OCC transaction snapshot. The M16 gate requires join-equivalent
 results and zero Stock-Level full scans; the 50 TPS and 2-second production
 targets remain explicit targets until measured.
 
+M16 implementation and plan-level validation are committed. Release runtime
+qualification remains pending because this host rejects the NativeLite TCP
+listener with `Operation not permitted`; no M16 throughput result is reported
+until the runtime gate can execute.
+
 ### Functional boundary
 
 | Area | Validated local-lite surface | Not currently claimed |
