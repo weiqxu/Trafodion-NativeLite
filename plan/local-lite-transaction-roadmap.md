@@ -502,7 +502,7 @@ but does not meet the separate production targets of 50 TPS and
 
 The next transaction/productization order is:
 
-1. Remove Stock-Level full scans and add an index/range aggregate path.
+1. Complete M16's index-backed Stock-Level range aggregation path.
 2. Reach the recorded 50 TPS and per-profile p95 production targets on a
    controlled host with longer samples and full environment disclosure.
 3. Add service drain/upgrade, active-layout backup controls, recovery-journal
@@ -513,3 +513,21 @@ The next transaction/productization order is:
 The aggregate transaction gate is `make local-lite-m15`; detailed A-G phase
 and claim boundaries are authoritative in
 `plan/local-lite-legacy-regress-roadmap.md`.
+
+## Milestone 16: Stock-Level range aggregation and index optimization
+
+M16 is the first optimization milestone after the M15 OCC baseline. It targets
+the observed Stock-Level p95 of 135.075 seconds and the associated full-scan
+path; it does not change the Trafodion MVCC/OCC contract or introduce SSCC.
+
+The implementation is deliberately two-phase: an ordered range over the last
+20 orders in `TPCC_ORDER_LINE`, followed by primary-key point reads in
+`TPCC_STOCK` for distinct `(supply warehouse,item)` pairs. Both phases remain
+inside the same transaction-wide snapshot, and the result is required to be
+equivalent to the original join/count-distinct statement.
+
+M16A-M16G are independently committed: contract and plan, schema/index,
+transaction query path, optimizer-plan proof, qualification gate, performance
+evidence, and final documentation. The gate must show zero Stock-Level full
+scans, preserve all five transaction profiles, and retain the separate
+50 TPS and 2-second production targets without claiming they are met.

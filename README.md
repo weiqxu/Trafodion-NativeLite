@@ -135,6 +135,13 @@ This completes M15's correctness and repeatability scope, but is far below the
 50 TPS and 1/0.5/0.5/2/2 s production targets. It is not a `tpmC` result or a
 production-readiness claim.
 
+M16 is now the active optimization milestone. It removes the Stock-Level
+join/full-scan bottleneck through `TPCC_ORDER_LINE_STOCK_IX`, a range scan over
+recent order lines, distinct item aggregation, and stock primary-key point
+reads in one OCC transaction snapshot. The M16 gate requires join-equivalent
+results and zero Stock-Level full scans; the 50 TPS and 2-second production
+targets remain explicit targets until measured.
+
 ### Functional boundary
 
 | Area | Validated local-lite surface | Not currently claimed |

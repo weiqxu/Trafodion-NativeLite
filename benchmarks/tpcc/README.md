@@ -123,3 +123,14 @@ zero conflicts/retries/unclassified errors, and 161-214 ms recovery. Five
 profiles have non-zero samples. Stock-Level p95 is 135.075 s and dominates the
 current gap; the configuration records permissive regression thresholds
 separately from the 50 TPS and 1/0.5/0.5/2/2 s production targets.
+
+## M16 Stock-Level optimization
+
+M16 targets the Stock-Level p95 bottleneck with an ordered secondary index and
+a two-phase transaction path. `stock-level-contract.tsv` is normative for the
+query shape and `m16-stock-level.properties` fixes the optimization gate.
+The first phase ranges over the most recent 20 orders using
+`TPCC_ORDER_LINE_STOCK_IX`, deduplicates supply-warehouse/item pairs, and the
+second phase performs `TPCC_STOCK` primary-key point reads under the same
+MVCC/OCC snapshot. The result must remain equivalent to the original join and
+Stock-Level full scans are disallowed by the M16 gate.

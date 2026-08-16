@@ -973,6 +973,26 @@ admission.
 - M15F publishes atomic per-key deltas through TransactionDB and retains the
   durable multi-table recovery decision.
 
+### Milestone 16: Stock-Level Range Aggregation and Index Optimization
+
+Status: in progress. M16 addresses the M15 performance bottleneck without
+changing its Trafodion MVCC/OCC transaction model.
+
+- M16A fixes `stock-level-contract.tsv`, optimization metrics, phase commits,
+  and the zero-full-scan policy.
+- M16B adds `TPCC_ORDER_LINE_STOCK_IX` with the range-leading key order and
+  validates its catalog and physical metadata.
+- M16C changes Stock-Level to an index-backed order-line range scan, distinct
+  `(OL_SUPPLY_W_ID, OL_I_ID)` aggregation, and stock primary-key point reads
+  under one transaction snapshot.
+- M16D proves the optimizer/generator emits the ordered range access path and
+  that the new result equals the original join/count-distinct result.
+- M16E adds the M16 plan and correctness gate to the build surface.
+- M16F runs the Release workload, records scan/latency deltas, and enforces
+  zero Stock-Level full scans while retaining production targets as targets.
+- M16G synchronizes all roadmap and benchmark documentation and records the
+  final evidence. Formal TPC-C and `tpmC` claims remain excluded.
+
 ### M15G: Release OCC Qualification
 
 `make local-lite-m15g` reruns M15A-M15F, builds Release, loads an explicitly

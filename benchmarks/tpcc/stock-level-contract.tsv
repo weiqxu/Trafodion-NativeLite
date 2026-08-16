@@ -1,0 +1,11 @@
+field	value	meaning
+contract_version	1	M16 Stock-Level optimization contract version
+query_shape	order_line_range_to_stock_point	Recent-order-line range followed by stock point lookups
+order_window	20	Number of most recent orders per district
+order_line_access	TPCC_ORDER_LINE_STOCK_IX	Ordered secondary index leading with warehouse,district,order
+stock_access	TPCC_STOCK_PRIMARY	Primary key point lookup by supply warehouse and item
+aggregation	client_distinct_item_ids	Distinct (supply warehouse,item) pairs counted after quantity filter
+snapshot	transaction_wide	Both phases execute in one Trafodion MVCC/OCC transaction snapshot
+full_scan_policy	stock_level_zero	Stock-Level must not require a full table scan
+correctness	join_equivalent	Two-phase result must equal the original join/count-distinct query
+formal_claim	not_claimed	M16 remains a non-audited TPC-C-like engineering qualification

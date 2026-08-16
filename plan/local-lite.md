@@ -1031,8 +1031,8 @@ orchestration remain later work.
 
 Remaining, in implementation order:
 
-1. Optimize the completed M15 OCC runtime toward the recorded production
-   targets, beginning with Stock-Level range aggregation/full-scan removal.
+1. Complete M16 Stock-Level range aggregation and index optimization toward
+   the recorded production targets.
 2. Productize the M13-M15 boundary with service drain/upgrade,
    active-layout backup controls, recovery-journal consolidation, and security
    hardening.
@@ -1059,6 +1059,18 @@ The authoritative milestone definitions and completion gates are in
     1/0.5/0.5/2/2 seconds. The 2026-08-16 baseline is 1.130 TPS and
     Stock-Level p95 is 135.075 seconds; M15 completion is not production SLO
     certification or an official `tpmC` claim.
+
+- [ ] **Complete M16 Stock-Level range aggregation and index optimization.**
+  - [ ] Pin the two-phase range-to-point contract and machine-readable metrics.
+  - [ ] Add and validate the ordered `TPCC_ORDER_LINE_STOCK_IX` access path.
+  - [ ] Replace the join/full-scan Stock-Level statement with a transaction-wide
+    range scan, distinct item aggregation, and stock primary-key point reads.
+  - [ ] Prove the optimizer selects the ordered range path and that the
+    implementation preserves one MVCC/OCC snapshot and join-equivalent results.
+  - [ ] Add M16 performance/plan gates and rerun the M15 Release qualification
+    with Stock-Level full scans at zero and p95 recorded separately from the
+    production 2-second target.
+  - [ ] Keep formal TPC-C compliance and `tpmC` claims excluded.
 
 - [x] **Complete M14 TPC-C-like qualification for the supported single-node
   trusted-local boundary.**
