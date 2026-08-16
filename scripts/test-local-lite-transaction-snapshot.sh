@@ -254,10 +254,16 @@ int main()
   column.nullable = false;
   table.columns.push_back(column);
 
+  LocalLiteTableDef secondTable = table;
+  secondTable.name = "TX_SNAPSHOT_SECOND_T";
+  secondTable.objectUid = 3004;
+
   LocalLiteRocksDBStore setupStore;
   std::string error;
   if (!setupStore.createTable(table, &error) ||
-      !directInsert(&setupStore, table, "before-transaction", 1))
+      !directInsert(&setupStore, table, "before-transaction", 1) ||
+      !setupStore.createTable(secondTable, &error) ||
+      !directInsert(&setupStore, secondTable, "second-before-transaction", 1))
     return 1;
   setupStore.close();
 
@@ -277,7 +283,9 @@ int main()
   firstScanStore.close();
 
   LocalLiteRocksDBStore committedWriter;
-  if (!directInsert(&committedWriter, table, "committed-after-read", 2))
+  if (!directInsert(&committedWriter, table, "committed-after-read", 2) ||
+      !directInsert(&committedWriter, secondTable,
+                    "second-committed-after-begin", 2))
     return 1;
   committedWriter.close();
 
@@ -286,7 +294,11 @@ int main()
   LocalLiteRocksDBStore repeatedScanStore;
   LocalLiteTxn repeatedScan(&repeatedScanStore, txnContext, &secondStatement, 12);
   if (!scanCount(&repeatedScan, table, 1) ||
-      !getFound(&repeatedScan, table, 2, false))
+      !getFound(&repeatedScan, table, 2, false) ||
+      // The second table is first touched after the concurrent commit. It
+      // must still use the snapshot captured at transaction begin.
+      !scanCount(&repeatedScan, secondTable, 1) ||
+      !getFound(&repeatedScan, secondTable, 2, false))
     return 1;
   finishStatement(txnContext, &secondStatement, 12);
   repeatedScanStore.close();

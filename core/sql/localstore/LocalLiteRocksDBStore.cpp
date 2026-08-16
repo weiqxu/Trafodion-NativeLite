@@ -2689,7 +2689,21 @@ public:
     StatementKey key;
     key.owner = statementOwner;
     key.executionId = statementExecutionId;
-    statementSnapshots_[key] = SnapshotMap();
+    SnapshotMap snapshots;
+    StatementSnapshot entry;
+    entry.db = catalogDb_;
+    entry.snapshot = catalogDb_ ? rocksdb_create_snapshot(catalogDb_) : NULL;
+    if (entry.snapshot)
+      {
+        // Every logical catalog/table handle is a prefix view over the same
+        // format-v2 TransactionDB.  Capture one physical snapshot when the
+        // statement (or transaction-owned statement) begins instead of
+        // acquiring unrelated lazy snapshots per logical table.
+        snapshots[std::string()] = entry;
+        traceStatementSnapshot("ACQUIRE", "<unified>",
+                               statementExecutionId);
+      }
+    statementSnapshots_[key] = snapshots;
   }
 
   void endStatement(const void *statementOwner,
@@ -2736,31 +2750,17 @@ public:
         return false;
       }
 
-    SnapshotMap::iterator existing = statement->second.find(path);
-    if (existing != statement->second.end())
+    SnapshotMap::iterator unified = statement->second.find(std::string());
+    if (unified != statement->second.end())
       {
-        if (existing->second.db != db)
-          {
-            setError(error, "local-lite statement snapshot table handle changed");
-            return false;
-          }
-        *snapshot = existing->second.snapshot;
+        *snapshot = unified->second.snapshot;
         traceStatementSnapshot("REUSE", path, statementExecutionId);
         return true;
       }
 
-    StatementSnapshot entry;
-    entry.db = db;
-    entry.snapshot = rocksdb_create_snapshot(db);
-    if (!entry.snapshot)
-      {
-        setError(error, "create local-lite RocksDB statement snapshot failed");
-        return false;
-      }
-    statement->second[path] = entry;
-    *snapshot = entry.snapshot;
-    traceStatementSnapshot("ACQUIRE", path, statementExecutionId);
-    return true;
+    (void) db;
+    setError(error, "create local-lite unified RocksDB snapshot failed");
+    return false;
   }
 
   bool insertRow(const LocalLiteTableDef &table,
@@ -4576,9 +4576,9 @@ public:
       LocalLiteMutexGuard atomicRead(
           LocalLiteStorageManager::instance().mutex());
       beginSequence_ = LocalLiteUnifiedRocksDBSequence();
+      LocalLiteStorageManager::instance().beginStatement(this,
+                                                         transactionId);
     }
-
-    LocalLiteStorageManager::instance().beginStatement(this, transactionId);
     return true;
   }
 
