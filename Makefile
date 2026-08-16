@@ -21,10 +21,11 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-release local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a local-lite-m15b local-lite-m15c local-lite-m15d local-lite-m15e local-lite-m15f local-lite-m15g local-lite-m15
+.PHONY: all local-lite local-lite-release local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a local-lite-m15b local-lite-m15c local-lite-m15d local-lite-m15e local-lite-m15f local-lite-m15g local-lite-m15 local-lite-m16a local-lite-m16b local-lite-m16c local-lite-m16d local-lite-m16e local-lite-m16f local-lite-m16g local-lite-m16
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 M14_REPORT_DIR ?= /tmp/traf-local-lite-m14-report
 M15_REPORT_DIR ?= /tmp/traf-local-lite-m15-report
+M16_REPORT_DIR ?= /tmp/traf-local-lite-m16-report
 
 all:
 	@echo "Building all Trafodion components"
@@ -166,6 +167,42 @@ local-lite-m15g: local-lite-m15f local-lite-release
 
 local-lite-m15: local-lite-m15g
 	@echo "M15 Trafodion MVCC/OCC and Release TPC-C-like checks passed"
+
+local-lite-m16a:
+	@echo "Running M16A Stock-Level optimization contract checks"
+	@test -s benchmarks/tpcc/stock-level-contract.tsv
+	@test -s benchmarks/tpcc/m16-stock-level.properties
+	@awk -F '\t' '$$1 == "full_scan_policy" && $$2 == "stock_level_zero" { found=1 } END { exit !found }' benchmarks/tpcc/stock-level-contract.tsv
+
+local-lite-m16b: local-lite-m16a
+	@echo "Running M16B Stock-Level index checks"
+	scripts/test-local-lite-m16b.sh
+
+local-lite-m16c: local-lite-m16b
+	@echo "Running M16C Stock-Level transaction source checks"
+	scripts/test-local-lite-m16c.sh
+
+local-lite-m16d: local-lite-m16c
+	@echo "Running M16D optimizer range and correctness checks"
+	scripts/test-local-lite-m16d.sh
+
+local-lite-m16e: local-lite-m16d
+	@echo "Running M16E telemetry and qualification contract checks"
+	scripts/test-local-lite-m16e.sh
+
+local-lite-m16f: local-lite-m16e local-lite-release
+	@echo "Running M16F Release Stock-Level qualification"
+	TPCC_PROPERTIES="$(CURDIR)/benchmarks/tpcc/m15-production.properties" \
+	TPCC_SCALE=multi LOCAL_LITE_BUILD_TYPE=release \
+	TPCC_ARTIFACT_DIR="$(M16_REPORT_DIR)" \
+		scripts/test-local-lite-m16f.sh
+
+local-lite-m16g: local-lite-m16f
+	@echo "Running M16G final evidence and regression checks"
+	scripts/test-local-lite-m16g.sh "$(M16_REPORT_DIR)"
+
+local-lite-m16: local-lite-m16g
+	@echo "M16 Stock-Level range aggregation and index optimization checks passed"
 
 package: 
 	@echo "Packaging Trafodion components"

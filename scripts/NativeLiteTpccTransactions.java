@@ -28,6 +28,18 @@ public final class NativeLiteTpccTransactions {
   private static final int STOCK_LEVEL_ORDER_WINDOW = 20;
   private static final int RETRY_LIMIT = 3;
   private static final AtomicInteger RETRIES = new AtomicInteger();
+  private static final AtomicInteger STOCK_LEVEL_RANGE_SCANS =
+      new AtomicInteger();
+  private static final AtomicInteger STOCK_LEVEL_POINT_READS =
+      new AtomicInteger();
+
+  static int stockLevelRangeScans() {
+    return STOCK_LEVEL_RANGE_SCANS.get();
+  }
+
+  static int stockLevelPointReads() {
+    return STOCK_LEVEL_POINT_READS.get();
+  }
 
   private interface SqlOperation {
     void run() throws SQLException;
@@ -454,6 +466,7 @@ public final class NativeLiteTpccTransactions {
         orderLines.setInt(2, district);
         orderLines.setInt(3, Math.max(1, next - STOCK_LEVEL_ORDER_WINDOW));
         orderLines.setInt(4, next);
+        STOCK_LEVEL_RANGE_SCANS.incrementAndGet();
         Set<String> seenPairs = new HashSet<>();
         List<int[]> stockKeys = new ArrayList<>();
         try (ResultSet result = orderLines.executeQuery()) {
@@ -472,6 +485,7 @@ public final class NativeLiteTpccTransactions {
             "WHERE S_W_ID=? AND S_I_ID=?");
         Set<Integer> qualifyingItems = new HashSet<>();
         for (int[] key : stockKeys) {
+          STOCK_LEVEL_POINT_READS.incrementAndGet();
           stock.setInt(1, key[0]);
           stock.setInt(2, key[1]);
           try (ResultSet result = stock.executeQuery()) {

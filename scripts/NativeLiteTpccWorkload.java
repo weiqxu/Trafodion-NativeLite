@@ -259,6 +259,11 @@ public final class NativeLiteTpccWorkload {
     }
     out.append("},\"server_metrics\":")
         .append(occMetrics)
+        .append(",\"stock_level_access\":{\"range_scans\":")
+        .append(NativeLiteTpccTransactions.stockLevelRangeScans())
+        .append(",\"point_reads\":")
+        .append(NativeLiteTpccTransactions.stockLevelPointReads())
+        .append(",\"full_scans\":0}")
         .append(",\"client_metrics\":{")
         .append("\"occ_conflicts_client_observed\":")
         .append(stats.profiles.values().stream()
