@@ -10,6 +10,8 @@ grep -q 'stockLevelRangeScans' "$source_file" ||
   fail "Stock-Level range telemetry is missing"
 grep -q 'stockLevelPointReads' "$source_file" ||
   fail "Stock-Level point-read telemetry is missing"
+grep -q 'stockLevelBatchReads' "$source_file" ||
+  fail "Stock-Level batch-read telemetry is missing"
 grep -q 'stock_level_access' "$workload_file" ||
   fail "workload report does not expose Stock-Level access telemetry"
 grep -q 'full_scans.*0' "$workload_file" ||

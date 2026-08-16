@@ -7,8 +7,10 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 grep -q 'SELECT OL_SUPPLY_W_ID,OL_I_ID FROM TPCC_ORDER_LINE' "$source_file" ||
   fail "Stock-Level range query is missing"
-grep -q 'SELECT S_QUANTITY FROM TPCC_STOCK' "$source_file" ||
-  fail "Stock-Level point lookup is missing"
+grep -q 'SELECT S_I_ID,S_QUANTITY FROM TPCC_STOCK' "$source_file" ||
+  fail "Stock-Level batch point lookup is missing"
+grep -q 'S_I_ID IN (' "$source_file" ||
+  fail "Stock-Level batch point lookup is missing"
 grep -q 'STOCK_LEVEL_ORDER_WINDOW = 20' "$source_file" ||
   fail "Stock-Level order window is not pinned"
 grep -q 'Set<Integer> qualifyingItems' "$source_file" ||

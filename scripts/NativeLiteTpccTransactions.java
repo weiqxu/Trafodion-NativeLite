@@ -32,6 +32,8 @@ public final class NativeLiteTpccTransactions {
       new AtomicInteger();
   private static final AtomicInteger STOCK_LEVEL_POINT_READS =
       new AtomicInteger();
+  private static final AtomicInteger STOCK_LEVEL_BATCH_READS =
+      new AtomicInteger();
 
   static int stockLevelRangeScans() {
     return STOCK_LEVEL_RANGE_SCANS.get();
@@ -39,6 +41,10 @@ public final class NativeLiteTpccTransactions {
 
   static int stockLevelPointReads() {
     return STOCK_LEVEL_POINT_READS.get();
+  }
+
+  static int stockLevelBatchReads() {
+    return STOCK_LEVEL_BATCH_READS.get();
   }
 
   private interface SqlOperation {
@@ -468,32 +474,50 @@ public final class NativeLiteTpccTransactions {
         orderLines.setInt(4, next);
         STOCK_LEVEL_RANGE_SCANS.incrementAndGet();
         Set<String> seenPairs = new HashSet<>();
-        List<int[]> stockKeys = new ArrayList<>();
+        Map<Integer, List<Integer>> itemsByWarehouse = new HashMap<>();
         try (ResultSet result = orderLines.executeQuery()) {
           while (result.next()) {
             int supplyWarehouse = result.getInt(1);
             int item = result.getInt(2);
             String pair = supplyWarehouse + ":" + item;
             if (seenPairs.add(pair)) {
-              stockKeys.add(new int[] {supplyWarehouse, item});
+              itemsByWarehouse.computeIfAbsent(supplyWarehouse,
+                  ignored -> new ArrayList<>()).add(item);
             }
           }
         }
 
-        PreparedStatement stock = prepared(
-            "SELECT S_QUANTITY FROM TPCC_STOCK " +
-            "WHERE S_W_ID=? AND S_I_ID=?");
         Set<Integer> qualifyingItems = new HashSet<>();
-        for (int[] key : stockKeys) {
-          STOCK_LEVEL_POINT_READS.incrementAndGet();
-          stock.setInt(1, key[0]);
-          stock.setInt(2, key[1]);
+        for (Map.Entry<Integer, List<Integer>> entry :
+                 itemsByWarehouse.entrySet()) {
+          List<Integer> items = entry.getValue();
+          StringBuilder sql = new StringBuilder(
+              "SELECT S_I_ID,S_QUANTITY FROM TPCC_STOCK " +
+              "WHERE S_W_ID=? AND S_I_ID IN (");
+          for (int i = 0; i < items.size(); i++) {
+            if (i > 0) sql.append(',');
+            sql.append('?');
+          }
+          sql.append(')');
+          PreparedStatement stock = prepared(sql.toString());
+          stock.setInt(1, entry.getKey());
+          for (int i = 0; i < items.size(); i++) {
+            stock.setInt(i + 2, items.get(i));
+          }
+          STOCK_LEVEL_BATCH_READS.incrementAndGet();
+          Set<Integer> foundItems = new HashSet<>();
           try (ResultSet result = stock.executeQuery()) {
-            require(result.next(), "stock-level stock row does not exist");
-            if (result.getInt(1) < threshold) {
-              qualifyingItems.add(key[1]);
+            while (result.next()) {
+              int item = result.getInt(1);
+              foundItems.add(item);
+              STOCK_LEVEL_POINT_READS.incrementAndGet();
+              if (result.getInt(2) < threshold) {
+                qualifyingItems.add(item);
+              }
             }
           }
+          require(foundItems.size() == items.size(),
+              "stock-level stock batch is missing a row");
         }
         int count = qualifyingItems.size();
         connection.commit();

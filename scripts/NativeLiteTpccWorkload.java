@@ -263,6 +263,8 @@ public final class NativeLiteTpccWorkload {
         .append(NativeLiteTpccTransactions.stockLevelRangeScans())
         .append(",\"point_reads\":")
         .append(NativeLiteTpccTransactions.stockLevelPointReads())
+        .append(",\"batch_reads\":")
+        .append(NativeLiteTpccTransactions.stockLevelBatchReads())
         .append(",\"full_scans\":0}")
         .append(",\"client_metrics\":{")
         .append("\"occ_conflicts_client_observed\":")
