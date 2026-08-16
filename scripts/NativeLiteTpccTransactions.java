@@ -10,8 +10,10 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,6 +25,7 @@ public final class NativeLiteTpccTransactions {
       Timestamp.valueOf("2026-08-15 01:00:00");
   private static final int WAREHOUSE = 1;
   private static final int LINES_PER_ORDER = 5;
+  private static final int STOCK_LEVEL_ORDER_WINDOW = 20;
   private static final int RETRY_LIMIT = 3;
   private static final AtomicInteger RETRIES = new AtomicInteger();
 
@@ -444,22 +447,41 @@ public final class NativeLiteTpccTransactions {
     int stockLevel(int district, int threshold) throws SQLException {
       try {
         int next = nextOrderId(district);
-        PreparedStatement statement = prepared(
-            "SELECT COUNT(DISTINCT L.OL_I_ID) FROM TPCC_ORDER_LINE L " +
-            "JOIN TPCC_STOCK S ON L.OL_SUPPLY_W_ID=S.S_W_ID " +
-            "AND L.OL_I_ID=S.S_I_ID WHERE L.OL_W_ID=? AND L.OL_D_ID=? " +
-            "AND L.OL_O_ID>=? AND L.OL_O_ID<? AND S.S_QUANTITY<?");
-        statement.setInt(1, WAREHOUSE);
-        statement.setInt(2, district);
-        statement.setInt(3, Math.max(1, next - 20));
-        statement.setInt(4, next);
-        statement.setInt(5, threshold);
-        int count;
-        try (ResultSet result = statement.executeQuery()) {
-          require(result.next(), "stock-level query returned no row");
-          count = result.getInt(1);
-          require(count >= 0, "stock-level returned negative count");
+        PreparedStatement orderLines = prepared(
+            "SELECT OL_SUPPLY_W_ID,OL_I_ID FROM TPCC_ORDER_LINE " +
+            "WHERE OL_W_ID=? AND OL_D_ID=? AND OL_O_ID>=? AND OL_O_ID<?");
+        orderLines.setInt(1, WAREHOUSE);
+        orderLines.setInt(2, district);
+        orderLines.setInt(3, Math.max(1, next - STOCK_LEVEL_ORDER_WINDOW));
+        orderLines.setInt(4, next);
+        Set<String> seenPairs = new HashSet<>();
+        List<int[]> stockKeys = new ArrayList<>();
+        try (ResultSet result = orderLines.executeQuery()) {
+          while (result.next()) {
+            int supplyWarehouse = result.getInt(1);
+            int item = result.getInt(2);
+            String pair = supplyWarehouse + ":" + item;
+            if (seenPairs.add(pair)) {
+              stockKeys.add(new int[] {supplyWarehouse, item});
+            }
+          }
         }
+
+        PreparedStatement stock = prepared(
+            "SELECT S_QUANTITY FROM TPCC_STOCK " +
+            "WHERE S_W_ID=? AND S_I_ID=?");
+        Set<Integer> qualifyingItems = new HashSet<>();
+        for (int[] key : stockKeys) {
+          stock.setInt(1, key[0]);
+          stock.setInt(2, key[1]);
+          try (ResultSet result = stock.executeQuery()) {
+            require(result.next(), "stock-level stock row does not exist");
+            if (result.getInt(1) < threshold) {
+              qualifyingItems.add(key[1]);
+            }
+          }
+        }
+        int count = qualifyingItems.size();
         connection.commit();
         return count;
       } catch (SQLException | RuntimeException failure) {
