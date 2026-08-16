@@ -5278,6 +5278,135 @@ public:
     return true;
   }
 
+  bool scanIndexPrefix(LocalLiteRocksDBStore *store,
+                       const LocalLiteTableDef &table,
+                       const std::string &physicalPrefix,
+                       const void *statementOwner,
+                       uint64_t statementExecutionId,
+                       std::vector<LocalLiteRow> *rows,
+                       std::string *error)
+  {
+    std::string endKey = physicalPrefix;
+    size_t pos = endKey.size();
+    while (pos > 0 &&
+           static_cast<unsigned char>(endKey[pos - 1]) == 0xff)
+      pos--;
+    if (pos == 0)
+      {
+        setError(error, "local-lite index prefix has no upper bound");
+        return false;
+      }
+    endKey.resize(pos);
+    endKey[pos - 1] = static_cast<char>(
+        static_cast<unsigned char>(endKey[pos - 1]) + 1);
+    return scanIndexRange(store, table, physicalPrefix, endKey,
+                          statementOwner, statementExecutionId, rows, error);
+  }
+
+  bool scanIndexRange(LocalLiteRocksDBStore *store,
+                      const LocalLiteTableDef &table,
+                      const std::string &startKey,
+                      const std::string &endKey,
+                      const void *statementOwner,
+                      uint64_t statementExecutionId,
+                      std::vector<LocalLiteRow> *rows,
+                      std::string *error)
+  {
+    const void *readOwner = statementOwner;
+    uint64_t readExecutionId = statementExecutionId;
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (active_)
+        {
+          readOwner = this;
+          readExecutionId = localTxnId_;
+        }
+    }
+    if (!store->scanIndexRange(table, startKey, endKey, readOwner,
+                               readExecutionId, rows, error))
+      return false;
+
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_)
+      return true;
+
+    OccReadRange range;
+    range.objectUid = table.objectUid;
+    range.start = startKey;
+    range.end = endKey;
+    readRanges_.insert(range);
+    indexRangeReads_++;
+
+    std::map<std::string, LocalLiteRow> visible;
+    for (size_t i = 0; i < rows->size(); i++)
+      {
+        std::string key;
+        if (!rowStorageKey(table, (*rows)[i], &key, error))
+          return false;
+        visible[key] = (*rows)[i];
+        recordReadPointLocked(table, key);
+      }
+
+    PendingMap::iterator pending = pendingTables_.find(tableKey(table));
+    if (pending != pendingTables_.end())
+      {
+        for (size_t i = 0; i < pending->second.deletes.size(); i++)
+          {
+            std::string key;
+            if (!rowStorageKey(pending->second.table,
+                               pending->second.deletes[i], &key, error))
+              return false;
+            visible.erase(key);
+          }
+        for (size_t i = 0; i < pending->second.updates.size(); i++)
+          {
+            LocalLiteRow after;
+            after.rowId = pending->second.updates[i].before.rowId;
+            after.value = pending->second.updates[i].after;
+            std::string beforeKey;
+            if (!rowStorageKey(pending->second.table,
+                               pending->second.updates[i].before,
+                               &beforeKey, error))
+              return false;
+            visible.erase(beforeKey);
+            bool matches = false;
+            if (!rowMatchesIndexRange(pending->second.table, after,
+                                      startKey, endKey, &matches, error))
+              return false;
+            if (matches)
+              {
+                std::string afterKey;
+                if (!rowStorageKey(pending->second.table, after,
+                                   &afterKey, error))
+                  return false;
+                visible[afterKey] = after;
+              }
+          }
+        for (size_t i = 0; i < pending->second.rows.size(); i++)
+          {
+            bool matches = false;
+            if (!rowMatchesIndexRange(pending->second.table,
+                                      pending->second.rows[i],
+                                      startKey, endKey, &matches, error))
+              return false;
+            if (matches)
+              {
+                std::string key;
+                if (!rowStorageKey(pending->second.table,
+                                   pending->second.rows[i], &key, error))
+                  return false;
+                visible[key] = pending->second.rows[i];
+              }
+          }
+      }
+
+    rows->clear();
+    for (std::map<std::string, LocalLiteRow>::const_iterator row =
+           visible.begin(); row != visible.end(); ++row)
+      rows->push_back(row->second);
+    return true;
+  }
+
   bool getRowByKey(LocalLiteRocksDBStore *store,
                    const LocalLiteTableDef &table,
                    const std::string &storageKey,
@@ -5386,6 +5515,44 @@ private:
     LocalLiteMutexGuard publication(
         LocalLiteStorageManager::instance().mutex());
     localLiteOccCoordinator.end(this);
+  }
+
+  bool rowStorageKey(const LocalLiteTableDef &table,
+                     const LocalLiteRow &row,
+                     std::string *key,
+                     std::string *error)
+  {
+    key->clear();
+    if (table.primaryKeyColumns.empty())
+      {
+        appendUint64(*key, row.rowId);
+        return true;
+      }
+    return LocalLiteBuildPrimaryKey(table, row.value, key, error);
+  }
+
+  bool rowMatchesIndexRange(const LocalLiteTableDef &table,
+                            const LocalLiteRow &row,
+                            const std::string &startKey,
+                            const std::string &endKey,
+                            bool *matches,
+                            std::string *error)
+  {
+    *matches = false;
+    std::string rowKey;
+    if (!rowStorageKey(table, row, &rowKey, error))
+      return false;
+    std::vector<LocalLitePhysicalIndexEntry> entries;
+    if (!buildSecondaryIndexEntries(table, row.value, rowKey,
+                                    &entries, error))
+      return false;
+    for (size_t i = 0; i < entries.size(); i++)
+      if (entries[i].key >= startKey && entries[i].key < endKey)
+        {
+          *matches = true;
+          break;
+        }
+    return true;
   }
 
   void recordReadPointLocked(const LocalLiteTableDef &table,
@@ -8143,6 +8310,18 @@ bool LocalLiteRocksDBStore::scanIndexRange(
     std::vector<LocalLiteRow> *rows,
     std::string *error)
 {
+  return scanIndexRange(table, startKey, endKey, NULL, 0, rows, error);
+}
+
+bool LocalLiteRocksDBStore::scanIndexRange(
+    const LocalLiteTableDef &table,
+    const std::string &startKey,
+    const std::string &endKey,
+    const void *statementOwner,
+    uint64_t statementExecutionId,
+    std::vector<LocalLiteRow> *rows,
+    std::string *error)
+{
   rows->clear();
   if (startKey.size() < 9 || startKey[0] != 'I' ||
       endKey.empty() || endKey <= startKey)
@@ -8158,7 +8337,14 @@ bool LocalLiteRocksDBStore::scanIndexRange(
   if (!db)
     return false;
 
-  const rocksdb_snapshot_t *snapshot = rocksdb_create_snapshot(db);
+  const bool ownsSnapshot = (statementOwner == NULL);
+  const rocksdb_snapshot_t *snapshot = NULL;
+  if (ownsSnapshot)
+    snapshot = rocksdb_create_snapshot(db);
+  else if (!LocalLiteStorageManager::instance().getStatementSnapshot(
+               tablePath(table), db, statementOwner, statementExecutionId,
+               &snapshot, error))
+    return false;
   if (!snapshot)
     {
       setError(error, "create local-lite RocksDB index snapshot failed");
@@ -8189,7 +8375,8 @@ bool LocalLiteRocksDBStore::scanIndexRange(
         {
           rocksdb_iter_destroy(it);
           rocksdb_readoptions_destroy(readOptions);
-          rocksdb_release_snapshot(db, snapshot);
+          if (ownsSnapshot)
+            rocksdb_release_snapshot(db, snapshot);
           return false;
         }
       if (rowsByStorageKey.find(rowKey) != rowsByStorageKey.end())
@@ -8213,7 +8400,8 @@ bool LocalLiteRocksDBStore::scanIndexRange(
         {
           rocksdb_iter_destroy(it);
           rocksdb_readoptions_destroy(readOptions);
-          rocksdb_release_snapshot(db, snapshot);
+          if (ownsSnapshot)
+            rocksdb_release_snapshot(db, snapshot);
           return false;
         }
       else
@@ -8222,7 +8410,8 @@ bool LocalLiteRocksDBStore::scanIndexRange(
         {
           rocksdb_iter_destroy(it);
           rocksdb_readoptions_destroy(readOptions);
-          rocksdb_release_snapshot(db, snapshot);
+          if (ownsSnapshot)
+            rocksdb_release_snapshot(db, snapshot);
           setError(error, "local-lite secondary index references a missing row");
           return false;
         }
@@ -8233,7 +8422,8 @@ bool LocalLiteRocksDBStore::scanIndexRange(
   rocksdb_iter_get_error(it, &err);
   rocksdb_iter_destroy(it);
   rocksdb_readoptions_destroy(readOptions);
-  rocksdb_release_snapshot(db, snapshot);
+  if (ownsSnapshot)
+    rocksdb_release_snapshot(db, snapshot);
   if (!checkRocksError(err, "scan local-lite secondary index", error))
     return false;
   for (std::map<std::string, LocalLiteRow>::const_iterator row =
@@ -8474,6 +8664,37 @@ bool LocalLiteTxn::scanRows(const LocalLiteTableDef &table,
 
   return txnContext_->scanRows(store_, table, statementOwner_,
                                statementExecutionId_, rows, error);
+}
+
+bool LocalLiteTxn::scanIndexPrefix(const LocalLiteTableDef &table,
+                                   const std::string &physicalPrefix,
+                                   std::vector<LocalLiteRow> *rows,
+                                   std::string *error)
+{
+  if (!store_ || !txnContext_)
+    {
+      setError(error, "local-lite index scan missing transaction context");
+      return false;
+    }
+  return txnContext_->scanIndexPrefix(store_, table, physicalPrefix,
+                                      statementOwner_, statementExecutionId_,
+                                      rows, error);
+}
+
+bool LocalLiteTxn::scanIndexRange(const LocalLiteTableDef &table,
+                                  const std::string &startKey,
+                                  const std::string &endKey,
+                                  std::vector<LocalLiteRow> *rows,
+                                  std::string *error)
+{
+  if (!store_ || !txnContext_)
+    {
+      setError(error, "local-lite index scan missing transaction context");
+      return false;
+    }
+  return txnContext_->scanIndexRange(store_, table, startKey, endKey,
+                                     statementOwner_, statementExecutionId_,
+                                     rows, error);
 }
 
 bool LocalLiteTxn::getRowByKey(const LocalLiteTableDef &table,

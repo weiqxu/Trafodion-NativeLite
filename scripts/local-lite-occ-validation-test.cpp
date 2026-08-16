@@ -29,13 +29,14 @@ bool LocalLiteBuildUniqueKey(const LocalLiteTableDef &,
 bool LocalLiteBuildOrderedSecondaryKeyPayload(
     const LocalLiteTableDef &,
     const LocalLiteIndexDef &,
-    const std::string &,
-    std::string *,
+    const std::string &encodedRow,
+    std::string *payload,
     bool *hasKey,
     bool *containsNull,
     std::string *error)
 {
-  if (hasKey) *hasKey = false;
+  if (payload) *payload = encodedRow;
+  if (hasKey) *hasKey = true;
   if (containsNull) *containsNull = false;
   if (error) error->clear();
   return true;
@@ -54,6 +55,15 @@ static std::string rowKey(uint64_t rowId)
   std::string key;
   for (int shift = 56; shift >= 0; shift -= 8)
     key += static_cast<char>((rowId >> shift) & 0xff);
+  return key;
+}
+
+static std::string indexPrefix(uint64_t indexUid, const std::string &value)
+{
+  std::string key("I");
+  for (int shift = 56; shift >= 0; shift -= 8)
+    key += static_cast<char>((indexUid >> shift) & 0xff);
+  key += value;
   return key;
 }
 
@@ -150,6 +160,16 @@ int main()
   LocalLiteTableDef b = a;
   b.name = "OCC_B";
   b.objectUid = 7102;
+  LocalLiteTableDef indexed = a;
+  indexed.name = "OCC_INDEXED";
+  indexed.objectUid = 7103;
+  LocalLiteIndexDef index;
+  index.name = "OCC_INDEXED_IX";
+  index.objectUid = 7201;
+  index.keyEncodingVersion = 2;
+  index.keyColumns.push_back(0);
+  index.descending.push_back(false);
+  indexed.secondaryIndexes.push_back(index);
 
   LocalLiteRocksDBStore setup;
   std::string error;
@@ -157,7 +177,10 @@ int main()
   if (!setup.createTable(a, &error) ||
       !setup.insertRow(a, "a0", &rowId, &error) || rowId != 1 ||
       !setup.createTable(b, &error) ||
-      !setup.insertRow(b, "b0", &rowId, &error) || rowId != 1)
+      !setup.insertRow(b, "b0", &rowId, &error) || rowId != 1 ||
+      !setup.createTable(indexed, &error) ||
+      !setup.insertRow(indexed, "a", &rowId, &error) || rowId != 1 ||
+      !setup.insertRow(indexed, "b", &rowId, &error) || rowId != 2)
     {
       fprintf(stderr, "setup failed: %s\n", error.c_str());
       return 1;
@@ -219,6 +242,52 @@ int main()
       !commit(missingWriter, &error) ||
       !update(&missingReaderStore, missingReader, b, 1, "b-missing-reader") ||
       !expectConflict(missingReader, "missing-key conflict"))
+    return 1;
+
+  // Index reads use the transaction snapshot and overlay pending mutations
+  // without recording a conservative base-table full scan.
+  Context indexOverlay;
+  LocalLiteRocksDBStore indexOverlayStore;
+  if (!begin(indexOverlay)) return 1;
+  LocalLiteTxn indexTxn(&indexOverlayStore, indexOverlay.value);
+  rows.clear();
+  if (!indexTxn.scanIndexPrefix(indexed, indexPrefix(index.objectUid, "a"),
+                                &rows, &error) || rows.size() != 1 ||
+      !update(&indexOverlayStore, indexOverlay, indexed, 1, "z") ||
+      !insert(&indexOverlayStore, indexOverlay, indexed, "ax", 3))
+    return 1;
+  rows.clear();
+  if (!indexTxn.scanIndexPrefix(indexed, indexPrefix(index.objectUid, "a"),
+                                &rows, &error) || rows.size() != 1 ||
+      rows[0].value != "ax")
+    {
+      fprintf(stderr, "transactional index overlay returned wrong rows\n");
+      return 1;
+    }
+  LocalLiteOccState indexState;
+  if (!LocalLiteTxnManager::occState(indexOverlay.value, &indexState) ||
+      indexState.indexRangeReads < 2 || indexState.fullScans != 0 ||
+      !LocalLiteTxnManager::rollback(indexOverlay.value, &error))
+    {
+      fprintf(stderr, "transactional index range was not tracked precisely\n");
+      return 1;
+    }
+
+  // An empty index range still protects against a matching phantom.
+  Context indexReader;
+  Context indexWriter;
+  LocalLiteRocksDBStore indexReaderStore;
+  LocalLiteRocksDBStore indexWriterStore;
+  if (!begin(indexReader) || !begin(indexWriter)) return 1;
+  LocalLiteTxn emptyIndexTxn(&indexReaderStore, indexReader.value);
+  rows.clear();
+  if (!emptyIndexTxn.scanIndexPrefix(indexed,
+                                     indexPrefix(index.objectUid, "q"),
+                                     &rows, &error) || !rows.empty() ||
+      !insert(&indexWriterStore, indexWriter, indexed, "q", 3) ||
+      !commit(indexWriter, &error) ||
+      !update(&indexReaderStore, indexReader, b, 1, "b-index-reader") ||
+      !expectConflict(indexReader, "index phantom conflict"))
     return 1;
 
   // DDL publishes a whole-table write event. A transaction that read the

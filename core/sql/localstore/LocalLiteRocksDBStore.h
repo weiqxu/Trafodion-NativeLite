@@ -477,6 +477,13 @@ private:
                 uint64_t statementExecutionId,
                 std::vector<LocalLiteRow> *rows,
                 std::string *error);
+  bool scanIndexRange(const LocalLiteTableDef &table,
+                      const std::string &startKey,
+                      const std::string &endKey,
+                      const void *statementOwner,
+                      uint64_t statementExecutionId,
+                      std::vector<LocalLiteRow> *rows,
+                      std::string *error);
 
   bool opened_;
 };
@@ -506,6 +513,15 @@ public:
   bool scanRows(const LocalLiteTableDef &table,
                 std::vector<LocalLiteRow> *rows,
                 std::string *error);
+  bool scanIndexPrefix(const LocalLiteTableDef &table,
+                       const std::string &physicalPrefix,
+                       std::vector<LocalLiteRow> *rows,
+                       std::string *error);
+  bool scanIndexRange(const LocalLiteTableDef &table,
+                      const std::string &startKey,
+                      const std::string &endKey,
+                      std::vector<LocalLiteRow> *rows,
+                      std::string *error);
   bool getRowByKey(const LocalLiteTableDef &table,
                    const std::string &storageKey,
                    LocalLiteRow *row,

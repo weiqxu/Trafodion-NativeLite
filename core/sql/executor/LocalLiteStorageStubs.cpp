@@ -60,9 +60,12 @@ static Lng32 localLiteStorageDiagCode(const std::string &message)
 static std::string localLiteScanRowKey(const char *tableName,
                                        ExExeStmtGlobals *globals)
 {
-  char execution[40];
-  snprintf(execution, sizeof(execution), "#%lu",
-           static_cast<unsigned long>(globals->getExecutionCount()));
+  char execution[80];
+  snprintf(execution, sizeof(execution), "#%p#%lu",
+           globals && globals->getContext()
+               ? static_cast<void *>(globals->getContext()) : NULL,
+           static_cast<unsigned long>(globals ? globals->getExecutionCount()
+                                              : 0));
   return std::string(tableName ? tableName : "") + execution;
 }
 
@@ -79,20 +82,7 @@ static bool localLiteTakeScanRow(const std::string &key, LocalLiteRow *row)
   std::map<std::string, std::deque<LocalLiteRow> >::iterator it =
     localLiteScanRows.find(key);
   if (it == localLiteScanRows.end() || it->second.empty())
-    {
-      it = localLiteScanRows.end();
-      for (std::map<std::string, std::deque<LocalLiteRow> >::iterator candidate =
-             localLiteScanRows.begin();
-           candidate != localLiteScanRows.end(); ++candidate)
-        if (!candidate->second.empty())
-          {
-            if (it != localLiteScanRows.end())
-              return false;
-            it = candidate;
-          }
-      if (it == localLiteScanRows.end())
-        return false;
-    }
+    return false;
   *row = it->second.front();
   it->second.pop_front();
   if (it->second.empty())
@@ -569,18 +559,12 @@ private:
             return false;
           }
         *handledIndexLookup = true;
-        // Pending transaction mutations have not reached the physical index.
-        // A visible-row scan plus the retained executor predicate preserves
-        // read-your-writes semantics until transactional index overlays exist.
-        if (LocalLiteTxnManager::active(localLiteTxnContext(
-                getGlobals()->castToExExeStmtGlobals())))
-          return txn->scanRows(table_, &rows_, error);
         if (!indexRanges.empty())
-          return store_.scanIndexRange(table_, indexRanges[0].first,
-                                       indexRanges[0].second,
-                                       &rows_, error);
-        return store_.scanIndexPrefix(table_, indexPrefixes[0],
-                                      &rows_, error);
+          return txn->scanIndexRange(table_, indexRanges[0].first,
+                                     indexRanges[0].second,
+                                     &rows_, error);
+        return txn->scanIndexPrefix(table_, indexPrefixes[0],
+                                    &rows_, error);
       }
 
     for (size_t i = 0; i < storageKeys.size(); i++)
