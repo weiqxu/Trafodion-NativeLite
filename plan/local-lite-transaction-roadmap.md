@@ -460,7 +460,7 @@ orchestration, active-layout backup scheduling, and journal consolidation
 remain separate productization work. This remains a single-node boundary, not
 node-level HA or distributed execution.
 
-M14 TPC-C qualification is now the immediate transaction/concurrency target.
+M14 TPC-C-like qualification is complete for the declared single-node boundary.
 M14D proves the Level 3 boundary for the current functional profiles using
 stable snapshots, exact key conflicts, and the disclosed database-wide
 sequence validator. Its matrix covers dirty writes, dirty reads,
@@ -479,7 +479,11 @@ checkpoint, clean/unclean restart, restored-checkpoint verification, and
 disk-watermark rejection. The workload uses fair writer admission around whole
 transactions to avoid the disclosed database-wide validator's false
 independent conflicts. These are explicit non-compliant performance boundaries,
-not `tpmC`. M14G aggregate reporting is next.
+not `tpmC`. M14G now makes M10-M13 and M14A-M14F explicit aggregate inputs,
+embeds the workload/operations evidence in one report, and separates functional,
+TPC-C-like, and failed formal-compliance claims. The immediate transaction work
+is now productizing backup control, journal consolidation, and service/security
+boundaries rather than strengthening the benchmark label.
 
 The transaction implementation order for M14 is:
 

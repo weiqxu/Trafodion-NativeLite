@@ -36,8 +36,8 @@ plan/README.trafodion.md
 
 ## Current Status (verified 2026-08-16)
 
-The bounded M1-M13 scope is complete; M14 TPC-C qualification is in progress
-with M14A-M14F complete and aggregate reporting next. Each `ContextCli` owns an `ExTransaction`,
+The bounded M1-M14 scope is complete for its declared boundaries. Each
+`ContextCli` owns an `ExTransaction`,
 which is now the canonical owner of that session's `LocalLiteTxnContext`;
 executor/DDL paths receive it explicitly, and reset, disconnect, or destruction
 discard only that session's pending writes and snapshots. The M11A gate covers
@@ -87,7 +87,7 @@ migration, export, rollback, and runtime fallback code is not shipped. The
 synchronous M12 recovery journal remains separate while SQL publication still
 uses its idempotent recovery protocol.
 
-M14 TPC-C qualification is in progress. M14A pins the 5.11.0 input contract,
+M14 TPC-C-like qualification is complete. M14A pins the 5.11.0 input contract,
 nine-entity mapping, deterministic one-warehouse scale, known deviations, and
 a machine-readable baseline gate. M14B adds the real nine-table schema, a
 bounded and restartable deterministic loader through T4 JDBC, exact cardinality
@@ -113,7 +113,10 @@ clean/unclean restart, checkpoint restore, and disk-watermark evidence. The
 workload uses fair client-side writer admission because M14D's database-wide
 validator produces false independent conflicts; the server's M14E concurrent
 compiler/executor path remains unchanged.
-Results are not `tpmC` and do not claim
+M14G adds `make local-lite-m14`, explicitly reruns M10-M13 and M14A-M14F,
+composes `qualification-report.json`, and publishes separate functional,
+repeatable TPC-C-like, and formal-compliance checklists. Results are not `tpmC`
+and do not claim
 formal TPC-C compliance until all specification and disclosure requirements are
 met. Upgrade/drain orchestration, service-level backup controls, journal
 consolidation, node HA, distributed execution, and password/TLS authentication

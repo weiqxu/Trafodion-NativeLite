@@ -21,18 +21,29 @@ legacy_output=$(mktemp /tmp/traf-local-lite-m10-legacy.XXXXXX)
 native_output=$(mktemp /tmp/traf-local-lite-m10-native.XXXXXX)
 trap 'rm -f "$legacy_output" "$native_output"' EXIT
 
-"$legacy_runner" >"$legacy_output"
-grep -Eq 'Summary: [1-9][0-9]* passed, 0 failed, 0 skipped' "$legacy_output" ||
+if ! "$legacy_runner" >"$legacy_output"; then
+  cat "$legacy_output" >&2
   fail "legacy runnable allowlist did not converge"
+fi
+if ! grep -Eq 'Summary: [1-9][0-9]* passed, 0 failed, 0 skipped' \
+    "$legacy_output"; then
+  cat "$legacy_output" >&2
+  fail "legacy runnable allowlist did not converge"
+fi
 
 shopt -s nullglob
 native_tests=("$repo_root"/core/sql/regress/localLite/TEST[0-9][0-9][0-9])
 native_expected=${#native_tests[@]}
 (( native_expected > 0 )) || fail "native local-lite suite has no TESTnnn cases"
 
-"$native_runner" >"$native_output"
-grep -Fq "Summary: $native_expected passed, 0 failed" "$native_output" ||
+if ! "$native_runner" >"$native_output"; then
+  cat "$native_output" >&2
   fail "native local-lite suite regressed"
+fi
+if ! grep -Fq "Summary: $native_expected passed, 0 failed" "$native_output"; then
+  cat "$native_output" >&2
+  fail "native local-lite suite regressed"
+fi
 
 phase_case() {
   local phase=$1

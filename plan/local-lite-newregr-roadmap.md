@@ -18,8 +18,8 @@ scripts/audit-local-lite-upstream-regress.sh --list-newregr
 ```
 
 The current source tree contains 281 paired inputs and one unpaired input. No
-newregress execution result is currently claimed. M14 TPC-C qualification is
-the next primary product milestone and is tracked in
+newregress execution result is currently claimed. Completed M14 TPC-C-like
+qualification is tracked in
 `plan/local-lite-legacy-regress-roadmap.md`; it does not count as newregress
 coverage. N1-N4 remain a parallel compatibility/performance backlog and must
 not borrow TPC-C transaction results as suite passes.

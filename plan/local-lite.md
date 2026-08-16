@@ -590,8 +590,8 @@ unchanged in local-lite.
 | Single-byte `TRIM`/`LTRIM`/`RTRIM` family | Stored `TRIM` projections are exercised by `TEST005`/`TEST013`, while `LTRIM`/`RTRIM` remain literal-only in `TEST013`; family-wide assignment and predicate coverage is not yet claimed | This is the next portable gap from `core/TEST038` and `charsets/TEST313`; cover leading/trailing/both and explicit trim-character forms, CHAR versus VARCHAR results, empty/NULL values, both INSERT assignment paths, concatenation, and predicates without adding UTF8/UCS2 variants. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, character/data types, statistics, authorization, and bounded UDR | Covered for the declared RocksDB-only surface by `TEST026`-`TEST043` and the eleven-case legacy allowlist | Legacy cases that require physical HBase/Hive behavior, shell-driven multi-session execution, broader collation/LOB paths, or compiler-crashing SQL remain blocked, unsafe, or excluded. |
 
-The primary milestone is M14 TPC-C qualification; M14A-M14F are complete and
-the M14G aggregate report is next. Portable
+M14 TPC-C-like qualification is complete for the declared single-node boundary.
+Portable
 `TRIM`/`LTRIM`/`RTRIM` compatibility remains a parallel backlog rather than the
 critical path. The implemented phases establish a deterministic one-warehouse
 schema and loader, all five transaction profiles over T4 JDBC, Level 3
@@ -1031,20 +1031,16 @@ orchestration remain later work.
 
 Remaining, in implementation order:
 
-1. Complete **M14 TPC-C qualification**: deterministic schema/load, all five
-   transactions through T4 JDBC, consistency and Level 3 isolation tests,
-   concurrent compiler/executor work, then multi-warehouse performance and
-   recovery evidence.
-2. In parallel, productize the M13 boundary with service drain/upgrade,
+1. Productize the M13/M14 boundary with service drain/upgrade,
    active-layout backup controls, recovery-journal consolidation, and security
    hardening.
-3. Continue portable SQL compatibility increments, beginning with the
+2. Continue portable SQL compatibility increments, beginning with the
    single-byte `TRIM`/`LTRIM`/`RTRIM` family.
 
 The authoritative milestone definitions and completion gates are in
 `plan/local-lite-legacy-regress-roadmap.md`.
 
-- [ ] **Complete M14 TPC-C qualification for the supported single-node
+- [x] **Complete M14 TPC-C-like qualification for the supported single-node
   trusted-local boundary.**
   - [x] Pin TPC-C 5.11.0, document dialect deviations, and version the schema,
     driver, workload, terminal, retry, and reporting contracts.
@@ -1059,7 +1055,7 @@ The authoritative milestone definitions and completion gates are in
     session ownership, DDL/catalog safety, cancellation, and peer survival.
   - [x] Add multi-warehouse workload mix, latency/throughput/resource metrics,
     crash/backup/restore-under-load evidence, repetitions, and variance gates.
-  - [ ] Add `make local-lite-m14`; publish separate functional, TPC-C-like, and
+  - [x] Add `make local-lite-m14`; publish separate functional, TPC-C-like, and
     formal-compliance checklists. Do not label results `tpmC` before the formal
     specification and disclosure boundary is satisfied.
 

@@ -10616,7 +10616,8 @@ Lng32 SQLCLI_SeqGenCliInterface
       ? localSga->getSGCache() : 1;
     if (!localStore.allocateSequence(
           static_cast<uint64_t>(localSga->getSGObjectUID().get_value()),
-          localCount, &localNext, &localEnd, &localError))
+          localCount, &localNext, &localEnd,
+          cliGlobals->currContext()->getLocalLiteTxnContext(), &localError))
     {
       Lng32 localCode = localError.find("MAXVALUE") != std::string::npos
           ? 1579 : 1583;

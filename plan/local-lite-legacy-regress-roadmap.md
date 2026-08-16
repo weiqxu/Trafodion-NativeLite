@@ -467,7 +467,7 @@ convergence or a production database.
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make local-lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. M14E later removes the original compiler/executor queue with session-thread ownership and narrow DDL/utility locks. M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
 | M12 transactional storage and recovery | Complete for the declared single-node boundary | `make local-lite-m12` covers the common TransactionDB/SQLite contract, backend selection, versioned metadata-key migration, recovery/operations faults, and real SQLCI multi-table commit interruption/restart recovery. Node HA and distributed execution are not claimed. |
 | M13 exclusive unified storage | Complete for single-process format activation | `make local-lite-m13` includes M12 and proves an after-format interruption, retry without cleanup, explicit rejection of old `catalog/` or `data/` layouts, unified-only DDL/DML/drop, and restart persistence. Old-layout migration/fallback is intentionally absent; zero-downtime orchestration, journal consolidation, and backup scheduling remain later work. |
-| M14 TPC-C qualification | In progress; M14A-M14F complete | The pinned contract, loader, five profiles, Level 3 matrix, and six durable-decision crash cases pass. M14E proves concurrent compiler/executor execution and session isolation. M14F adds a deterministic two-warehouse/two-terminal workload, latency/throughput/resource and variance reports, online checkpoint, clean/unclean restart, checkpoint restore, and disk-watermark rejection. Client-side writer admission and the mix/pacing are non-compliant; M14G aggregate claims are next, with no `tpmC` claim. |
+| M14 TPC-C qualification | Complete for repeatable TPC-C-like single-node qualification | The pinned contract, loader, five profiles, Level 3 matrix, six durable-decision crash cases, concurrent runtime, and two-warehouse operations gate pass. `make local-lite-m14` explicitly includes M10-M13 and M14A-M14F, composes one report, and separates functional/TPC-C-like passes from formal-compliance failure. Client-side writer admission and the mix/pacing remain non-compliant; no `tpmC` claim is made. |
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
@@ -684,7 +684,7 @@ consolidation, node HA, and distributed execution remain outside M13.
 
 ## Milestone 14: TPC-C Qualification
 
-Status: in progress; M14A-M14F complete and M14G next. M14 turns the completed
+Status: complete for repeatable TPC-C-like single-node qualification. M14 turns the completed
 M11-M13 session, transaction, recovery, and unified-storage foundations into a
 repeatable OLTP qualification workload. It is not complete when the schema can
 be loaded or when one transaction succeeds: completion requires all five TPC-C
@@ -920,6 +920,21 @@ report and passes correctness/recovery at every declared scale. Performance
 regressions fail only against versioned thresholds, never an ad hoc best run.
 
 ### M14G: Aggregate Qualification And Reporting
+
+Status: complete. `make local-lite-m14` has explicit M10, M11, M12, M13, and
+M14F prerequisites; the M14F dependency retains the whole M14A-M14E chain.
+`m14-regression-inputs.tsv` prevents those inputs from becoming implicit.
+`test-local-lite-tpcc-qualification.sh` validates the three claim checklists and
+composes the actual M14F workload/operations JSON with schema, driver, config,
+source, isolation, recovery, and deviation evidence into
+`qualification-report.json` under `M14_REPORT_DIR`.
+
+The aggregate gate also exercises the pre-M14 SQL surface against M14D's
+database-wide serializable validator.  It caught and now covers two
+transaction-owned unified-store writes that must advance the current
+transaction baseline rather than look like external conflicts: CTAS catalog
+creation before its row commit and identity/sequence range allocation before
+its INSERT commit.
 
 - Add `make local-lite-m14` as the aggregate M14A-M14F gate and keep M10-M13
   regression inputs explicit in CI so TPC-C work cannot narrow prior coverage.

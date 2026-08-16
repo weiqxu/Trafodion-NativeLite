@@ -193,7 +193,8 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
     }
   if (!store.createTable(
           view, &error,
-          ComUser::getCurrentUsername()))
+          ComUser::getCurrentUsername(),
+          GetCliGlobals()->currContext()->getLocalLiteTxnContext()))
     {
       *CmpCommon::diags() << DgSqlCode(-3242)
                           << DgString0((char *)error.c_str());

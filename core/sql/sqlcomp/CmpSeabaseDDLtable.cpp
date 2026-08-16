@@ -1602,7 +1602,8 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
         }
       if (!store.createTable(
               table, &error,
-              ComUser::getCurrentUsername()))
+              ComUser::getCurrentUsername(),
+              GetCliGlobals()->currContext()->getLocalLiteTxnContext()))
         {
           localLiteDDLDiag(error);
           return false;
@@ -1936,7 +1937,8 @@ static bool localLiteCreateTable(StmtDDLCreateTable *createTableNode,
   std::string error;
   if (!store.createTable(
           table, &error,
-          ComUser::getCurrentUsername()))
+          ComUser::getCurrentUsername(),
+          GetCliGlobals()->currContext()->getLocalLiteTxnContext()))
     {
       localLiteDDLDiag(error);
       return false;

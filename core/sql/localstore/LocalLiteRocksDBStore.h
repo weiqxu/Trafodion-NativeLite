@@ -216,7 +216,8 @@ public:
   void close();
 
   bool createTable(const LocalLiteTableDef &table, std::string *error,
-                   const std::string &owner = std::string());
+                   const std::string &owner = std::string(),
+                   LocalLiteTxnContext *txnContext = 0);
   bool createSchema(const std::string &catalog,
                     const std::string &schema,
                     bool ifNotExists,
@@ -273,6 +274,7 @@ public:
                         int64_t requestedCount,
                         int64_t *nextValue,
                         int64_t *endValue,
+                        LocalLiteTxnContext *txnContext,
                         std::string *error);
   bool createTrigger(const LocalLiteTriggerDef &trigger, std::string *error);
   bool dropTrigger(const std::string &catalog,
@@ -528,6 +530,9 @@ public:
   static bool prepareDDLForExecutor(LocalLiteTxnContext *txnContext,
                                     int64_t executorTxnId,
                                     std::string *error);
+  static bool refreshDDLSequenceForExecutor(LocalLiteTxnContext *txnContext,
+                                            int64_t executorTxnId,
+                                            std::string *error);
   static bool active(LocalLiteTxnContext *txnContext);
   static uint64_t currentLocalTxnId(LocalLiteTxnContext *txnContext);
   static int64_t currentExecutorTxnId(LocalLiteTxnContext *txnContext);

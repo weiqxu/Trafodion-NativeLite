@@ -9467,7 +9467,9 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                       transition.schema + "." + transitionName + "_PK";
                   if (!store.createTable(
                           transition, &error,
-                          ComUser::getCurrentUsername()))
+                          ComUser::getCurrentUsername(),
+                          GetCliGlobals()->currContext()
+                              ->getLocalLiteTxnContext()))
                     transitionExists = false;
                   else
                     createdTransition = true;

@@ -75,9 +75,20 @@ aggregate transactions per second. Its two
 sessions use fair client-side writer admission because the current
 database-wide serializable validator would otherwise reject independent
 warehouse writers; read-only statements retain the M14E concurrent path. The
-operations report records source/runtime identity, RSS high-water, store-size delta,
+operations report records source/runtime identity, RSS high-water, store-size
+delta,
 clean/unclean/checkpoint recovery time, an online TransactionDB checkpoint made
 during workload execution, restored-store consistency, and disk-watermark
 rejection. Queue, compile, WAL/fsync, compaction, write-stall, and cache metrics
 are marked unavailable rather than inferred from the reduced server or RocksDB
 C API.
+
+Run `make local-lite-m14` for the aggregate M14G gate. It keeps M10-M13 and
+M14A-M14F as explicit prerequisites, retains the M14F artifacts under
+`M14_REPORT_DIR` (default `/tmp/traf-local-lite-m14-report`), and writes
+`qualification-report.json` there. `m14-regression-inputs.tsv` is the required
+gate inventory; `claim-checklist.tsv` independently records functional support,
+repeatable TPC-C-like support, and failed formal-compliance requirements. The
+aggregate report embeds the actual workload and operations reports, revision
+hashes, isolation/crash summary, deviation-manifest reference, and the explicit
+`official_tpmc: not_claimed` boundary.

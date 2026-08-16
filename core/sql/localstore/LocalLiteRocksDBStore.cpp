@@ -4759,6 +4759,35 @@ public:
     return begin(executorTxnId, error);
   }
 
+  bool refreshDDLSequence(int64_t executorTxnId, std::string *error)
+  {
+    {
+      LocalLiteMutexGuard guard(&mutex_);
+      if (!active_)
+        return true;
+      if (!matchesExecutorTxnId(executorTxnId))
+        {
+          setError(error, "local-lite transaction context mismatch");
+          return false;
+        }
+    }
+
+    uint64_t sequence = 0;
+    {
+      LocalLiteMutexGuard atomicRead(
+          LocalLiteStorageManager::instance().mutex());
+      sequence = LocalLiteUnifiedRocksDBSequence();
+    }
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_ || !matchesExecutorTxnId(executorTxnId))
+      {
+        setError(error, "local-lite transaction context changed during DDL");
+        return false;
+      }
+    beginSequence_ = sequence;
+    return true;
+  }
+
   bool active()
   {
     LocalLiteMutexGuard guard(&mutex_);
@@ -5354,7 +5383,8 @@ void LocalLiteRocksDBStore::close()
 
 bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
                                          std::string *error,
-                                         const std::string &owner)
+                                         const std::string &owner,
+                                         LocalLiteTxnContext *txnContext)
 {
   if (!open(error))
     return false;
@@ -5424,7 +5454,8 @@ bool LocalLiteRocksDBStore::createTable(const LocalLiteTableDef &table,
   if (!owner.empty() &&
       !setTableOwner(copy.catalog, copy.schema, copy.name, owner, error))
     return false;
-  return true;
+  return LocalLiteTxnManager::refreshDDLSequenceForExecutor(
+      txnContext, LocalLiteTxnManager::currentExecutorTxnId(txnContext), error);
 }
 
 bool LocalLiteRocksDBStore::schemaExists(const std::string &catalog,
@@ -5711,12 +5742,18 @@ bool LocalLiteRocksDBStore::dropSequence(
 
 bool LocalLiteRocksDBStore::allocateSequence(
     uint64_t objectUid, int64_t requestedCount, int64_t *nextValue,
-    int64_t *endValue, std::string *error)
+    int64_t *endValue, LocalLiteTxnContext *txnContext, std::string *error)
 {
   if (!nextValue || !endValue || !open(error))
     return false;
-  return LocalLiteStorageManager::instance().allocateSequence(
-      objectUid, requestedCount, nextValue, endValue, error);
+  if (!LocalLiteStorageManager::instance().allocateSequence(
+          objectUid, requestedCount, nextValue, endValue, error))
+    return false;
+  // Sequence allocation is an autonomous catalog write used by the current
+  // statement.  Treat its unified-DB sequence advance as this transaction's
+  // own work so a following row commit is not rejected as an external writer.
+  return LocalLiteTxnManager::refreshDDLSequenceForExecutor(
+      txnContext, LocalLiteTxnManager::currentExecutorTxnId(txnContext), error);
 }
 
 bool LocalLiteRocksDBStore::listTriggers(
@@ -8218,6 +8255,14 @@ bool LocalLiteTxnManager::prepareDDLForExecutor(
       return false;
     }
   return txnContext->prepareDDL(executorTxnId, error);
+}
+
+bool LocalLiteTxnManager::refreshDDLSequenceForExecutor(
+    LocalLiteTxnContext *txnContext,
+    int64_t executorTxnId,
+    std::string *error)
+{
+  return !txnContext || txnContext->refreshDDLSequence(executorTxnId, error);
 }
 
 bool LocalLiteTxnManager::active(LocalLiteTxnContext *txnContext)
