@@ -1344,6 +1344,38 @@ private:
         return result;
       }
 
+    if (normalized == "SELECT NATIVE_LITE_CHECKPOINT()" ||
+        normalized == "SELECT NATIVELITE_CHECKPOINT()")
+      {
+        *handled = true;
+        Column column;
+        column.name = "native_lite_checkpoint";
+        column.oid = 25;
+        column.typeLength = -1;
+        result.columns.push_back(column);
+        result.commandTag = "SELECT 1";
+        if (describeOnly)
+          return result;
+        const char *target = getenv("TRAF_LOCAL_LITE_CHECKPOINT_DIR");
+        std::string checkpointError;
+        bool checkpointed = false;
+        if (target && target[0])
+          {
+            checkpointed = LocalLiteRocksDBCheckpoint(target,
+                                                       &checkpointError);
+          }
+        if (!checkpointed)
+          {
+            result.sqlstate = "58030";
+            result.error = checkpointError.empty()
+                ? "TRAF_LOCAL_LITE_CHECKPOINT_DIR is not configured"
+                : checkpointError;
+            return result;
+          }
+        result.rows.push_back(std::vector<Cell>(1, Cell("ok")));
+        return result;
+      }
+
     const std::string sleepPrefix = "SELECT NATIVE_LITE_SLEEP(";
     const std::string alternatePrefix = "SELECT NATIVELITE_SLEEP(";
     size_t prefixLength = startsWith(normalized, sleepPrefix)

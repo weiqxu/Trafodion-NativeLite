@@ -473,6 +473,14 @@ utilities retain narrow locks. The executable high-water mark proves at least
 two concurrent compiler/executor requests, with M14C/M14D/T4 lifecycle
 regressions preserving the transaction and cancellation boundaries.
 
+M14F now adds two-warehouse operation with two terminal sessions, a fixed
+45/40/5/5/5 functional mix, latency/throughput/resource reports, online
+checkpoint, clean/unclean restart, restored-checkpoint verification, and
+disk-watermark rejection. The workload uses fair writer admission around whole
+transactions to avoid the disclosed database-wide validator's false
+independent conflicts. These are explicit non-compliant performance boundaries,
+not `tpmC`. M14G aggregate reporting is next.
+
 The transaction implementation order for M14 is:
 
 1. Run deterministic New-Order, Payment, Order-Status, Delivery, and

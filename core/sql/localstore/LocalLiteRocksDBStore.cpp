@@ -4391,6 +4391,12 @@ bool LocalLiteStorageManager::recoverJournals(std::string *error)
   return true;
 }
 
+bool LocalLiteRocksDBCheckpoint(const std::string &path, std::string *error)
+{
+  LocalLiteMutexGuard guard(LocalLiteStorageManager::instance().mutex());
+  return LocalLiteUnifiedRocksDBCheckpoint(path, error);
+}
+
 static bool readCatalogValue(const std::string &key,
                              std::string *value,
                              bool *found,

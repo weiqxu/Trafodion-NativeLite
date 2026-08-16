@@ -58,5 +58,26 @@ observed depth of two for five repeated races, checks per-session schema and
 diagnostic isolation, and reruns the T4 cancellation, disconnect rollback,
 peer-survival, and restart suite. The ownership/synchronization audit is
 versioned in `m14e-runtime-inventory.tsv`. DDL/catalog changes and SQLCI
-compatibility utilities remain narrowly serialized; normal DML and queries do
-not use the engine initialization queue.
+compatibility utilities remain narrowly serialized; requests do not use the
+engine initialization queue.
+
+Run `make local-lite-m14f` for the fixed two-warehouse operations scale: two
+districts and 100 customers/orders per warehouse, 1,000 shared items, two
+terminal sessions, 5 warmup and 20 measured transactions per terminal, and two
+repetitions with a maximum throughput variance ratio of 0.75. The deterministic
+mix is 45% New-Order, 40% Payment, and 5% each Order-Status, Delivery, and
+Stock-Level. It has no normative think-time pacing, last-name branch, or
+variable order-line selection and is therefore explicitly non-compliant.
+
+The workload reports committed, aborted, and retried counts plus p50/p95/p99/max
+client end-to-end latency (including admission wait) for every profile and
+aggregate transactions per second. Its two
+sessions use fair client-side writer admission because the current
+database-wide serializable validator would otherwise reject independent
+warehouse writers; read-only statements retain the M14E concurrent path. The
+operations report records source/runtime identity, RSS high-water, store-size delta,
+clean/unclean/checkpoint recovery time, an online TransactionDB checkpoint made
+during workload execution, restored-store consistency, and disk-watermark
+rejection. Queue, compile, WAL/fsync, compaction, write-stall, and cache metrics
+are marked unavailable rather than inferred from the reduced server or RocksDB
+C API.

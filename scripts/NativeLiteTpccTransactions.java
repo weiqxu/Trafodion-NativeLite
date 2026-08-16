@@ -52,15 +52,22 @@ public final class NativeLiteTpccTransactions {
     }
   }
 
-  private static final class Terminal implements AutoCloseable {
+  static final class Terminal implements AutoCloseable {
     private final Connection connection;
     private final int terminalId;
+    private final int WAREHOUSE;
     private final Map<String, PreparedStatement> statements = new HashMap<>();
     private int sequence;
 
     Terminal(String url, int selectedTerminal) throws SQLException {
+      this(url, selectedTerminal, NativeLiteTpccTransactions.WAREHOUSE);
+    }
+
+    Terminal(String url, int selectedTerminal, int selectedWarehouse)
+        throws SQLException {
       connection = connect(url);
       terminalId = selectedTerminal;
+      WAREHOUSE = selectedWarehouse;
     }
 
     private PreparedStatement prepared(String sql) throws SQLException {

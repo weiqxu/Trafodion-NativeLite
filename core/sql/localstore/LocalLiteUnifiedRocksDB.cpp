@@ -462,6 +462,36 @@ uint64_t LocalLiteUnifiedRocksDBSequence()
       ? rocksdb_get_latest_sequence_number(unifiedState.baseDb) : 0;
 }
 
+bool LocalLiteUnifiedRocksDBCheckpoint(const std::string &path,
+                                       std::string *error)
+{
+  if (!unifiedState.transactionDb || path.empty())
+    {
+      setStringError(error, "LocalLite checkpoint target is unavailable");
+      return false;
+    }
+  char *rocksError = NULL;
+  rocksdb_checkpoint_t *checkpoint =
+      rocksdb_transactiondb_checkpoint_object_create(
+          unifiedState.transactionDb, &rocksError);
+  if (rocksError)
+    {
+      setStringError(error, std::string("create checkpoint object: ") +
+                            rocksError);
+      rocksdb_free(rocksError);
+      return false;
+    }
+  rocksdb_checkpoint_create(checkpoint, path.c_str(), 0, &rocksError);
+  rocksdb_checkpoint_object_destroy(checkpoint);
+  if (rocksError)
+    {
+      setStringError(error, std::string("create checkpoint: ") + rocksError);
+      rocksdb_free(rocksError);
+      return false;
+    }
+  return true;
+}
+
 rocksdb_t *LocalLiteRocksDBOpen(const rocksdb_options_t *options,
                                 const char *name,
                                 char **error)

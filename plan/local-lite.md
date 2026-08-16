@@ -590,12 +590,14 @@ unchanged in local-lite.
 | Single-byte `TRIM`/`LTRIM`/`RTRIM` family | Stored `TRIM` projections are exercised by `TEST005`/`TEST013`, while `LTRIM`/`RTRIM` remain literal-only in `TEST013`; family-wide assignment and predicate coverage is not yet claimed | This is the next portable gap from `core/TEST038` and `charsets/TEST313`; cover leading/trailing/both and explicit trim-character forms, CHAR versus VARCHAR results, empty/NULL values, both INSERT assignment paths, concatenation, and predicates without adding UTF8/UCS2 variants. |
 | UPDATE/DELETE/MERGE/UPSERT, views/indexes/schema objects, character/data types, statistics, authorization, and bounded UDR | Covered for the declared RocksDB-only surface by `TEST026`-`TEST043` and the eleven-case legacy allowlist | Legacy cases that require physical HBase/Hive behavior, shell-driven multi-session execution, broader collation/LOB paths, or compiler-crashing SQL remain blocked, unsafe, or excluded. |
 
-The next primary milestone is M14 TPC-C qualification. Portable
+The primary milestone is M14 TPC-C qualification; M14A-M14F are complete and
+the M14G aggregate report is next. Portable
 `TRIM`/`LTRIM`/`RTRIM` compatibility remains a parallel backlog rather than the
-critical path. M14 first establishes a deterministic one-warehouse schema and
-loader, all five transaction profiles over T4 JDBC, Level 3 isolation evidence,
-and true concurrent execution; it then scales to a reproducible multi-warehouse
-TPC-C-like workload. Service drain/upgrade orchestration, active-layout backup
+critical path. The implemented phases establish a deterministic one-warehouse
+schema and loader, all five transaction profiles over T4 JDBC, Level 3
+isolation evidence, concurrent read execution, and a reproducible
+multi-warehouse TPC-C-like workload with a disclosed serialized writer
+boundary. Service drain/upgrade orchestration, active-layout backup
 controls, journal consolidation, and security hardening remain parallel
 productization work.
 
@@ -1055,7 +1057,7 @@ The authoritative milestone definitions and completion gates are in
     and exactly-once effects across bounded retries.
   - [x] Remove global compiler/executor request serialization while preserving
     session ownership, DDL/catalog safety, cancellation, and peer survival.
-  - [ ] Add multi-warehouse workload mix, latency/throughput/resource metrics,
+  - [x] Add multi-warehouse workload mix, latency/throughput/resource metrics,
     crash/backup/restore-under-load evidence, repetitions, and variance gates.
   - [ ] Add `make local-lite-m14`; publish separate functional, TPC-C-like, and
     formal-compliance checklists. Do not label results `tpmC` before the formal

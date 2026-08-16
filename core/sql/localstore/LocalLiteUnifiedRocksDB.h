@@ -36,6 +36,8 @@ bool LocalLiteUnifiedRocksDBPrepare(const std::string &root,
 void LocalLiteUnifiedRocksDBShutdown();
 bool LocalLiteUnifiedRocksDBActive();
 uint64_t LocalLiteUnifiedRocksDBSequence();
+bool LocalLiteUnifiedRocksDBCheckpoint(const std::string &path,
+                                       std::string *error);
 std::string LocalLiteUnifiedRocksDBPath(const std::string &root);
 
 rocksdb_t *LocalLiteRocksDBOpen(const rocksdb_options_t *options,

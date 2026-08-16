@@ -539,6 +539,10 @@ public:
                            uint64_t statementExecutionId);
 };
 
+// Creates a consistent checkpoint of the active unified TransactionDB while
+// excluding concurrent LocalLite storage mutations.
+bool LocalLiteRocksDBCheckpoint(const std::string &path, std::string *error);
+
 #endif
 
 #endif

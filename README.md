@@ -36,8 +36,8 @@ plan/README.trafodion.md
 
 ## Current Status (verified 2026-08-16)
 
-The bounded M1-M13 scope is complete; M14 TPC-C qualification is planned as the
-next primary milestone. Each `ContextCli` owns an `ExTransaction`,
+The bounded M1-M13 scope is complete; M14 TPC-C qualification is in progress
+with M14A-M14F complete and aggregate reporting next. Each `ContextCli` owns an `ExTransaction`,
 which is now the canonical owner of that session's `LocalLiteTxnContext`;
 executor/DDL paths receive it explicitly, and reset, disconnect, or destruction
 discard only that session's pending writes and snapshots. The M11A gate covers
@@ -105,9 +105,15 @@ before and after the durable journal decision and pass atomic restart checks.
 This database-wide validator can abort independent writers and is intentionally
 disclosed as a correctness-first M14D boundary. M14E removes the global engine
 queue, proves an observed compiler/executor depth of at least two across five
-instrumented races, isolates session schemas and diagnostics, and retains the
-T4 cancellation/disconnect/peer-survival gate. M14F next supplies a reproducible
-multi-warehouse TPC-C-like workload. Results are not `tpmC` and do not claim
+instrumented read races, isolates session schemas and diagnostics, and retains
+the T4 cancellation/disconnect/peer-survival gate. M14F supplies a reproducible
+two-warehouse, two-terminal TPC-C-like workload with per-profile latency and
+retry counters, throughput variance, resource usage, online checkpoint,
+clean/unclean restart, checkpoint restore, and disk-watermark evidence. The
+workload uses fair client-side writer admission because M14D's database-wide
+validator produces false independent conflicts; the server's M14E concurrent
+compiler/executor path remains unchanged.
+Results are not `tpmC` and do not claim
 formal TPC-C compliance until all specification and disclosure requirements are
 met. Upgrade/drain orchestration, service-level backup controls, journal
 consolidation, node HA, distributed execution, and password/TLS authentication

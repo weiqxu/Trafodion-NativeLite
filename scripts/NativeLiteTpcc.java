@@ -17,7 +17,7 @@ public final class NativeLiteTpcc {
   private static final String FIXED_TS = "2026-08-15 00:00:00";
 
   private static final class Config {
-    final int warehouses;
+    int warehouses;
     final int districts;
     final int customers;
     final int orders;
@@ -53,6 +53,18 @@ public final class NativeLiteTpcc {
         orders = 100;
         newOrders = 30;
         items = 1000;
+      } else if ("multi".equals(scale)) {
+        warehouses = Integer.parseInt(required(properties,
+            "performance.warehouses"));
+        districts = Integer.parseInt(required(properties,
+            "performance.districts.per.warehouse"));
+        customers = Integer.parseInt(required(properties,
+            "performance.customers.per.district"));
+        orders = Integer.parseInt(required(properties,
+            "performance.orders.per.district"));
+        newOrders = Integer.parseInt(required(properties,
+            "performance.new.orders.per.district"));
+        items = Integer.parseInt(required(properties, "performance.items"));
       } else {
         throw new IllegalArgumentException("unknown scale: " + scale);
       }
