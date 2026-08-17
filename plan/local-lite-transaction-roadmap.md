@@ -556,3 +556,31 @@ latest run measured 21.332 TPS and 1.479 seconds New-Order p95, with zero
 conflicts, retries, unclassified errors, and Stock-Level full scans. The 50 TPS
 and New-Order p95 <=1 second values remain engineering targets, not
 qualification claims; official TPC-C and `tpmC` remain explicitly excluded.
+
+## Milestone 18: T4 execution and durable publication critical section
+
+M18 is active after the M17 New-Order/OCC work. It keeps Trafodion's MVCC/OCC
+validation and the unified TransactionDB atomic write batch unchanged while
+targeting two measured costs: repeated T4 transaction-control compilation and
+the synchronous WAL/publication critical section.
+
+The T4 server now fast-paths `BEGIN`, `COMMIT`, and `ROLLBACK` through the
+existing LocalLite `ExTransaction` participant only after the session context
+has been initialized. DDL boundaries and uninitialized contexts use the
+original executor path, preserving catalog invalidation and first-use session
+initialization. Commit/rollback cursor-close behavior is retained.
+
+`TRAF_LOCAL_LITE_SYNC_COMMIT` is an explicit A/B switch. The default is
+`true`; only an opt-in false value disables RocksDB write-option sync and is
+allowed for diagnostic upper-bound measurements. The publication latch is
+released before transaction-store cleanup, but remains held across validation,
+the physical batch write, and OCC publication, so atomicity is not weakened.
+
+The first M18 evidence on the controlled WSL2 host is 19.464 TPS with sync
+enabled versus 20.173 TPS in the async diagnostic run. Aggregate publication
+latency falls from 3.928 s to 0.144 s, but throughput improves only 3.6%;
+therefore WAL sync is a large commit-latency component but not the sole current
+throughput bottleneck. Both runs pass consistency and restart/checkpoint gates,
+and the T4 JDBC lifecycle gate passes. M18 remains below the 50 TPS and
+per-profile production targets; RocksDB cache/write-stall and per-stage T4
+timing instrumentation are the next actions.

@@ -72,6 +72,42 @@ The performance command writes its JSON evidence to
 M14/M15/M16 claim boundary, show zero unclassified errors, preserve Stock-Level
 zero-full-scan evidence, and include the OCC validation/publication counters.
 
+## M18 follow-up: T4 control and publication critical section
+
+The next optimization keeps M17's OCC and unified TransactionDB contract but
+removes avoidable transaction-control work from the T4 request path. `BEGIN`,
+`COMMIT`, and `ROLLBACK` use the existing LocalLite `ExTransaction` participant
+when the session `ContextCli` is initialized; an uninitialized context and a
+DDL commit boundary deliberately fall back to the original executor path.
+Commit and rollback retain cursor-close semantics. This avoids the unsafe
+TMF-only `SQL_EXEC_Xact` shortcut, which is not the LocalLite transaction
+participant.
+
+The publication path now exposes `TRAF_LOCAL_LITE_SYNC_COMMIT`. Its default is
+`true` and must remain enabled for durability. Setting it to `0`, `false`,
+`off`, or `async` is a diagnostic upper-bound mode only. The storage mutex is
+also released before closing the per-transaction store after the durable write
+and OCC publication; validation, the single physical write batch, and the
+publication decision remain serialized under the latch.
+
+The post-change Release evidence (32 warehouses, 32 terminals, three
+repetitions) is:
+
+- Default synchronous commit: 19.464 TPS, variance 0.008782, New-Order p95
+  1,744.058 ms, aggregate validation 270.726 ms, aggregate publication
+  3,927.652 ms, `synchronous_commit=true`.
+- Diagnostic asynchronous commit: 20.173 TPS, variance 0.035308, New-Order
+  p95 1,672.032 ms, aggregate validation 258.603 ms, aggregate publication
+  144.138 ms, `synchronous_commit=false`.
+
+Both runs passed consistency, online checkpoint, clean/unclean restart,
+checkpoint restore, disk-watermark, and zero-unclassified-error checks. The
+async run improves throughput only 3.6% while removing most write latency, so
+the durable workload remains execution/read bound; async mode is not a
+production result. The T4 JDBC lifecycle gate also passes after falling back
+for uninitialized contexts. The separate 50 TPS and New-Order p95 <=1 second
+targets remain unmet.
+
 ## Rollback and follow-up
 
 The New-Order query change can be reverted independently because it only changes
@@ -79,6 +115,6 @@ the read statement and cardinality check. The OCC index is guarded by the
 existing validation contract and can be disabled by restoring the previous
 history walk if a backend-specific ordering regression is found. M17 is
 implementation-complete but does not meet the 50 TPS / 1-second targets. M18
-should measure per-stage T4 prepare/execute latency and investigate
-publication-latch contention after M17's reduced validation candidate set is
-benchmarked.
+should add direct per-stage T4 timing and RocksDB write-stall/cache
+instrumentation before changing the durable commit policy; the async switch
+must remain an explicitly non-production diagnostic.

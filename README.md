@@ -151,6 +151,15 @@ writes by object UID so validation avoids unrelated history entries. The latest
 run measured 21.332 TPS and 1.479 s New-Order p95. Its design and staged
 gates are in `plan/local-lite-tpcc-m17-design.md`; run `make local-lite-m17`.
 
+M18 is now the active follow-up for T4 transaction-control and durable
+publication overhead. It uses the LocalLite transaction participant for
+initialized T4 `BEGIN`/`COMMIT`/`ROLLBACK` requests, preserves fallback for
+first-use and DDL contexts, and keeps synchronous RocksDB commit enabled by
+default. The latest sync run measured 19.464 TPS with 1.744 s New-Order p95;
+an async-only diagnostic reduced aggregate publication latency from 3.928 s to
+0.144 s but raised throughput only to 20.173 TPS. These remain TPC-C-like
+engineering measurements, not official `tpmC` or production-readiness claims.
+
 ### Functional boundary
 
 | Area | Validated local-lite surface | Not currently claimed |
