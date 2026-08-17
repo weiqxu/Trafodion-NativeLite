@@ -208,6 +208,7 @@ local-lite-m16: local-lite-m16g
 local-lite-m17a:
 	@echo "Running M17 transaction path and OCC index contract checks"
 	scripts/test-local-lite-m17.sh
+	scripts/test-local-lite-new-order-batch.sh
 
 local-lite-m17b: local-lite-m17a
 	@echo "Running M17 T4 and transaction regression checks"

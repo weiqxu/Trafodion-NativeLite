@@ -229,35 +229,30 @@ public final class NativeLiteTpccTransactions {
         for (int line = 1; line <= LINES_PER_ORDER; line++)
           items[line - 1] = district * 10 + line;
 
-        String itemSql = "SELECT I_ID,I_PRICE FROM TPCC_ITEM WHERE I_ID IN (" +
+        // Item price and stock state are read from the same snapshot. Join
+        // them into one request; the previous two batch queries still paid
+        // two T4 round trips before the mutation phase.
+        String itemStockSql =
+            "SELECT I.I_ID,I.I_PRICE,S.S_QUANTITY,S.S_YTD," +
+            "S.S_ORDER_CNT,S.S_DIST_01 FROM TPCC_ITEM I,TPCC_STOCK S " +
+            "WHERE S.S_W_ID=? AND S.S_I_ID=I.I_ID AND I.I_ID IN (" +
             placeholders(items.length) + ")";
-        PreparedStatement itemQuery = prepared(itemSql);
+        PreparedStatement itemStockQuery = prepared(itemStockSql);
+        itemStockQuery.setInt(1, WAREHOUSE);
         for (int i = 0; i < items.length; i++)
-          itemQuery.setInt(i + 1, items[i]);
+          itemStockQuery.setInt(i + 2, items[i]);
         Map<Integer, BigDecimal> prices = new HashMap<>();
-        try (ResultSet result = itemQuery.executeQuery()) {
-          while (result.next())
-            prices.put(result.getInt(1), result.getBigDecimal(2));
-        }
-
         List<Integer> uniqueItems = new ArrayList<>();
         Set<Integer> seenItems = new HashSet<>();
         for (int item : items)
           if (seenItems.add(item)) uniqueItems.add(item);
-        String stockSql =
-            "SELECT S_I_ID,S_QUANTITY,S_YTD,S_ORDER_CNT,S_DIST_01 " +
-            "FROM TPCC_STOCK WHERE S_W_ID=? AND S_I_ID IN (" +
-            placeholders(uniqueItems.size()) + ")";
-        PreparedStatement stockQuery = prepared(stockSql);
-        stockQuery.setInt(1, WAREHOUSE);
-        for (int i = 0; i < uniqueItems.size(); i++)
-          stockQuery.setInt(i + 2, uniqueItems.get(i));
         Map<Integer, StockState> stockByItem = new HashMap<>();
-        try (ResultSet result = stockQuery.executeQuery()) {
+        try (ResultSet result = itemStockQuery.executeQuery()) {
           while (result.next()) {
+            prices.put(result.getInt(1), result.getBigDecimal(2));
             stockByItem.put(result.getInt(1), new StockState(
-                result.getInt(2), result.getInt(3), result.getInt(4),
-                result.getString(5)));
+                result.getInt(3), result.getInt(4), result.getInt(5),
+                result.getString(6)));
           }
         }
 
