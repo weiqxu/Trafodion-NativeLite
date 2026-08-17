@@ -1031,7 +1031,7 @@ orchestration remain later work.
 
 Remaining, in implementation order:
 
-1. Complete M16 Stock-Level range aggregation and index optimization toward
+1. Complete M17 New-Order execution-path and OCC validation optimization toward
    the recorded production targets.
 2. Productize the M13-M15 boundary with service drain/upgrade,
    active-layout backup controls, recovery-journal consolidation, and security
@@ -1060,7 +1060,7 @@ The authoritative milestone definitions and completion gates are in
     Stock-Level p95 is 135.075 seconds; M15 completion is not production SLO
     certification or an official `tpmC` claim.
 
-- [ ] **Complete M16 Stock-Level range aggregation and index optimization.**
+- [x] **Complete M16 Stock-Level range aggregation and index optimization.**
   - [x] Pin the two-phase range-to-point contract and machine-readable metrics.
   - [x] Add and validate the ordered `TPCC_ORDER_LINE_STOCK_IX` access path.
   - [x] Replace the join/full-scan Stock-Level statement with a transaction-wide
@@ -1070,10 +1070,24 @@ The authoritative milestone definitions and completion gates are in
   - [x] Add M16 performance/plan gates for rerunning the M15 Release
     qualification with Stock-Level full scans at zero and p95 recorded
     separately from the production 2-second target.
-  - [ ] Complete the Release runtime evidence on a host that permits the
-    NativeLite TCP listener; the current host returns `Operation not permitted`
-    during server socket creation.
+  - [x] Complete Release runtime evidence: the latest run measures 19.516 TPS,
+    0.012002 variance, Stock-Level p95 1.292 seconds, and zero Stock-Level
+    full scans.
   - [ ] Keep formal TPC-C compliance and `tpmC` claims excluded.
+
+- [x] **Complete M17 New-Order execution-path and OCC validation optimization.**
+  - [x] Coalesce the New-Order district, warehouse, and customer header reads
+    into one prepared join with exact-one-row validation.
+  - [x] Index committed OCC writes by object UID and remove index entries with
+    the corresponding collected or overflowed history entries.
+  - [x] Preserve the Trafodion MVCC/OCC read-range intersection contract,
+    retryable conflict diagnostics, and atomic TransactionDB publication.
+  - [x] Add staged source, T4/transaction, Release performance, and design-doc
+    gates through `make local-lite-m17`.
+  - [ ] Reach the engineering targets of 50 TPS and New-Order p95 at or below
+    1 second on a controlled host; M17 measured 19.667 TPS and 1.884 seconds
+    New-Order p95.
+  - [x] Keep formal TPC-C compliance and `tpmC` claims excluded.
 
 - [x] **Complete M14 TPC-C-like qualification for the supported single-node
   trusted-local boundary.**

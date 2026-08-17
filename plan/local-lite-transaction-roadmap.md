@@ -502,7 +502,7 @@ but does not meet the separate production targets of 50 TPS and
 
 The next transaction/productization order is:
 
-1. Complete M16's index-backed Stock-Level range aggregation path.
+1. Complete M17's New-Order execution-path and OCC validation optimization.
 2. Reach the recorded 50 TPS and per-profile p95 production targets on a
    controlled host with longer samples and full environment disclosure.
 3. Add service drain/upgrade, active-layout backup controls, recovery-journal
@@ -528,10 +528,28 @@ equivalent to the original join/count-distinct statement.
 
 M16A-M16G are independently committed: contract and plan, schema/index,
 transaction query path, optimizer-plan proof, qualification gate, performance
-evidence, and final documentation. The implementation and SQLCI plan gate are
-complete. The Release runtime gate still requires a host that permits the
-NativeLite TCP listener; this host returns `Operation not permitted` during
-server startup, so no performance result is claimed here. A successful gate
-must show zero Stock-Level full scans, preserve all five transaction profiles,
-and retain the separate 50 TPS and 2-second production targets without
-claiming they are met.
+evidence, and final documentation. The implementation, SQLCI plan gate, and
+Release runtime gate are complete. The latest run measured 19.516 TPS with
+0.012002 variance and Stock-Level p95 1.292 seconds with zero Stock-Level full
+scans. The separate 50 TPS and 2-second production targets remain targets and
+are not claimed as met.
+
+## Milestone 17: New-Order execution path and OCC validation optimization
+
+M17 follows the measured M16 result: Stock-Level is no longer the dominant
+profile, while New-Order still pays for three independent header reads and OCC
+validation scans unrelated committed objects. The authoritative design is
+`plan/local-lite-tpcc-m17-design.md`.
+
+The first M17 change coalesces district next-order-id, warehouse tax, and
+customer discount into one prepared six-parameter join. It preserves one
+transaction snapshot and exact-one-row semantics, while reducing T4 request
+round trips before the write phase. The second change indexes committed OCC
+writes by object UID; validation probes only the object IDs present in the
+transaction read set, and index cleanup follows history collection and overflow
+eviction exactly.
+
+M17A-M17C are the source/design contract, T4 and five-profile correctness, and
+Release performance gates. `make local-lite-m17` is the aggregate command. The
+50 TPS and New-Order p95 <=1 second values remain engineering targets, not
+qualification claims; official TPC-C and `tpmC` remain explicitly excluded.
