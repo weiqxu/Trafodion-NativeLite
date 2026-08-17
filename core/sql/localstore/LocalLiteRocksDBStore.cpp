@@ -2315,14 +2315,33 @@ class LocalLiteMutexGuard
 {
 public:
   explicit LocalLiteMutexGuard(pthread_mutex_t *mutex)
-    : mutex_(mutex)
+    : mutex_(mutex), locked_(false)
   {
     pthread_mutex_lock(mutex_);
+    locked_ = true;
   }
 
   ~LocalLiteMutexGuard()
   {
-    pthread_mutex_unlock(mutex_);
+    unlock();
+  }
+
+  void unlock()
+  {
+    if (locked_)
+      {
+        pthread_mutex_unlock(mutex_);
+        locked_ = false;
+      }
+  }
+
+  void lock()
+  {
+    if (!locked_)
+      {
+        pthread_mutex_lock(mutex_);
+        locked_ = true;
+      }
   }
 
 private:
@@ -2330,6 +2349,7 @@ private:
   LocalLiteMutexGuard &operator=(const LocalLiteMutexGuard &);
 
   pthread_mutex_t *mutex_;
+  bool locked_;
 };
 
 struct LocalLiteJournalTable
@@ -4782,6 +4802,17 @@ static uint64_t monotonicMicros()
       static_cast<uint64_t>(now.tv_nsec) / 1000ULL;
 }
 
+static bool localLiteSynchronousCommit()
+{
+  const char *setting = getenv("TRAF_LOCAL_LITE_SYNC_COMMIT");
+  if (!setting || !setting[0])
+    return true;
+  return strcmp(setting, "0") != 0 &&
+      strcasecmp(setting, "false") != 0 &&
+      strcasecmp(setting, "off") != 0 &&
+      strcasecmp(setting, "async") != 0;
+}
+
 static void observeOccTransaction(uint64_t pointReads,
                                   uint64_t missingPointReads,
                                   uint64_t fullScans,
@@ -5203,12 +5234,14 @@ public:
     if (!validationPassed)
       {
         endOcc();
+        atomicPublication.unlock();
         transactionStore_.close();
         return false;
       }
     if (!validatePendingReferentialIntegrity(pending, error))
       {
         endOcc();
+        atomicPublication.unlock();
         transactionStore_.close();
         return false;
       }
@@ -5221,6 +5254,7 @@ public:
         {
           LocalLiteUnifiedWriteBatchDestroy(batch);
           endOcc();
+          atomicPublication.unlock();
           transactionStore_.close();
           return false;
         }
@@ -5232,7 +5266,8 @@ public:
       _exit(92);
     const uint64_t publicationStarted = monotonicMicros();
     const bool publicationPassed =
-        LocalLiteUnifiedWriteBatchCommit(batch, true, error);
+        LocalLiteUnifiedWriteBatchCommit(
+            batch, localLiteSynchronousCommit(), error);
     const uint64_t publicationFinished = monotonicMicros();
     if (publicationFinished >= publicationStarted)
       localLiteOccMetrics.publicationLatencyUs +=
@@ -5241,6 +5276,7 @@ public:
       {
         LocalLiteUnifiedWriteBatchDestroy(batch);
         endOcc();
+        atomicPublication.unlock();
         transactionStore_.close();
         return false;
       }
@@ -5254,6 +5290,7 @@ public:
                                     writeKeys);
     localLiteOccMetrics.transactionsCommitted++;
     endOcc();
+    atomicPublication.unlock();
     transactionStore_.close();
     return true;
   }
@@ -9585,7 +9622,9 @@ std::string LocalLiteOccMetricsJson()
       << ",\"validation_latency_us\":"
       << localLiteOccMetrics.validationLatencyUs
       << ",\"publication_latency_us\":"
-      << localLiteOccMetrics.publicationLatencyUs << "}";
+      << localLiteOccMetrics.publicationLatencyUs
+      << ",\"synchronous_commit\":"
+      << (localLiteSynchronousCommit() ? "true" : "false") << "}";
   return out.str();
 }
 

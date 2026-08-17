@@ -1808,7 +1808,79 @@ private:
         if (end && *end == '\0' && hold > 0 && hold <= 5000)
           std::this_thread::sleep_for(std::chrono::milliseconds(hold));
       }
-    Lng32 rc = cli.fetchRowsPrologue(executableSql.c_str(), TRUE);
+
+    // Transaction control is already represented by the current CLI
+    // context. Avoid compiling a one-line SQL statement through the full
+    // fetchRowsPrologue path for every JDBC BEGIN/COMMIT/ROLLBACK.
+    const bool ddlCommitBoundary = context->ddlStmtsExecuted() != FALSE;
+    const bool beginControl = !describeOnly &&
+        (normalizedSql == "BEGIN" || normalizedSql == "BEGIN WORK" ||
+         normalizedSql == "START TRANSACTION" ||
+         normalizedSql == "START TRANSACTION WORK");
+    const bool commitControl = !describeOnly && !ddlCommitBoundary &&
+        (normalizedSql == "COMMIT" || normalizedSql == "COMMIT WORK");
+    const bool rollbackControl = !describeOnly && !ddlCommitBoundary &&
+        (normalizedSql == "ROLLBACK" || normalizedSql == "ROLLBACK WORK");
+    Lng32 rc = 0;
+    if ((beginControl || commitControl || rollbackControl) &&
+        context->getTransaction() != NULL)
+      {
+        std::string transactionError;
+        ExTransaction *transaction = context->getTransaction();
+        bool transactionPassed = transaction != NULL;
+        if (transactionPassed && beginControl)
+          {
+            transactionPassed = transaction->beginLocalLiteTransaction(
+                &transactionError);
+            if (transactionPassed)
+              {
+                transaction->disableAutoCommit();
+                transaction->implicitXn() = FALSE;
+              }
+          }
+        else if (transactionPassed && commitControl)
+          {
+            context->closeAllCursors(ContextCli::CLOSE_ALL,
+                                     ContextCli::CLOSE_CURR_XN);
+            transactionPassed = transaction->commitLocalLiteTransaction(
+                &transactionError);
+            transaction->enableAutoCommit();
+          }
+        else if (transactionPassed && rollbackControl)
+          {
+            context->closeAllCursors(
+                ContextCli::CLOSE_ALL_INCLUDING_ANSI_PUBSUB_HOLDABLE_WHEN_CQD,
+                ContextCli::CLOSE_CURR_XN);
+            transactionPassed = transaction->rollbackLocalLiteTransaction(
+                &transactionError);
+            transaction->enableAutoCommit();
+          }
+        if (!transactionPassed)
+          {
+            result.error = transactionError.empty()
+                ? "NativeLite transaction context is unavailable"
+                : transactionError;
+            const size_t stateMarker = result.error.find("SQLSTATE ");
+            if (stateMarker != std::string::npos &&
+                result.error.size() >= stateMarker + 14)
+              result.sqlstate = result.error.substr(stateMarker + 9, 5);
+            else
+              result.sqlstate = "XX000";
+          }
+        else
+          result.commandTag = commandTag(sql, 0, 0);
+        if (session->cancelRequested.load() && result.ok())
+          {
+            result.sqlstate = "57014";
+            result.error = "canceling statement due to user request";
+          }
+        if (!result.ok() && currentTransactionInProgress())
+          session->failedTransaction = true;
+        activeExecutorRequests_.fetch_sub(1);
+        updateTransactionStatus(session);
+        return result;
+      }
+    rc = cli.fetchRowsPrologue(executableSql.c_str(), TRUE);
     if (rc < 0)
       {
         setDiagnosticsError(&cli, rc, &result);
