@@ -2754,6 +2754,12 @@ public:
     StatementSnapshot entry;
     entry.db = catalogDb_;
     entry.snapshot = catalogDb_ ? rocksdb_create_snapshot(catalogDb_) : NULL;
+    entry.readOptions = entry.snapshot ? rocksdb_readoptions_create() : NULL;
+    if (entry.readOptions)
+      {
+        rocksdb_readoptions_set_snapshot(entry.readOptions, entry.snapshot);
+        rocksdb_readoptions_set_fill_cache(entry.readOptions, 1);
+      }
     if (entry.snapshot)
       {
         // Every logical catalog/table handle is a prefix view over the same
@@ -2821,6 +2827,44 @@ public:
 
     (void) db;
     setError(error, "create local-lite unified RocksDB snapshot failed");
+    return false;
+  }
+
+  bool getStatementReadOptions(const std::string &path,
+                               rocksdb_t *db,
+                               const void *statementOwner,
+                               uint64_t statementExecutionId,
+                               const rocksdb_readoptions_t **readOptions,
+                               std::string *error)
+  {
+    if (readOptions)
+      *readOptions = NULL;
+    if (!statementOwner || !readOptions)
+      {
+        setError(error, "missing local-lite statement read context");
+        return false;
+      }
+
+    LocalLiteMutexGuard guard(&mutex_);
+    StatementKey key;
+    key.owner = statementOwner;
+    key.executionId = statementExecutionId;
+    StatementMap::iterator statement = statementSnapshots_.find(key);
+    if (statement == statementSnapshots_.end())
+      {
+        setError(error, "local-lite statement read context is not active");
+        return false;
+      }
+    SnapshotMap::iterator unified = statement->second.find(std::string());
+    if (unified != statement->second.end() && unified->second.readOptions)
+      {
+        *readOptions = unified->second.readOptions;
+        traceStatementSnapshot("REUSE_OPTIONS", path, statementExecutionId);
+        return true;
+      }
+
+    (void) db;
+    setError(error, "create local-lite unified RocksDB read options failed");
     return false;
   }
 
@@ -4347,6 +4391,7 @@ private:
   {
     rocksdb_t *db;
     const rocksdb_snapshot_t *snapshot;
+    rocksdb_readoptions_t *readOptions;
   };
 
   typedef std::map<std::string, StatementSnapshot> SnapshotMap;
@@ -4544,6 +4589,7 @@ private:
          it != snapshots.end(); ++it)
       {
         rocksdb_release_snapshot(it->second.db, it->second.snapshot);
+        rocksdb_readoptions_destroy(it->second.readOptions);
         traceStatementSnapshot("RELEASE", it->first, key.executionId);
       }
     snapshots.clear();
@@ -4558,6 +4604,7 @@ private:
         if (snapshot == statement->second.end())
           continue;
         rocksdb_release_snapshot(snapshot->second.db, snapshot->second.snapshot);
+        rocksdb_readoptions_destroy(snapshot->second.readOptions);
         traceStatementSnapshot("RELEASE", path,
                                statement->first.executionId);
         statement->second.erase(snapshot);
@@ -8854,6 +8901,7 @@ bool LocalLiteRocksDBStore::getRowByKey(const LocalLiteTableDef &table,
 
 static bool getRowByKeyAtSnapshot(rocksdb_t *db,
                                   const rocksdb_snapshot_t *snapshot,
+                                  const rocksdb_readoptions_t *sharedOptions,
                                   const std::string &storageKey,
                                   LocalLiteRow *row,
                                   bool *found,
@@ -8867,15 +8915,23 @@ static bool getRowByKeyAtSnapshot(rocksdb_t *db,
       return false;
     }
 
-  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
-  if (snapshot)
-    rocksdb_readoptions_set_snapshot(readOptions, snapshot);
+  rocksdb_readoptions_t *ownedOptions = NULL;
+  const rocksdb_readoptions_t *readOptions = sharedOptions;
+  if (!readOptions)
+    {
+      ownedOptions = rocksdb_readoptions_create();
+      readOptions = ownedOptions;
+      if (snapshot)
+        rocksdb_readoptions_set_snapshot(ownedOptions, snapshot);
+      rocksdb_readoptions_set_fill_cache(ownedOptions, 1);
+    }
   char *err = NULL;
   size_t valueLen = 0;
   char *value = rocksdb_get(db, readOptions,
                             storageKey.data(), storageKey.size(),
                             &valueLen, &err);
-  rocksdb_readoptions_destroy(readOptions);
+  if (ownedOptions)
+    rocksdb_readoptions_destroy(ownedOptions);
   if (!checkRocksError(err, "read local-lite row", error))
     return false;
   if (!value)
@@ -8901,7 +8957,7 @@ static bool getRowByKeyAtSnapshot(rocksdb_t *db,
   if (storageKey.size() > 0 && storageKey[0] == 'U')
     {
       std::string referencedKey = encodedValue;
-      return getRowByKeyAtSnapshot(db, snapshot, referencedKey,
+      return getRowByKeyAtSnapshot(db, snapshot, sharedOptions, referencedKey,
                                    row, found, error);
     }
 
@@ -8928,12 +8984,19 @@ bool LocalLiteRocksDBStore::getRowByKey(
     return false;
 
   const rocksdb_snapshot_t *snapshot = NULL;
+  const rocksdb_readoptions_t *readOptions = NULL;
   if (statementOwner &&
       !LocalLiteStorageManager::instance().getStatementSnapshot(
           path, db, statementOwner, statementExecutionId, &snapshot, error))
     return false;
+  if (statementOwner &&
+      !LocalLiteStorageManager::instance().getStatementReadOptions(
+          path, db, statementOwner, statementExecutionId, &readOptions,
+          error))
+    return false;
 
-  return getRowByKeyAtSnapshot(db, snapshot, storageKey, row, found, error);
+  return getRowByKeyAtSnapshot(db, snapshot, readOptions, storageKey,
+                               row, found, error);
 }
 
 bool LocalLiteRocksDBStore::scanRows(const LocalLiteTableDef &table,
@@ -9006,6 +9069,7 @@ bool LocalLiteRocksDBStore::scanIndexRange(
 
   const bool ownsSnapshot = (statementOwner == NULL);
   const rocksdb_snapshot_t *snapshot = NULL;
+  const rocksdb_readoptions_t *sharedReadOptions = NULL;
   if (ownsSnapshot)
     snapshot = rocksdb_create_snapshot(db);
   else if (!LocalLiteStorageManager::instance().getStatementSnapshot(
@@ -9019,8 +9083,23 @@ bool LocalLiteRocksDBStore::scanIndexRange(
     }
   rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
   rocksdb_readoptions_set_snapshot(readOptions, snapshot);
+  rocksdb_readoptions_set_fill_cache(readOptions, 1);
+  if (!ownsSnapshot &&
+      !LocalLiteStorageManager::instance().getStatementReadOptions(
+          tablePath(table), db, statementOwner, statementExecutionId,
+          &sharedReadOptions, error))
+    {
+      rocksdb_readoptions_destroy(readOptions);
+      return false;
+    }
+  if (sharedReadOptions)
+    {
+      rocksdb_readoptions_destroy(readOptions);
+      readOptions = const_cast<rocksdb_readoptions_t *>(sharedReadOptions);
+    }
   rocksdb_iterator_t *it = rocksdb_create_iterator(db, readOptions);
   std::map<std::string, LocalLiteRow> rowsByStorageKey;
+  std::vector<std::string> baseKeys;
   size_t coveringRows = 0;
   size_t baseLookups = 0;
   for (rocksdb_iter_seek(it, startKey.data(), startKey.size());
@@ -9041,7 +9120,8 @@ bool LocalLiteRocksDBStore::scanIndexRange(
                             &encodedRow, &covering, error))
         {
           rocksdb_iter_destroy(it);
-          rocksdb_readoptions_destroy(readOptions);
+          if (!sharedReadOptions)
+            rocksdb_readoptions_destroy(readOptions);
           if (ownsSnapshot)
             rocksdb_release_snapshot(db, snapshot);
           return false;
@@ -9050,7 +9130,6 @@ bool LocalLiteRocksDBStore::scanIndexRange(
         continue;
 
       LocalLiteRow row;
-      bool found = covering;
       if (covering)
         {
           row.rowId = 0;
@@ -9061,38 +9140,108 @@ bool LocalLiteRocksDBStore::scanIndexRange(
             }
           row.value = encodedRow;
           coveringRows++;
-        }
-      else if (!getRowByKeyAtSnapshot(db, snapshot, rowKey,
-                                      &row, &found, error))
-        {
-          rocksdb_iter_destroy(it);
-          rocksdb_readoptions_destroy(readOptions);
-          if (ownsSnapshot)
-            rocksdb_release_snapshot(db, snapshot);
-          return false;
+          rowsByStorageKey.insert(std::make_pair(rowKey, row));
         }
       else
-        baseLookups++;
-      if (!found)
         {
-          rocksdb_iter_destroy(it);
-          rocksdb_readoptions_destroy(readOptions);
-          if (ownsSnapshot)
-            rocksdb_release_snapshot(db, snapshot);
-          setError(error, "local-lite secondary index references a missing row");
-          return false;
+          baseKeys.push_back(rowKey);
         }
-      rowsByStorageKey.insert(std::make_pair(rowKey, row));
     }
 
   char *err = NULL;
   rocksdb_iter_get_error(it, &err);
   rocksdb_iter_destroy(it);
-  rocksdb_readoptions_destroy(readOptions);
+  if (!checkRocksError(err, "scan local-lite secondary index", error))
+    {
+      if (!sharedReadOptions)
+        rocksdb_readoptions_destroy(readOptions);
+      if (ownsSnapshot)
+        rocksdb_release_snapshot(db, snapshot);
+      return false;
+    }
+
+  if (!baseKeys.empty())
+    {
+      std::vector<const char *> keyPointers(baseKeys.size());
+      std::vector<size_t> keyLengths(baseKeys.size());
+      std::vector<char *> values(baseKeys.size(), NULL);
+      std::vector<size_t> valueLengths(baseKeys.size(), 0);
+      std::vector<char *> errors(baseKeys.size(), NULL);
+      for (size_t i = 0; i < baseKeys.size(); i++)
+        {
+          keyPointers[i] = baseKeys[i].data();
+          keyLengths[i] = baseKeys[i].size();
+        }
+      rocksdb_multi_get(db, readOptions, baseKeys.size(), &keyPointers[0],
+                        &keyLengths[0], &values[0], &valueLengths[0],
+                        &errors[0]);
+      baseLookups = baseKeys.size();
+      for (size_t i = 0; i < baseKeys.size(); i++)
+        {
+          if (errors[i])
+            {
+              const std::string message(errors[i]);
+              rocksdb_free(errors[i]);
+              setError(error, "read local-lite secondary index base row: " +
+                       message);
+              for (size_t j = i + 1; j < baseKeys.size(); j++)
+                if (errors[j]) rocksdb_free(errors[j]);
+              for (size_t j = 0; j < baseKeys.size(); j++)
+                if (values[j]) rocksdb_free(values[j]);
+              if (!sharedReadOptions)
+                rocksdb_readoptions_destroy(readOptions);
+              if (ownsSnapshot)
+                rocksdb_release_snapshot(db, snapshot);
+              return false;
+            }
+          LocalLiteRow row;
+          bool found = values[i] != NULL;
+          if (found)
+            {
+              std::string encodedValue(values[i], valueLengths[i]);
+              rocksdb_free(values[i]);
+              if (!decodeRowValue(encodedValue, &row.value, NULL))
+                {
+                  // Unique-key entries may be indirections. Preserve the
+                  // existing recursive path for that representation.
+                  if (!getRowByKeyAtSnapshot(
+                          db, snapshot, sharedReadOptions, baseKeys[i],
+                          &row, &found, error))
+                    {
+                      if (!sharedReadOptions)
+                        rocksdb_readoptions_destroy(readOptions);
+                      if (ownsSnapshot)
+                        rocksdb_release_snapshot(db, snapshot);
+                      return false;
+                    }
+                }
+              else
+                {
+                  row.rowId = 0;
+                  if (baseKeys[i].size() == 8)
+                    {
+                      size_t offset = 0;
+                      row.rowId = readUint64(baseKeys[i], &offset);
+                    }
+                }
+            }
+          if (!found)
+            {
+              setError(error,
+                       "local-lite secondary index references a missing row");
+              if (!sharedReadOptions)
+                rocksdb_readoptions_destroy(readOptions);
+              if (ownsSnapshot)
+                rocksdb_release_snapshot(db, snapshot);
+              return false;
+            }
+          rowsByStorageKey.insert(std::make_pair(baseKeys[i], row));
+        }
+    }
+  if (!sharedReadOptions)
+    rocksdb_readoptions_destroy(readOptions);
   if (ownsSnapshot)
     rocksdb_release_snapshot(db, snapshot);
-  if (!checkRocksError(err, "scan local-lite secondary index", error))
-    return false;
   for (std::map<std::string, LocalLiteRow>::const_iterator row =
            rowsByStorageKey.begin(); row != rowsByStorageKey.end(); ++row)
     rows->push_back(row->second);

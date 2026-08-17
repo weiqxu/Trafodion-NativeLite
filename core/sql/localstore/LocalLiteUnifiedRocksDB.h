@@ -67,6 +67,10 @@ char *LocalLiteRocksDBGet(rocksdb_t *db,
                           size_t keyLength,
                           size_t *valueLength,
                           char **error);
+void LocalLiteRocksDBMultiGet(
+    rocksdb_t *db, const rocksdb_readoptions_t *options, size_t keyCount,
+    const char *const *keys, const size_t *keyLengths, char **values,
+    size_t *valueLengths, char **errors);
 void LocalLiteRocksDBPut(rocksdb_t *db,
                          const rocksdb_writeoptions_t *options,
                          const char *key,
@@ -123,6 +127,7 @@ void LocalLiteRocksDBDestroy(const rocksdb_options_t *options,
 #define rocksdb_open LocalLiteRocksDBOpen
 #define rocksdb_close LocalLiteRocksDBClose
 #define rocksdb_get LocalLiteRocksDBGet
+#define rocksdb_multi_get LocalLiteRocksDBMultiGet
 #define rocksdb_put LocalLiteRocksDBPut
 #define rocksdb_delete LocalLiteRocksDBDelete
 #define rocksdb_write LocalLiteRocksDBWrite

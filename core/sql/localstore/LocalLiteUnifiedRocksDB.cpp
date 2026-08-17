@@ -72,7 +72,8 @@ struct LogicalIterator
 struct UnifiedState
 {
   UnifiedState()
-    : prepared(false), active(false), transactionDb(NULL), baseDb(NULL)
+    : prepared(false), active(false), transactionDb(NULL), baseDb(NULL),
+      blockCache(NULL), syncWriteOptions(NULL), asyncWriteOptions(NULL)
   {
   }
 
@@ -81,6 +82,9 @@ struct UnifiedState
   std::string root;
   rocksdb_transactiondb_t *transactionDb;
   rocksdb_t *baseDb;
+  rocksdb_cache_t *blockCache;
+  rocksdb_writeoptions_t *syncWriteOptions;
+  rocksdb_writeoptions_t *asyncWriteOptions;
 };
 
 UnifiedState unifiedState;
@@ -381,6 +385,38 @@ bool openUnifiedTarget(const std::string &root, std::string *error)
   rocksdb_options_t *options = rocksdb_options_create();
   rocksdb_options_set_create_if_missing(options, 0);
   rocksdb_options_set_paranoid_checks(options, 1);
+  const char *cacheText = getenv("TRAF_LOCAL_LITE_BLOCK_CACHE_BYTES");
+  // Keep the default conservative for existing deployments; operators can
+  // opt in after sizing the process RSS with the bounded cache knob.
+  uint64_t cacheBytes = 0;
+  if (cacheText && cacheText[0])
+    {
+      char *end = NULL;
+      const unsigned long long parsed = strtoull(cacheText, &end, 10);
+      if (end && *end == '\0')
+        cacheBytes = static_cast<uint64_t>(parsed);
+    }
+  if (cacheBytes > 0)
+    {
+      unifiedState.blockCache = rocksdb_cache_create_lru(
+          static_cast<size_t>(cacheBytes));
+      rocksdb_block_based_table_options_t *tableOptions =
+          rocksdb_block_based_options_create();
+      rocksdb_block_based_options_set_block_cache(
+          tableOptions, unifiedState.blockCache);
+      rocksdb_block_based_options_set_filter_policy(
+          tableOptions, rocksdb_filterpolicy_create_bloom(10));
+      rocksdb_block_based_options_set_cache_index_and_filter_blocks(
+          tableOptions, 1);
+      rocksdb_block_based_options_set_pin_l0_filter_and_index_blocks_in_cache(
+          tableOptions, 1);
+      rocksdb_options_set_block_based_table_factory(options, tableOptions);
+      rocksdb_block_based_options_destroy(tableOptions);
+    }
+  unifiedState.syncWriteOptions = rocksdb_writeoptions_create();
+  rocksdb_writeoptions_set_sync(unifiedState.syncWriteOptions, 1);
+  unifiedState.asyncWriteOptions = rocksdb_writeoptions_create();
+  rocksdb_writeoptions_set_sync(unifiedState.asyncWriteOptions, 0);
   rocksdb_transactiondb_options_t *transactionOptions =
       rocksdb_transactiondb_options_create();
   char *rocksError = NULL;
@@ -396,6 +432,15 @@ bool openUnifiedTarget(const std::string &root, std::string *error)
       setUnifiedOpenError(error, "open active LocalLite TransactionDB",
                           message);
       unifiedState.transactionDb = NULL;
+      rocksdb_writeoptions_destroy(unifiedState.syncWriteOptions);
+      rocksdb_writeoptions_destroy(unifiedState.asyncWriteOptions);
+      unifiedState.syncWriteOptions = NULL;
+      unifiedState.asyncWriteOptions = NULL;
+      if (unifiedState.blockCache)
+        {
+          rocksdb_cache_destroy(unifiedState.blockCache);
+          unifiedState.blockCache = NULL;
+        }
       return false;
     }
   unifiedState.baseDb =
@@ -405,6 +450,15 @@ bool openUnifiedTarget(const std::string &root, std::string *error)
       setStringError(error, "get active LocalLite TransactionDB base handle");
       rocksdb_transactiondb_close(unifiedState.transactionDb);
       unifiedState.transactionDb = NULL;
+      rocksdb_writeoptions_destroy(unifiedState.syncWriteOptions);
+      rocksdb_writeoptions_destroy(unifiedState.asyncWriteOptions);
+      unifiedState.syncWriteOptions = NULL;
+      unifiedState.asyncWriteOptions = NULL;
+      if (unifiedState.blockCache)
+        {
+          rocksdb_cache_destroy(unifiedState.blockCache);
+          unifiedState.blockCache = NULL;
+        }
       return false;
     }
   unifiedState.active = true;
@@ -453,6 +507,15 @@ void LocalLiteUnifiedRocksDBShutdown()
   if (unifiedState.transactionDb)
     rocksdb_transactiondb_close(unifiedState.transactionDb);
   unifiedState.transactionDb = NULL;
+  if (unifiedState.syncWriteOptions)
+    rocksdb_writeoptions_destroy(unifiedState.syncWriteOptions);
+  if (unifiedState.asyncWriteOptions)
+    rocksdb_writeoptions_destroy(unifiedState.asyncWriteOptions);
+  unifiedState.syncWriteOptions = NULL;
+  unifiedState.asyncWriteOptions = NULL;
+  if (unifiedState.blockCache)
+    rocksdb_cache_destroy(unifiedState.blockCache);
+  unifiedState.blockCache = NULL;
   unifiedState.active = false;
   unifiedState.prepared = false;
   unifiedState.root.clear();
@@ -509,11 +572,15 @@ bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
       setStringError(error, "LocalLite unified write batch is unavailable");
       return false;
     }
-  rocksdb_writeoptions_t *options = rocksdb_writeoptions_create();
-  rocksdb_writeoptions_set_sync(options, sync ? 1 : 0);
+  rocksdb_writeoptions_t *options = sync
+      ? unifiedState.syncWriteOptions : unifiedState.asyncWriteOptions;
+  if (!options)
+    {
+      setStringError(error, "LocalLite unified write options are unavailable");
+      return false;
+    }
   char *rocksError = NULL;
   rocksdb_write(unifiedState.baseDb, options, batch->physical, &rocksError);
-  rocksdb_writeoptions_destroy(options);
   if (rocksError)
     {
       setStringError(error, std::string("commit LocalLite unified batch: ") +
@@ -591,6 +658,27 @@ char *LocalLiteRocksDBGet(rocksdb_t *db,
   return rocksdb_get(logical->real, options,
                      storedKey.data(), storedKey.size(),
                      valueLength, error);
+}
+
+void LocalLiteRocksDBMultiGet(
+    rocksdb_t *db, const rocksdb_readoptions_t *options, size_t keyCount,
+    const char *const *keys, const size_t *keyLengths, char **values,
+    size_t *valueLengths, char **errors)
+{
+  LogicalDb *logical = reinterpret_cast<LogicalDb *>(db);
+  std::vector<std::string> storedKeys(keyCount);
+  std::vector<const char *> physicalKeys(keyCount);
+  std::vector<size_t> physicalLengths(keyCount);
+  for (size_t i = 0; i < keyCount; i++)
+    {
+      storedKeys[i] = physicalKey(logical, keys[i], keyLengths[i]);
+      physicalKeys[i] = storedKeys[i].data();
+      physicalLengths[i] = storedKeys[i].size();
+    }
+  rocksdb_multi_get(logical->real, options, keyCount,
+                    physicalKeys.empty() ? NULL : &physicalKeys[0],
+                    physicalLengths.empty() ? NULL : &physicalLengths[0],
+                    values, valueLengths, errors);
 }
 
 void LocalLiteRocksDBPut(rocksdb_t *db,

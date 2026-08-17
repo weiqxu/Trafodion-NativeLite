@@ -429,6 +429,9 @@ struct T4StatementState
 {
   std::string sql;
   size_t parameterCount;
+  std::vector<std::string> parameterParts;
+  std::string batchPrefix;
+  std::vector<std::string> batchParameterParts;
   bool oldFetchFormat;
   QueryResult result;
   size_t rowOffset;
@@ -2042,6 +2045,53 @@ bool substituteT4Parameters(const std::string &sql,
   return parameter == values.size();
 }
 
+bool compileT4ParameterTemplate(const std::string &sql,
+                                std::vector<std::string> *parts)
+{
+  parts->clear();
+  bool singleQuoted = false;
+  bool doubleQuoted = false;
+  size_t begin = 0;
+  for (size_t i = 0; i < sql.size(); i++)
+    {
+      if (sql[i] == '\'' && !doubleQuoted)
+        {
+          if (singleQuoted && i + 1 < sql.size() && sql[i + 1] == '\'')
+            i++;
+          else
+            singleQuoted = !singleQuoted;
+        }
+      else if (sql[i] == '"' && !singleQuoted)
+        doubleQuoted = !doubleQuoted;
+      else if (sql[i] == '?' && !singleQuoted && !doubleQuoted)
+        {
+          parts->push_back(sql.substr(begin, i - begin));
+          begin = i + 1;
+        }
+    }
+  parts->push_back(sql.substr(begin));
+  return !singleQuoted && !doubleQuoted;
+}
+
+bool substituteT4ParameterTemplate(
+    const std::vector<std::string> &parts,
+    const std::vector<std::string> &values,
+    const std::vector<bool> &nulls,
+    std::string *output)
+{
+  if (parts.empty() || parts.size() != values.size() + 1 ||
+      values.size() != nulls.size())
+    return false;
+  output->clear();
+  for (size_t i = 0; i < values.size(); i++)
+    {
+      *output += parts[i];
+      *output += nulls[i] ? "NULL" : quoteLiteral(values[i]);
+    }
+  *output += parts.back();
+  return true;
+}
+
 bool decodeT4ParameterRows(
     const std::string &data, size_t parameterCount, uint32_t rowCount,
     std::vector<std::vector<std::string> > *rows,
@@ -2089,12 +2139,18 @@ bool buildT4BatchSql(
     const std::string &sql,
     const std::vector<std::vector<std::string> > &rows,
     const std::vector<std::vector<bool> > &nullRows,
-    std::string *output)
+    std::string *output,
+    const std::vector<std::string> *parameterParts = NULL,
+    const std::string *batchPrefix = NULL,
+    const std::vector<std::string> *batchParameterParts = NULL)
 {
   if (rows.empty() || rows.size() != nullRows.size())
     return false;
   if (rows.size() == 1)
-    return substituteT4Parameters(sql, rows[0], nullRows[0], output);
+    return parameterParts
+        ? substituteT4ParameterTemplate(*parameterParts, rows[0],
+                                         nullRows[0], output)
+        : substituteT4Parameters(sql, rows[0], nullRows[0], output);
   if (firstWord(sql) != "INSERT")
     return false;
   const std::string upperSql = upper(sql);
@@ -2103,12 +2159,16 @@ bool buildT4BatchSql(
     return false;
   const size_t tupleOffset = values + 6;
   const std::string tupleTemplate = sql.substr(tupleOffset);
-  *output = sql.substr(0, tupleOffset);
+  *output = batchPrefix ? *batchPrefix : sql.substr(0, tupleOffset);
   for (size_t row = 0; row < rows.size(); row++)
     {
       std::string tuple;
-      if (!substituteT4Parameters(
-              tupleTemplate, rows[row], nullRows[row], &tuple))
+      const bool substituted = batchParameterParts
+          ? substituteT4ParameterTemplate(*batchParameterParts, rows[row],
+                                           nullRows[row], &tuple)
+          : substituteT4Parameters(tupleTemplate, rows[row], nullRows[row],
+                                   &tuple);
+      if (!substituted)
         return false;
       if (row != 0)
         output->push_back(',');
@@ -2887,6 +2947,27 @@ private:
     T4StatementState state;
     state.sql = sql;
     state.parameterCount = countT4Parameters(sql);
+    if (!compileT4ParameterTemplate(sql, &state.parameterParts))
+      {
+        sendT4Response(fd, request, std::string(), 1, 0);
+        return;
+      }
+    if (firstWord(sql) == "INSERT")
+      {
+        const std::string upperSql = upper(sql);
+        const size_t valuesOffset = upperSql.find("VALUES");
+        if (valuesOffset != std::string::npos)
+          {
+            const size_t tupleOffset = valuesOffset + 6;
+            state.batchPrefix = sql.substr(0, tupleOffset);
+            if (!compileT4ParameterTemplate(
+                    sql.substr(tupleOffset), &state.batchParameterParts))
+              {
+                sendT4Response(fd, request, std::string(), 1, 0);
+                return;
+              }
+          }
+      }
     // A bare NULL leaves some Trafodion predicates without an inferable input
     // type during Describe (for example, INT = NULL). Use a harmless text
     // literal; Describe compiles but never executes the substituted statement.
@@ -2977,7 +3058,11 @@ private:
     bool valid = decodeT4ParameterRows(
         data, state.parameterCount, rowCount, &rows, &nullRows);
     std::string sql;
-    if (!valid || !buildT4BatchSql(state.sql, rows, nullRows, &sql))
+    if (!valid || !buildT4BatchSql(
+            state.sql, rows, nullRows, &sql, &state.parameterParts,
+            state.batchPrefix.empty() ? NULL : &state.batchPrefix,
+            state.batchParameterParts.empty()
+                ? NULL : &state.batchParameterParts))
       {
         sendT4Response(fd, request, std::string(), 1, 0);
         return;

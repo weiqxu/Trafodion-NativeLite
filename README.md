@@ -160,6 +160,18 @@ an async-only diagnostic reduced aggregate publication latency from 3.928 s to
 0.144 s but raised throughput only to 20.173 TPS. These remain TPC-C-like
 engineering measurements, not official `tpmC` or production-readiness claims.
 
+M19 implements the next five execution-path optimizations: prepared T4
+parameter-template reuse, transaction ReadOptions reuse, secondary-index
+MultiGet, a bounded unified-RocksDB block cache/Bloom policy, and prepared
+rowset INSERT batching. The cache is controlled by
+sized by `TRAF_LOCAL_LITE_BLOCK_CACHE_BYTES` (`0` default; a positive value
+enables it), while
+synchronous commit remains the production default. The reduced T4 protocol
+still batches homogeneous INSERT rows; heterogeneous New-Order statements
+remain separate because no portable multi-statement request frame exists.
+M19 design and validation commands are recorded in
+[`plan/local-lite-tpcc-m19-design.md`](plan/local-lite-tpcc-m19-design.md).
+
 ### Functional boundary
 
 | Area | Validated local-lite surface | Not currently claimed |
