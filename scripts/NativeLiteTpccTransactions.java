@@ -74,6 +74,20 @@ public final class NativeLiteTpccTransactions {
   }
 
   static final class Terminal implements AutoCloseable {
+    private static final class StockState {
+      int quantity;
+      int ytd;
+      int orderCount;
+      final String districtInfo;
+
+      StockState(int quantity, int ytd, int orderCount, String districtInfo) {
+        this.quantity = quantity;
+        this.ytd = ytd;
+        this.orderCount = orderCount;
+        this.districtInfo = districtInfo;
+      }
+    }
+
     private final Connection connection;
     private final int terminalId;
     private final int WAREHOUSE;
@@ -99,6 +113,15 @@ public final class NativeLiteTpccTransactions {
       }
       statement.clearParameters();
       return statement;
+    }
+
+    private static String placeholders(int count) {
+      StringBuilder result = new StringBuilder();
+      for (int i = 0; i < count; i++) {
+        if (i != 0) result.append(',');
+        result.append('?');
+      }
+      return result.toString();
     }
 
     private static void expectOne(int affected, String operation) {
@@ -198,57 +221,112 @@ public final class NativeLiteTpccTransactions {
         newOrderInsert.setInt(3, orderId);
         expectOne(newOrderInsert.executeUpdate(), "new-order queue insert");
 
-        for (int line = 1; line <= LINES_PER_ORDER; line++) {
-          int item = district * 10 + line;
-          PreparedStatement itemQuery = prepared(
-              "SELECT I_PRICE FROM TPCC_ITEM WHERE I_ID=?");
-          itemQuery.setInt(1, item);
-          BigDecimal price;
-          try (ResultSet result = itemQuery.executeQuery()) {
-            require(result.next(), "item does not exist");
-            price = result.getBigDecimal(1);
-          }
-          PreparedStatement stockQuery = prepared(
-              "SELECT S_QUANTITY,S_YTD,S_ORDER_CNT,S_DIST_01 FROM TPCC_STOCK " +
-              "WHERE S_W_ID=? AND S_I_ID=?");
-          stockQuery.setInt(1, WAREHOUSE);
-          stockQuery.setInt(2, item);
-          int quantity;
-          int ytd;
-          int orderCount;
-          String districtInfo;
-          try (ResultSet result = stockQuery.executeQuery()) {
-            require(result.next(), "stock does not exist");
-            quantity = result.getInt(1);
-            ytd = result.getInt(2);
-            orderCount = result.getInt(3);
-            districtInfo = result.getString(4);
-          }
-          int adjusted = quantity >= 15 ? quantity - 5 : quantity + 86;
-          PreparedStatement stockUpdate = prepared(
-              "UPDATE TPCC_STOCK SET S_QUANTITY=?,S_YTD=?,S_ORDER_CNT=? " +
-              "WHERE S_W_ID=? AND S_I_ID=?");
-          stockUpdate.setInt(1, adjusted);
-          stockUpdate.setInt(2, ytd + 5);
-          stockUpdate.setInt(3, orderCount + 1);
-          stockUpdate.setInt(4, WAREHOUSE);
-          stockUpdate.setInt(5, item);
-          expectOne(stockUpdate.executeUpdate(), "new-order stock update");
+        int[] items = new int[LINES_PER_ORDER];
+        for (int line = 1; line <= LINES_PER_ORDER; line++)
+          items[line - 1] = district * 10 + line;
 
-          PreparedStatement lineInsert = prepared(
-              "INSERT INTO TPCC_ORDER_LINE VALUES (?,?,?,?,?,?,?,?,?,?)");
-          lineInsert.setInt(1, WAREHOUSE);
-          lineInsert.setInt(2, district);
-          lineInsert.setInt(3, orderId);
-          lineInsert.setInt(4, line);
-          lineInsert.setInt(5, item);
-          lineInsert.setInt(6, WAREHOUSE);
-          lineInsert.setNull(7, java.sql.Types.TIMESTAMP);
-          lineInsert.setInt(8, 5);
-          lineInsert.setBigDecimal(9, price.multiply(BigDecimal.valueOf(5)));
-          lineInsert.setString(10, districtInfo);
-          expectOne(lineInsert.executeUpdate(), "new-order line insert");
+        String itemSql = "SELECT I_ID,I_PRICE FROM TPCC_ITEM WHERE I_ID IN (" +
+            placeholders(items.length) + ")";
+        PreparedStatement itemQuery = prepared(itemSql);
+        for (int i = 0; i < items.length; i++)
+          itemQuery.setInt(i + 1, items[i]);
+        Map<Integer, BigDecimal> prices = new HashMap<>();
+        try (ResultSet result = itemQuery.executeQuery()) {
+          while (result.next())
+            prices.put(result.getInt(1), result.getBigDecimal(2));
         }
+
+        List<Integer> uniqueItems = new ArrayList<>();
+        Set<Integer> seenItems = new HashSet<>();
+        for (int item : items)
+          if (seenItems.add(item)) uniqueItems.add(item);
+        String stockSql =
+            "SELECT S_I_ID,S_QUANTITY,S_YTD,S_ORDER_CNT,S_DIST_01 " +
+            "FROM TPCC_STOCK WHERE S_W_ID=? AND S_I_ID IN (" +
+            placeholders(uniqueItems.size()) + ")";
+        PreparedStatement stockQuery = prepared(stockSql);
+        stockQuery.setInt(1, WAREHOUSE);
+        for (int i = 0; i < uniqueItems.size(); i++)
+          stockQuery.setInt(i + 2, uniqueItems.get(i));
+        Map<Integer, StockState> stockByItem = new HashMap<>();
+        try (ResultSet result = stockQuery.executeQuery()) {
+          while (result.next()) {
+            stockByItem.put(result.getInt(1), new StockState(
+                result.getInt(2), result.getInt(3), result.getInt(4),
+                result.getString(5)));
+          }
+        }
+
+        for (int item : items) {
+          require(prices.containsKey(item), "item does not exist");
+          require(stockByItem.containsKey(item), "stock does not exist");
+        }
+
+        BigDecimal[] amounts = new BigDecimal[items.length];
+        for (int line = 1; line <= LINES_PER_ORDER; line++) {
+          int item = items[line - 1];
+          StockState stock = stockByItem.get(item);
+          stock.quantity = stock.quantity >= 15 ? stock.quantity - 5 :
+              stock.quantity + 86;
+          stock.ytd += 5;
+          stock.orderCount++;
+          amounts[line - 1] = prices.get(item).multiply(BigDecimal.valueOf(5));
+        }
+
+        StringBuilder stockUpdateSql = new StringBuilder(
+            "UPDATE TPCC_STOCK SET S_QUANTITY=CASE ");
+        for (int item : uniqueItems)
+          stockUpdateSql.append("WHEN S_I_ID=? THEN ? ");
+        stockUpdateSql.append("ELSE S_QUANTITY END,S_YTD=CASE ");
+        for (int item : uniqueItems)
+          stockUpdateSql.append("WHEN S_I_ID=? THEN ? ");
+        stockUpdateSql.append("ELSE S_YTD END,S_ORDER_CNT=CASE ");
+        for (int item : uniqueItems)
+          stockUpdateSql.append("WHEN S_I_ID=? THEN ? ");
+        stockUpdateSql.append("ELSE S_ORDER_CNT END WHERE S_W_ID=? AND S_I_ID IN (")
+            .append(placeholders(uniqueItems.size())).append(')');
+        PreparedStatement stockUpdate = prepared(stockUpdateSql.toString());
+        int parameter = 1;
+        for (int item : uniqueItems) {
+          stockUpdate.setInt(parameter++, item);
+          stockUpdate.setInt(parameter++, stockByItem.get(item).quantity);
+        }
+        for (int item : uniqueItems) {
+          stockUpdate.setInt(parameter++, item);
+          stockUpdate.setInt(parameter++, stockByItem.get(item).ytd);
+        }
+        for (int item : uniqueItems) {
+          stockUpdate.setInt(parameter++, item);
+          stockUpdate.setInt(parameter++, stockByItem.get(item).orderCount);
+        }
+        stockUpdate.setInt(parameter++, WAREHOUSE);
+        for (int item : uniqueItems)
+          stockUpdate.setInt(parameter++, item);
+        require(stockUpdate.executeUpdate() == uniqueItems.size(),
+            "new-order stock batch affected the wrong number of rows");
+
+        StringBuilder lineInsertSql = new StringBuilder(
+            "INSERT INTO TPCC_ORDER_LINE VALUES ");
+        for (int line = 0; line < LINES_PER_ORDER; line++) {
+          if (line != 0) lineInsertSql.append(',');
+          lineInsertSql.append("(?,?,?,?,?,?,?,?,?,?)");
+        }
+        PreparedStatement lineInsert = prepared(lineInsertSql.toString());
+        parameter = 1;
+        for (int line = 0; line < LINES_PER_ORDER; line++) {
+          lineInsert.setInt(parameter++, WAREHOUSE);
+          lineInsert.setInt(parameter++, district);
+          lineInsert.setInt(parameter++, orderId);
+          lineInsert.setInt(parameter++, line + 1);
+          lineInsert.setInt(parameter++, items[line]);
+          lineInsert.setInt(parameter++, WAREHOUSE);
+          lineInsert.setNull(parameter++, java.sql.Types.TIMESTAMP);
+          lineInsert.setInt(parameter++, 5);
+          lineInsert.setBigDecimal(parameter++, amounts[line]);
+          lineInsert.setString(parameter++, stockByItem.get(items[line]).districtInfo);
+        }
+        require(lineInsert.executeUpdate() == LINES_PER_ORDER,
+            "new-order line batch affected the wrong number of rows");
         connection.commit();
       } catch (SQLException | RuntimeException failure) {
         rollbackAfterFailure(failure);
