@@ -146,8 +146,9 @@ M16 implementation, plan validation, and Release runtime qualification are
 complete. The latest run measured 19.516 TPS with 0.012002 variance and
 Stock-Level p95 1.292 s with zero Stock-Level full scans; New-Order p95 remains
 1.992 s. M17 is the active optimization milestone: it coalesces New-Order
-header reads into one prepared join and indexes committed OCC writes by object
-UID so validation avoids unrelated history entries. Its design and staged
+header and ITEM/STOCK batch reads into prepared joins and indexes committed OCC
+writes by object UID so validation avoids unrelated history entries. The latest
+run measured 21.332 TPS and 1.479 s New-Order p95. Its design and staged
 gates are in `plan/local-lite-tpcc-m17-design.md`; run `make local-lite-m17`.
 
 ### Functional boundary

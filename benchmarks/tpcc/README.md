@@ -145,16 +145,17 @@ Stock-Level full scans. New-Order remained the main latency bottleneck at
 
 M17 is specified in `plan/local-lite-tpcc-m17-design.md`. New-Order now reads
 the district sequence, warehouse tax, and customer discount through one
-prepared join in the same transaction snapshot, reducing T4 round trips while
-retaining an exact-one-row check. The OCC coordinator also maintains an
+prepared join, and coalesces the ITEM/STOCK batch reads into a second prepared
+join in the same transaction snapshot. The OCC coordinator also maintains an
 object-UID history index and validates only writes that can overlap the current
 transaction's point/range read set; cleanup and history-overflow behavior stay
 in lockstep with the existing committed history.
 
 The staged implementation gate is `make local-lite-m17` (A: source/design
 contract, B: T4 and five-profile correctness, C: Release performance). The
-2026-08-17 M17 run passed all gates at 19.667 TPS and 1.884 s New-Order p95,
-with zero conflicts, retries, unclassified errors, and Stock-Level full scans.
+2026-08-17 M17 run passed all gates at 21.332 TPS and 1.479 s New-Order p95
+after coalescing the ITEM/STOCK batch reads, with zero conflicts, retries,
+unclassified errors, and Stock-Level full scans.
 M17 retains the 50 TPS and New-Order p95 <=1 s engineering targets as measured
 targets, not claims. It does not change the MVCC/OCC isolation contract, add
 SSCC, or make an official TPC-C/`tpmC` claim.

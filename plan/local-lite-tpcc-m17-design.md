@@ -4,14 +4,17 @@
 
 M17 is the optimization milestone after M16's Stock-Level range path. It keeps
 the Trafodion MVCC/OCC model and the unified TransactionDB layout unchanged.
-The implementation has two production-facing changes:
+The implementation has three production-facing changes:
 
 1. New-Order coalesces the district next-order-id, warehouse tax, and customer
    discount reads into one prepared six-parameter join. These values are read
    from one transaction snapshot and the result is required to contain exactly
    one row. The write phase remains atomic and still batches stock updates and
    order-line inserts.
-2. OCC committed writes are indexed by table/object UID. Validation walks only
+2. New-Order coalesces the ITEM price and STOCK state batch reads into one
+   snapshot join. This removes another T4 round trip while preserving the
+   item/stock existence checks and the same stock mutation calculations.
+3. OCC committed writes are indexed by table/object UID. Validation walks only
    the indexed writes for each transaction read range instead of scanning every
    committed transaction and then filtering unrelated objects. The original
    history remains the overflow/accounting source; index entries are removed
@@ -41,14 +44,15 @@ only when the correctness gates pass and the report records the observed
 throughput, p95, retries, conflicts, scan counters, and environment. Formal
 TPC-C compliance and `tpmC` claims remain excluded.
 
-The M17 Release gate passed on 2026-08-17. It measured 19.667 TPS with
-0.045290 three-run variance, New-Order p95 1,884.007 ms, Payment p95
-1,384.527 ms, Order-Status p95 908.099 ms, Delivery p95 1,954.488 ms, and
-Stock-Level p95 1,523.906 ms. There were zero OCC conflicts, retries, and
-unclassified errors, and Stock-Level full scans remained zero. Validation
-latency was 218.735 ms aggregate and publication latency was 3.529 s. The
+The M17 Release gate passed on 2026-08-17. After coalescing the ITEM/STOCK
+batch reads, it measured 21.332 TPS with 0.007355 three-run variance,
+New-Order p95 1,478.846 ms, Payment p95 1,304.128 ms, Order-Status p95
+791.771 ms, Delivery p95 1,787.949 ms, and Stock-Level p95 1,472.182 ms.
+There were zero OCC conflicts, retries, and unclassified errors, and
+Stock-Level full scans remained zero. Validation latency was 211.690 ms
+aggregate and publication latency was 3.316 s. The
 validation-candidate counter now counts indexed write/range candidates rather
-than whole committed transactions, so its 20,181,545 value is not directly
+than whole committed transactions, so its 16,514,956 value is not directly
 comparable to the M16 baseline's 12,286; the latency and correctness counters
 are the comparable evidence.
 

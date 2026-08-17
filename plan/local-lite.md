@@ -1085,7 +1085,7 @@ The authoritative milestone definitions and completion gates are in
   - [x] Add staged source, T4/transaction, Release performance, and design-doc
     gates through `make local-lite-m17`.
   - [ ] Reach the engineering targets of 50 TPS and New-Order p95 at or below
-    1 second on a controlled host; M17 measured 19.667 TPS and 1.884 seconds
+    1 second on a controlled host; M17 measured 21.332 TPS and 1.479 seconds
     New-Order p95.
   - [x] Keep formal TPC-C compliance and `tpmC` claims excluded.
 

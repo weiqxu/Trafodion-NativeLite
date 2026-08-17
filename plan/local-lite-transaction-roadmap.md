@@ -544,12 +544,15 @@ validation scans unrelated committed objects. The authoritative design is
 The first M17 change coalesces district next-order-id, warehouse tax, and
 customer discount into one prepared six-parameter join. It preserves one
 transaction snapshot and exact-one-row semantics, while reducing T4 request
-round trips before the write phase. The second change indexes committed OCC
-writes by object UID; validation probes only the object IDs present in the
-transaction read set, and index cleanup follows history collection and overflow
-eviction exactly.
+round trips before the write phase. The second change coalesces the ITEM price
+and STOCK state batch reads into one prepared join. The third change indexes
+committed OCC writes by object UID; validation probes only the object IDs
+present in the transaction read set, and index cleanup follows history
+collection and overflow eviction exactly.
 
 M17A-M17C are the source/design contract, T4 and five-profile correctness, and
 Release performance gates. `make local-lite-m17` is the aggregate command. The
-50 TPS and New-Order p95 <=1 second values remain engineering targets, not
+latest run measured 21.332 TPS and 1.479 seconds New-Order p95, with zero
+conflicts, retries, unclassified errors, and Stock-Level full scans. The 50 TPS
+and New-Order p95 <=1 second values remain engineering targets, not
 qualification claims; official TPC-C and `tpmC` remain explicitly excluded.
