@@ -176,23 +176,27 @@ public final class NativeLiteTpccTransactions {
     void newOrder(int district, int customer) throws SQLException {
       sequence++;
       try {
-        int orderId = nextOrderId(district);
-        PreparedStatement warehouse = prepared(
-            "SELECT W_TAX FROM TPCC_WAREHOUSE WHERE W_ID=?");
-        warehouse.setInt(1, WAREHOUSE);
-        try (ResultSet result = warehouse.executeQuery()) {
-          require(result.next(), "warehouse does not exist");
-          result.getBigDecimal(1);
-        }
-        PreparedStatement customerQuery = prepared(
-            "SELECT C_DISCOUNT FROM TPCC_CUSTOMER " +
-            "WHERE C_W_ID=? AND C_D_ID=? AND C_ID=?");
-        customerQuery.setInt(1, WAREHOUSE);
-        customerQuery.setInt(2, district);
-        customerQuery.setInt(3, customer);
-        try (ResultSet result = customerQuery.executeQuery()) {
-          require(result.next(), "customer does not exist");
-          result.getBigDecimal(1);
+        // These three reads are part of the same New-Order snapshot. Keep
+        // them in one server request so the T4 endpoint does not pay three
+        // prepare/execute/result round trips before the write phase.
+        PreparedStatement header = prepared(
+            "SELECT D.D_NEXT_O_ID,W.W_TAX,C.C_DISCOUNT " +
+            "FROM TPCC_DISTRICT D,TPCC_WAREHOUSE W,TPCC_CUSTOMER C " +
+            "WHERE D.D_W_ID=? AND D.D_ID=? AND W.W_ID=? " +
+            "AND C.C_W_ID=? AND C.C_D_ID=? AND C.C_ID=?");
+        header.setInt(1, WAREHOUSE);
+        header.setInt(2, district);
+        header.setInt(3, WAREHOUSE);
+        header.setInt(4, WAREHOUSE);
+        header.setInt(5, district);
+        header.setInt(6, customer);
+        int orderId;
+        try (ResultSet result = header.executeQuery()) {
+          require(result.next(), "new-order header row does not exist");
+          orderId = result.getInt(1);
+          result.getBigDecimal(2);
+          result.getBigDecimal(3);
+          require(!result.next(), "new-order header returned extra rows");
         }
         PreparedStatement districtUpdate = prepared(
             "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=? " +

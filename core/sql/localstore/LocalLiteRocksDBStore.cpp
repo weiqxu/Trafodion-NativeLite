@@ -4808,6 +4808,13 @@ struct OccCommittedWriteSet
   OccWriteSet writes;
 };
 
+struct OccCommittedWriteRef
+{
+  const void *owner;
+  uint64_t sequence;
+  std::string key;
+};
+
 class LocalLiteOccCoordinator
 {
 public:
@@ -4842,35 +4849,34 @@ public:
         return false;
       }
 
-    for (size_t committed = 0; committed < history_.size(); committed++)
+    for (OccReadSet::const_iterator read = reads.begin();
+         read != reads.end(); ++read)
       {
-        if (history_[committed].sequence <= startSequence)
+        std::map<uint64_t, std::vector<OccCommittedWriteRef> >::const_iterator
+            indexed = indexedHistory_.find(read->objectUid);
+        if (indexed == indexedHistory_.end())
           continue;
-        if (history_[committed].owner == owner)
-          continue;
-        validationCandidates_++;
-        localLiteOccMetrics.validationCandidates++;
-        for (OccWriteSet::const_iterator write =
-               history_[committed].writes.begin();
-             write != history_[committed].writes.end(); ++write)
-          for (OccReadSet::const_iterator read = reads.begin();
-               read != reads.end(); ++read)
+        for (std::vector<OccCommittedWriteRef>::const_iterator write =
+               indexed->second.begin(); write != indexed->second.end(); ++write)
+          {
+            if (write->sequence <= startSequence || write->owner == owner)
+              continue;
+            validationCandidates_++;
+            localLiteOccMetrics.validationCandidates++;
             {
-              if (read->objectUid != write->first)
-                continue;
-              const bool intersects = write->second.empty() || read->full ||
+              const bool intersects = write->key.empty() || read->full ||
                   (read->start == read->end
-                       ? read->start == write->second
-                       : write->second >= read->start &&
-                           (read->end.empty() || write->second < read->end));
+                       ? read->start == write->key
+                       : write->key >= read->start &&
+                           (read->end.empty() || write->key < read->end));
               if (intersects)
                 {
                   if (getenv("TRAF_LOCAL_LITE_TRACE_OCC"))
                     fprintf(stderr,
                             "LOCAL_LITE_OCC_CONFLICT object_uid=%llu "
                             "write=%s read_start=%s read_end=%s full=%d\n",
-                            static_cast<unsigned long long>(write->first),
-                            localLiteHexKey(write->second).c_str(),
+                            static_cast<unsigned long long>(read->objectUid),
+                            localLiteHexKey(write->key).c_str(),
                             localLiteHexKey(read->start).c_str(),
                             localLiteHexKey(read->end).c_str(),
                             read->full ? 1 : 0);
@@ -4884,6 +4890,7 @@ public:
                   return false;
                 }
             }
+          }
       }
     return true;
   }
@@ -4899,10 +4906,41 @@ public:
     committed.sequence = sequence;
     committed.writes = writes;
     history_.push_back(committed);
+    for (OccWriteSet::const_iterator write = writes.begin();
+         write != writes.end(); ++write)
+      {
+        OccCommittedWriteRef ref;
+        ref.owner = owner;
+        ref.sequence = sequence;
+        ref.key = write->second;
+        indexedHistory_[write->first].push_back(ref);
+      }
     collect();
   }
 
 private:
+  void removeIndexedSequence(uint64_t sequence)
+  {
+    for (std::map<uint64_t, std::vector<OccCommittedWriteRef> >::iterator
+             indexed = indexedHistory_.begin();
+         indexed != indexedHistory_.end();)
+      {
+        std::vector<OccCommittedWriteRef> &writes = indexed->second;
+        for (std::vector<OccCommittedWriteRef>::iterator write = writes.begin();
+             write != writes.end();)
+          {
+            if (write->sequence == sequence)
+              write = writes.erase(write);
+            else
+              ++write;
+          }
+        if (writes.empty())
+          indexed = indexedHistory_.erase(indexed);
+        else
+          ++indexed;
+      }
+  }
+
   void collect()
   {
     uint64_t oldest = std::numeric_limits<uint64_t>::max();
@@ -4912,7 +4950,11 @@ private:
 
     while (!history_.empty() &&
            (active_.empty() || history_.front().sequence <= oldest))
-      history_.erase(history_.begin());
+      {
+        const uint64_t sequence = history_.front().sequence;
+        history_.erase(history_.begin());
+        removeIndexedSequence(sequence);
+      }
 
     size_t writeCount = 0;
     for (size_t i = 0; i < history_.size(); i++)
@@ -4922,7 +4964,9 @@ private:
         overflowSequence_ = std::max(overflowSequence_,
                                      history_.front().sequence);
         writeCount -= history_.front().writes.size();
+        const uint64_t sequence = history_.front().sequence;
         history_.erase(history_.begin());
+        removeIndexedSequence(sequence);
       }
     if (active_.empty())
       overflowSequence_ = 0;
@@ -4930,6 +4974,7 @@ private:
 
   std::map<const void *, uint64_t> active_;
   std::vector<OccCommittedWriteSet> history_;
+  std::map<uint64_t, std::vector<OccCommittedWriteRef> > indexedHistory_;
   uint64_t overflowSequence_;
   uint64_t validationCandidates_;
   uint64_t validationConflicts_;
