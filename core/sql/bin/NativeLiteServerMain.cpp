@@ -86,6 +86,8 @@ const int32_t kT4ReadResponseFirst = 3;
 std::atomic<bool> gStopping(false);
 std::atomic<int> gListenFd(-1);
 
+bool currentTransactionInProgress();
+
 uint16_t getU16(const char *p)
 {
   uint16_t value;
@@ -1159,6 +1161,7 @@ private:
 
   void createSession(EngineRequest *request)
   {
+    std::lock_guard<std::mutex> lifecycleLock(contextLifecycleMutex_);
     std::shared_ptr<Session> session = request->session;
     SQL_EXEC_SwitchContext_Internal(defaultContext_, NULL, TRUE);
     Lng32 rc = SQL_EXEC_CreateContext(&session->contextHandle, NULL, 0);
@@ -1251,6 +1254,7 @@ private:
 
   void destroySession(EngineRequest *request)
   {
+    std::lock_guard<std::mutex> lifecycleLock(contextLifecycleMutex_);
     std::shared_ptr<Session> session = request->session;
     if (!session || session->contextHandle == 0)
       {
@@ -1261,7 +1265,8 @@ private:
     if (switchTo(session))
       {
         ContextCli *context = GetCliGlobals()->currContext();
-        context->getTransaction()->resetLocalLiteTransaction();
+        if (context && context->getTransaction())
+          context->getTransaction()->resetLocalLiteTransaction();
         SQL_EXEC_ResetContext(handle, NULL);
       }
     SQL_EXEC_SwitchContext_Internal(defaultContext_, NULL, TRUE);
@@ -1290,8 +1295,7 @@ private:
 
   void updateTransactionStatus(const std::shared_ptr<Session> &session)
   {
-    ContextCli *context = GetCliGlobals()->currContext();
-    bool active = context && context->getTransaction()->xnInProgress();
+    bool active = currentTransactionInProgress();
     if (!active)
       {
         session->failedTransaction = false;
@@ -1442,9 +1446,11 @@ private:
 
         ContextCli *context = GetCliGlobals()->currContext();
         int statementToken = 0;
-        LocalLiteTxnContext *txn = context->getLocalLiteTxnContext();
+        LocalLiteTxnContext *txn = context && context->getTransaction()
+            ? context->getLocalLiteTxnContext() : NULL;
         uint64_t sequence = ++session->statementSequence;
-        LocalLiteTxnManager::beginStatement(txn, &statementToken, sequence);
+        if (txn)
+          LocalLiteTxnManager::beginStatement(txn, &statementToken, sequence);
         long elapsed = 0;
         while (elapsed < milliseconds && !session->cancelRequested.load())
           {
@@ -1452,7 +1458,8 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(interval));
             elapsed += interval;
           }
-        LocalLiteTxnManager::endStatement(txn, &statementToken, sequence);
+        if (txn)
+          LocalLiteTxnManager::endStatement(txn, &statementToken, sequence);
         if (session->cancelRequested.load())
           {
             result.sqlstate = "57014";
@@ -1689,13 +1696,22 @@ private:
         result.error = "NativeLite session is closed";
         return result;
       }
+    if (!GetCliGlobals() || !GetCliGlobals()->currContext())
+      {
+        std::cerr << "NativeLite missing current CLI context after switch"
+                  << " session=" << session.get()
+                  << " handle=" << session->contextHandle << std::endl;
+        result.sqlstate = "08003";
+        result.error = "NativeLite session context is unavailable";
+        return result;
+      }
     applySessionEnvironment(session);
 
     if (session->cancelRequested.load())
       {
         result.sqlstate = "57014";
         result.error = "canceling statement due to user request";
-        if (GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
+        if (currentTransactionInProgress())
           session->failedTransaction = true;
         updateTransactionStatus(session);
         return result;
@@ -1718,8 +1734,7 @@ private:
             result.sqlstate = "57014";
             result.error = "canceling statement due to user request";
           }
-        if (!result.ok() &&
-            GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
+        if (!result.ok() && currentTransactionInProgress())
           session->failedTransaction = true;
         updateTransactionStatus(session);
         return result;
@@ -1733,8 +1748,7 @@ private:
             result.sqlstate = "57014";
             result.error = "canceling statement due to user request";
           }
-        if (!result.ok() &&
-            GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
+        if (!result.ok() && currentTransactionInProgress())
           session->failedTransaction = true;
         updateTransactionStatus(session);
         return result;
@@ -1766,8 +1780,7 @@ private:
                 result.sqlstate = "57014";
                 result.error = "canceling statement due to user request";
               }
-            if (!result.ok() &&
-                GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
+            if (!result.ok() && currentTransactionInProgress())
               session->failedTransaction = true;
             updateTransactionStatus(session);
             return result;
@@ -1845,8 +1858,7 @@ private:
         result.sqlstate = "57014";
         result.error = "canceling statement due to user request";
       }
-    if (!result.ok() &&
-        GetCliGlobals()->currContext()->getTransaction()->xnInProgress())
+    if (!result.ok() && currentTransactionInProgress())
       session->failedTransaction = true;
     activeExecutorRequests_.fetch_sub(1);
     updateTransactionStatus(session);
@@ -1866,6 +1878,7 @@ private:
   SqlciEnv *bootstrapEnv_;
   std::mutex catalogMutex_;
   std::mutex utilityMutex_;
+  std::mutex contextLifecycleMutex_;
   std::atomic<int> activeExecutorRequests_;
   std::atomic<int> maximumExecutorRequests_;
   LocalLiteRocksDBStore storeLease_;
@@ -1883,6 +1896,18 @@ std::string quoteLiteral(const std::string &value)
     }
   result.push_back('\'');
   return result;
+}
+
+bool currentTransactionInProgress()
+{
+  CliGlobals *globals = GetCliGlobals();
+  ContextCli *context = globals ? globals->currContext() : NULL;
+  if (!context)
+    return false;
+  ExTransaction *transaction = context->getTransaction();
+  if (!transaction)
+    return false;
+  return transaction->xnInProgress();
 }
 
 size_t countT4Parameters(const std::string &sql)
@@ -2104,7 +2129,11 @@ public:
                    const std::string &unixSocket)
       : host_(host), port_(port), unixSocket_(unixSocket), listenFd_(-1),
         ownsUnixSocket_(false), unixSocketDevice_(0), unixSocketInode_(0),
-        nextDialogueId_(static_cast<int32_t>(getpid()) * 1000)
+        // Dialogue ids are local to this server process.  Keep them within
+        // the signed 32-bit range expected by the T4 JDBC driver; using the
+        // process id as a prefix overflows once WSL process ids grow past
+        // INT32_MAX / 1000.
+        nextDialogueId_(0)
   {
   }
 
@@ -2707,10 +2736,12 @@ private:
         sendT4Response(fd, request, std::string(), 1, 0);
         return;
       }
-    if (!session->autoCommit && session->transactionStatus.load() == 'I')
+    if (!session->autoCommit && session->transactionStatus.load() == 'I' &&
+        !LocalLiteSqlTable_isUtilityStatement(sql.c_str()))
       {
         QueryResult begin = engine_.execute(session, "BEGIN");
-        if (!begin.ok())
+        if (!begin.ok() && begin.error.find("already active") ==
+                std::string::npos)
           {
             std::string reply;
             appendT4ExecuteReply(&reply, begin);
@@ -2879,8 +2910,21 @@ private:
         sendT4Response(fd, request, std::string(), 1, 0);
         return;
       }
-    if (!session->autoCommit && session->transactionStatus.load() == 'I')
-      engine_.execute(session, "BEGIN");
+    if (!session->autoCommit && session->transactionStatus.load() == 'I' &&
+        !LocalLiteSqlTable_isUtilityStatement(sql.c_str()))
+      {
+        QueryResult begin = engine_.execute(session, "BEGIN");
+        if (!begin.ok() && begin.error.find("already active") ==
+                std::string::npos)
+          {
+            state.result = begin;
+            state.rowOffset = 0;
+            std::string reply;
+            appendT4ExecuteReply(&reply, state.result);
+            sendT4Response(fd, request, reply);
+            return;
+          }
+      }
     state.result = engine_.execute(session, sql);
     state.rowOffset = 0;
     std::string reply;
@@ -3208,6 +3252,16 @@ private:
         return;
       }
     result = engine_.execute(session, option == 1 ? "ROLLBACK" : "COMMIT");
+    // JDBC permits commit/rollback when no work has started in the current
+    // transaction.  LocalLite's transaction manager reports that condition as
+    // -8001; expose it as the required no-op instead of a driver error.
+    if (!result.ok() &&
+        result.error.find("no active local-lite transaction") !=
+            std::string::npos)
+      {
+        result = QueryResult();
+        result.commandTag = option == 1 ? "ROLLBACK" : "COMMIT";
+      }
     std::string reply;
     if (result.ok())
       {
