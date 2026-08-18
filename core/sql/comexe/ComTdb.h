@@ -117,6 +117,7 @@ struct ex_eye_catcher
 #define eye_HDFS_SCAN                                            "HDFS"
 #define eye_HIVE_MD                                                "HVMD"
 #define eye_HBASE_ACCESS                                      "HBSA"
+#define eye_LOCAL_LITE_ROCKSDB_SCAN                           "LLRS"
 #define eye_HBASE_COPROC_AGGR                       "HBCA"
 #define eye_AQR_WNR_INS                                             "UAWI"
 #define eye_ORC_AGGR                                             "ORCA"
@@ -291,6 +292,10 @@ public:
     ex_HIVE_TRUNCATE = 153,
     ex_LOB_UPDATE_UTIL = 154,
     ex_HIVE_QUERY = 155,
+    // NativeLite has a deliberately separate scan TDB.  It must not share
+    // the HBase access TDB layout: the local engine owns its key binding and
+    // storage lookup lifecycle.
+    ex_LOCAL_LITE_ROCKSDB_SCAN = 156,
     ex_LAST = 9999              // not used
   };
 
@@ -1202,5 +1207,3 @@ class ComTdbVirtObjCommentInfo : public ComTdbVirtTableBase
 
 
 #endif /* COMTDB_H */
-
-

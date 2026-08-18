@@ -730,12 +730,12 @@ ISO88591 descriptors.
 `SELECT`. All supported queries, including `VALUES` queries and local table
 queries, fall through to CLI prepare and executor execution. Local table scans
 bind through the local catalog NATable path and execute through
-`LocalLiteHbaseScanTcb`.
+`LocalLiteRocksdbScanTcb`.
 
 ### Executor Scan TCB
 
 `core/sql/executor/LocalLiteStorageStubs.cpp` now builds
-`LocalLiteHbaseScanTcb` for local-lite `ExHbaseAccessTdb::SELECT_` plans. The
+`LocalLiteRocksdbScanTcb` for local-lite `ExHbaseAccessTdb::SELECT_` plans. The
 TCB loads table metadata and rows from `LocalLiteRocksDBStore`, uses
 `LocalLiteRowCodec` to project the persisted binary aligned payload through the
 fetched-column list, writes those values into the compiler-generated binary
@@ -1238,7 +1238,7 @@ The authoritative milestone definitions and completion gates are in
 - [x] **Replace the SQLCI `SELECT *` bypass with an executor TCB for local table
   scans.**
   - Implemented in `core/sql/executor/LocalLiteStorageStubs.cpp` as
-    `LocalLiteHbaseScanTcb`, using the existing HBase access TDB shape only as
+    `LocalLiteRocksdbScanTcb`, using the existing HBase access TDB shape only as
     a carrier for local table scan metadata.
   - `core/sql/comexe/ComTdbHbaseAccess.h` grants the local-lite scan TCB access
     to the compiler-generated work CRI, tuple indexes, and expressions without
@@ -1454,6 +1454,23 @@ make local-lite-m11
 ```
 
 ## Design Rules
+
+## M20 Prepared Plans and Server Batches
+
+- [x] Keep T4 `Prepare` state as a server-owned CLI plan with input
+  descriptors and bound values. For keyed local-lite predicates, retain the
+  prepared protocol contract but specialize bound SQL because the reduced
+  compiler cannot expose a key-aware parameter-marker plan yet.
+- [x] Execute INSERT rowsets in one server request and support quoted-string
+  aware semicolon batches for ExecuteDirect/compatibility Execute.
+- [x] Switch the TPCC New-Order mutation phase to one parameterized
+  multi-statement server batch after the read snapshot phase.
+- [x] Add T4 JDBC and TPCC validation; the default two-warehouse/two-terminal
+  run now passes with 1.819 TPS and zero client/server OCC conflicts. Keep
+  formal TPC-C/tpmC claims excluded and track direct bound-key plans as the
+  next optimization.
+
+Detailed design and current validation limits: `plan/local-lite-tpcc-m20-design.md`.
 
 - Keep the full Trafodion build unchanged unless `TRAF_LOCAL_LITE=1` is set.
 - Keep all local-lite behavior compile-time gated by `TRAF_LOCAL_LITE`.

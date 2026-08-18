@@ -93,6 +93,20 @@ public final class NativeLiteT4JdbcTest {
     }
   }
 
+  private static void testServerBatch(Connection connection) throws SQLException {
+    try (Statement statement = connection.createStatement()) {
+      statement.execute("INSERT INTO " + TABLE +
+          " VALUES (3, 'batch-three'); INSERT INTO " + TABLE +
+          " VALUES (4, 'batch-four')");
+    }
+    require("batch-three".equals(queryString(connection,
+        "SELECT note FROM " + TABLE + " WHERE id = 3")),
+        "server batch did not execute first statement");
+    require("batch-four".equals(queryString(connection,
+        "SELECT note FROM " + TABLE + " WHERE id = 4")),
+        "server batch did not execute second statement");
+  }
+
   private static void testPreparedBatch(Connection connection)
       throws SQLException {
     try (PreparedStatement insert = connection.prepareStatement(
@@ -220,6 +234,7 @@ public final class NativeLiteT4JdbcTest {
       execute(connection, "CREATE TABLE " + TABLE +
           "(id INT NOT NULL PRIMARY KEY, note VARCHAR(80))");
       testPrepared(connection);
+      testServerBatch(connection);
       testPreparedBatch(connection);
       testResultTypes(connection);
       testMetadata(connection);

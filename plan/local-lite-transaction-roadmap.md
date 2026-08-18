@@ -26,7 +26,7 @@ and transactional-storage path:
   local RocksDB catalog metadata.
 - `INSERT INTO ... VALUES` and `INSERT ... SELECT` execute through
   `LocalLiteHbaseInsertTcb`.
-- `SELECT` executes through `LocalLiteHbaseScanTcb`.
+- `SELECT` executes through `LocalLiteRocksdbScanTcb`.
 - Executor scan can consume encoded `listOfGetRows()` row-key requests through
   `LocalLiteTxn::getRowByKey()` and falls back to full scan when no get-row
   request is present.
@@ -200,7 +200,7 @@ Give scans a stable statement snapshot.
 Tasks:
 
 - Add snapshot acquisition to `LocalLiteTxn` for read statements.
-- Make `LocalLiteHbaseScanTcb` scan with the statement snapshot.
+- Make `LocalLiteRocksdbScanTcb` scan with the statement snapshot.
 - Release snapshots when the statement finishes, errors, or is cancelled.
 - Preserve current binary row materialization and projection mapping.
 

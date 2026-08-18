@@ -87,6 +87,15 @@ std::atomic<bool> gStopping(false);
 std::atomic<int> gListenFd(-1);
 
 bool currentTransactionInProgress();
+size_t countT4Parameters(const std::string &sql);
+bool rewriteT4ParametersAsVarchar(const std::string &sql,
+                                  std::string *output);
+bool substituteT4Parameters(const std::string &sql,
+                            const std::vector<std::string> &values,
+                            const std::vector<bool> &nulls,
+                            std::string *output);
+bool splitT4Statements(const std::string &sql,
+                       std::vector<std::string> *statements);
 
 uint16_t getU16(const char *p)
 {
@@ -433,10 +442,13 @@ struct T4StatementState
   std::string batchPrefix;
   std::vector<std::string> batchParameterParts;
   bool oldFetchFormat;
+  bool prepared;
+  std::shared_ptr<struct NativeLitePreparedPlan> preparedPlan;
   QueryResult result;
   size_t rowOffset;
   T4StatementState()
-      : parameterCount(0), oldFetchFormat(false), rowOffset(0) {}
+      : parameterCount(0), oldFetchFormat(false), prepared(false),
+        rowOffset(0) {}
 };
 
 struct T4TypeInfo
@@ -637,6 +649,29 @@ std::string encodeT4OldRows(const QueryResult &result, size_t begin,
   return values;
 }
 
+struct NativeLitePreparedParameter
+{
+  Lng32 fsDatatype;
+  Lng32 length;
+  Lng32 indOffset;
+  Lng32 varOffset;
+
+  NativeLitePreparedParameter()
+      : fsDatatype(0), length(0), indOffset(-1), varOffset(-1) {}
+};
+
+struct NativeLitePreparedPlan
+{
+  std::unique_ptr<ExeCliInterface> cli;
+  std::string sql;
+  std::string sourceSql;
+  QueryResult description;
+  std::vector<NativeLitePreparedParameter> parameters;
+  bool executed;
+
+  NativeLitePreparedPlan() : executed(false) {}
+};
+
 struct Session
 {
   SQLCTX_HANDLE contextHandle;
@@ -664,6 +699,8 @@ enum RequestType
   REQUEST_CREATE,
   REQUEST_EXECUTE,
   REQUEST_DESCRIBE,
+  REQUEST_PREPARE,
+  REQUEST_EXECUTE_PREPARED,
   REQUEST_DESTROY,
   REQUEST_STOP
 };
@@ -673,6 +710,9 @@ struct EngineRequest
   RequestType type;
   std::shared_ptr<Session> session;
   std::string sql;
+  std::shared_ptr<NativeLitePreparedPlan> preparedPlan;
+  std::vector<std::vector<std::string> > parameterRows;
+  std::vector<std::vector<bool> > parameterNullRows;
   QueryResult result;
   bool success;
   std::string error;
@@ -970,6 +1010,61 @@ public:
     return request.result;
   }
 
+  std::shared_ptr<NativeLitePreparedPlan> prepare(
+      const std::shared_ptr<Session> &session, const std::string &sql,
+      QueryResult *result)
+  {
+    EngineRequest request(REQUEST_PREPARE);
+    request.session = session;
+    request.sql = sql;
+    session->cancelRequested.store(false);
+    session->statementPending.store(true);
+    submit(&request);
+    session->statementPending.store(false);
+    session->cancelRequested.store(false);
+    if (result)
+      *result = request.result;
+    return request.preparedPlan;
+  }
+
+  QueryResult executePrepared(
+      const std::shared_ptr<Session> &session,
+      const std::shared_ptr<NativeLitePreparedPlan> &plan,
+      const std::vector<std::vector<std::string> > &rows,
+      const std::vector<std::vector<bool> > &nullRows)
+  {
+    EngineRequest request(REQUEST_EXECUTE_PREPARED);
+    request.session = session;
+    request.preparedPlan = plan;
+    request.parameterRows = rows;
+    request.parameterNullRows = nullRows;
+    session->cancelRequested.store(false);
+    session->statementPending.store(true);
+    submit(&request);
+    session->statementPending.store(false);
+    session->cancelRequested.store(false);
+    return request.result;
+  }
+
+  QueryResult executeBatch(const std::shared_ptr<Session> &session,
+                           const std::vector<std::string> &statements)
+  {
+    QueryResult result;
+    if (statements.empty())
+      {
+        result.sqlstate = "42601";
+        result.error = "NativeLite batch contains no statements";
+        return result;
+      }
+    for (size_t index = 0; index < statements.size(); index++)
+      {
+        result = execute(session, statements[index]);
+        if (!result.ok())
+          return result;
+      }
+    return result;
+  }
+
   void destroy(const std::shared_ptr<Session> &session)
   {
     if (!session || session->contextHandle == 0)
@@ -1029,7 +1124,16 @@ public:
 private:
   void submit(EngineRequest *request)
   {
-    if (request->type != REQUEST_STOP)
+    // CLI contexts, global_sqlci_env and the compiler/executor heaps are
+    // worker-thread state.  Running requests directly on each JDBC client
+    // thread races those globals as soon as the TPCC loader opens many
+    // sessions (the M15 32-way loader exposed this as an FBString assert).
+    // Queue all client requests through the engine worker.  A statement can
+    // legitimately issue an internal request while already on that worker
+    // (for example the prepared-predicate compatibility path), so preserve a
+    // direct path only for this re-entrant case.
+    if (request->type != REQUEST_STOP &&
+        std::this_thread::get_id() == worker_.get_id())
       {
         runDirect(request);
         return;
@@ -1067,6 +1171,12 @@ private:
       request->result = runStatement(request->session, request->sql, true);
     else if (request->type == REQUEST_EXECUTE)
       request->result = runStatement(request->session, request->sql, false);
+    else if (request->type == REQUEST_PREPARE)
+      prepareStatement(request);
+    else if (request->type == REQUEST_EXECUTE_PREPARED)
+      request->result = executePreparedStatement(
+          request->session, request->preparedPlan,
+          request->parameterRows, request->parameterNullRows);
   }
 
   void finish(EngineRequest *request)
@@ -1683,6 +1793,450 @@ private:
     return Cell(value);
   }
 
+  bool preparedParameterSupported(Lng32 fsDatatype) const
+  {
+    if (DFS2REC::isAnyCharacter(fsDatatype))
+      return true;
+    switch (fsDatatype)
+      {
+      case REC_BOOLEAN:
+      case REC_BIN8_SIGNED:
+      case REC_BIN8_UNSIGNED:
+      case REC_BIN16_SIGNED:
+      case REC_BIN16_UNSIGNED:
+      case REC_BPINT_UNSIGNED:
+      case REC_BIN32_SIGNED:
+      case REC_BIN32_UNSIGNED:
+      case REC_BIN64_SIGNED:
+      case REC_BIN64_UNSIGNED:
+      case REC_FLOAT32:
+      case REC_FLOAT64:
+        return true;
+      default:
+        return false;
+      }
+  }
+
+  bool bindPreparedParameters(
+      const std::shared_ptr<NativeLitePreparedPlan> &plan,
+      const std::vector<std::string> &values,
+      const std::vector<bool> &nulls, std::string *error)
+  {
+    if (!plan || !plan->cli || values.size() != plan->parameters.size() ||
+        nulls.size() != values.size())
+      {
+        if (error)
+          *error = "NativeLite prepared parameter count mismatch";
+        return false;
+      }
+    char *input = plan->cli->inputBuf();
+    const Lng32 inputLength = plan->cli->inputDatalen();
+    if (inputLength > 0 && !input)
+      {
+        if (error)
+          *error = "NativeLite prepared input buffer is unavailable";
+        return false;
+      }
+    if (input && inputLength > 0)
+      memset(input, 0, static_cast<size_t>(inputLength));
+
+    for (size_t index = 0; index < values.size(); index++)
+      {
+        const NativeLitePreparedParameter &parameter =
+            plan->parameters[index];
+        if (parameter.indOffset >= 0)
+          *reinterpret_cast<int16_t *>(input + parameter.indOffset) =
+              nulls[index] ? -1 : 0;
+        if (nulls[index])
+          continue;
+        if (parameter.varOffset < 0 || parameter.length <= 0)
+          {
+            if (error)
+              *error = "NativeLite prepared input descriptor has no data slot";
+            return false;
+          }
+        char *target = input + parameter.varOffset;
+        const std::string &value = values[index];
+        if (DFS2REC::isAnyCharacter(parameter.fsDatatype))
+          {
+            if (DFS2REC::isAnyVarChar(parameter.fsDatatype))
+              {
+                const size_t maxLength = static_cast<size_t>(parameter.length);
+                if (value.size() > maxLength)
+                  {
+                    if (error)
+                      *error = "NativeLite prepared character parameter is too long";
+                    return false;
+                  }
+                const uint16_t length = static_cast<uint16_t>(value.size());
+                memcpy(target, &length, sizeof(length));
+                memcpy(target + SQL_VARCHAR_HDR_SIZE, value.data(),
+                       value.size());
+              }
+            else
+              {
+                memset(target, ' ', static_cast<size_t>(parameter.length));
+                memcpy(target, value.data(),
+                       std::min<size_t>(value.size(), parameter.length));
+              }
+            continue;
+          }
+
+        char *end = NULL;
+        switch (parameter.fsDatatype)
+          {
+          case REC_BOOLEAN:
+            *reinterpret_cast<unsigned char *>(target) =
+                (upper(value) == "TRUE" || value == "1") ? 1 : 0;
+            break;
+          case REC_BIN8_SIGNED:
+            *reinterpret_cast<int8_t *>(target) =
+                static_cast<int8_t>(strtoll(value.c_str(), &end, 10));
+            break;
+          case REC_BIN8_UNSIGNED:
+            *reinterpret_cast<uint8_t *>(target) =
+                static_cast<uint8_t>(strtoull(value.c_str(), &end, 10));
+            break;
+          case REC_BIN16_SIGNED:
+            {
+              int16_t converted = static_cast<int16_t>(
+                  strtoll(value.c_str(), &end, 10));
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          case REC_BIN16_UNSIGNED:
+          case REC_BPINT_UNSIGNED:
+            {
+              uint16_t converted = static_cast<uint16_t>(
+                  strtoull(value.c_str(), &end, 10));
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          case REC_BIN32_SIGNED:
+            {
+              int32_t converted = static_cast<int32_t>(
+                  strtoll(value.c_str(), &end, 10));
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          case REC_BIN32_UNSIGNED:
+            {
+              uint32_t converted = static_cast<uint32_t>(
+                  strtoull(value.c_str(), &end, 10));
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          case REC_BIN64_SIGNED:
+            {
+              int64_t converted = static_cast<int64_t>(
+                  strtoll(value.c_str(), &end, 10));
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          case REC_BIN64_UNSIGNED:
+            {
+              uint64_t converted = static_cast<uint64_t>(
+                  strtoull(value.c_str(), &end, 10));
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          case REC_FLOAT32:
+            {
+              float converted = static_cast<float>(strtod(value.c_str(), &end));
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          case REC_FLOAT64:
+            {
+              double converted = strtod(value.c_str(), &end);
+              memcpy(target, &converted, sizeof(converted));
+            }
+            break;
+          default:
+            if (error)
+              *error = "NativeLite prepared parameter type requires text binding";
+            return false;
+          }
+        if (!end || *end != '\0')
+          {
+            if (error)
+              *error = "NativeLite prepared numeric parameter is invalid";
+            return false;
+          }
+      }
+    return true;
+  }
+
+  void prepareStatement(EngineRequest *request)
+  {
+    QueryResult result;
+    if (!switchTo(request->session))
+      {
+        result.sqlstate = "08003";
+        result.error = "NativeLite session is closed";
+        request->result = result;
+        return;
+      }
+    applySessionEnvironment(request->session);
+    if (request->session->failedTransaction)
+      {
+        result.sqlstate = "25P02";
+        result.error = "current transaction is aborted; ROLLBACK required";
+        request->result = result;
+        return;
+      }
+
+    const size_t parameterCount = countT4Parameters(request->sql);
+    std::vector<std::string> statements;
+    statements.push_back(request->sql);
+    std::string castSql;
+    if (rewriteT4ParametersAsVarchar(request->sql, &castSql) &&
+        castSql != request->sql)
+      statements.push_back(castSql);
+
+    for (size_t attempt = 0; attempt < statements.size(); attempt++)
+      {
+        std::shared_ptr<NativeLitePreparedPlan> plan(
+            new NativeLitePreparedPlan());
+        plan->sql = statements[attempt];
+        plan->sourceSql = request->sql;
+        ContextCli *context = GetCliGlobals()->currContext();
+        plan->cli.reset(new ExeCliInterface(
+            context->exHeap(), SQLCHARSETCODE_UTF8, context));
+        plan->cli->setNotExeUtilInternalQuery(TRUE);
+        Lng32 rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
+        if (rc < 0)
+          {
+            setDiagnosticsError(plan->cli.get(), rc, &result);
+            plan->cli->fetchRowsEpilogue(plan->sql.c_str());
+            continue;
+          }
+
+        Lng32 inputCount = 0;
+        Lng32 outputCount = 0;
+        if (plan->cli->getNumEntries(inputCount, outputCount) < 0 ||
+            static_cast<size_t>(inputCount) != parameterCount)
+          {
+            result.sqlstate = "07001";
+            result.error = "NativeLite prepared parameter descriptor mismatch";
+            plan->cli->fetchRowsEpilogue(plan->sql.c_str());
+            continue;
+          }
+        plan->parameters.clear();
+        bool unsupported = false;
+        for (Lng32 entry = 1; entry <= inputCount; entry++)
+          {
+            NativeLitePreparedParameter parameter;
+            plan->cli->getAttributes(entry, TRUE, parameter.fsDatatype,
+                                     parameter.length,
+                                     &parameter.indOffset,
+                                     &parameter.varOffset);
+            if (!preparedParameterSupported(parameter.fsDatatype))
+              unsupported = true;
+            plan->parameters.push_back(parameter);
+          }
+        if (unsupported && attempt == 0 && statements.size() > 1)
+          {
+            plan->cli->fetchRowsEpilogue(plan->sql.c_str());
+            continue;
+          }
+        if (!loadColumns(plan->cli.get(), request->session->env,
+                         &plan->description.columns, &result))
+          {
+            plan->cli->fetchRowsEpilogue(plan->sql.c_str());
+            continue;
+          }
+        plan->description.commandTag = commandTag(request->sql, 0, 0);
+        result = plan->description;
+        request->preparedPlan = plan;
+        request->result = result;
+        request->success = true;
+        return;
+      }
+    if (result.error.empty())
+      {
+        result.sqlstate = "HY000";
+        result.error = "NativeLite could not prepare statement";
+      }
+    request->result = result;
+  }
+
+  bool reopenPreparedPlan(const std::shared_ptr<Session> &session,
+                          const std::shared_ptr<NativeLitePreparedPlan> &plan,
+                          QueryResult *result)
+  {
+    if (!plan || !plan->cli)
+      return false;
+    plan->cli->fetchRowsEpilogue(plan->sql.c_str());
+    ContextCli *context = GetCliGlobals()->currContext();
+    plan->cli.reset(new ExeCliInterface(context->exHeap(),
+                                        SQLCHARSETCODE_UTF8, context));
+    plan->cli->setNotExeUtilInternalQuery(TRUE);
+    Lng32 rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
+    if (rc < 0)
+      {
+        setDiagnosticsError(plan->cli.get(), rc, result);
+        return false;
+      }
+    Lng32 inputCount = 0;
+    Lng32 outputCount = 0;
+    if (plan->cli->getNumEntries(inputCount, outputCount) < 0 ||
+        static_cast<size_t>(inputCount) != plan->parameters.size())
+      {
+        result->sqlstate = "07001";
+        result->error = "NativeLite prepared parameter descriptor changed";
+        return false;
+      }
+    for (Lng32 entry = 1; entry <= inputCount; entry++)
+      plan->cli->getAttributes(entry, TRUE,
+                               plan->parameters[entry - 1].fsDatatype,
+                               plan->parameters[entry - 1].length,
+                               &plan->parameters[entry - 1].indOffset,
+                               &plan->parameters[entry - 1].varOffset);
+    return true;
+  }
+
+  QueryResult executePreparedStatement(
+      const std::shared_ptr<Session> &session,
+      const std::shared_ptr<NativeLitePreparedPlan> &plan,
+      const std::vector<std::vector<std::string> > &rows,
+      const std::vector<std::vector<bool> > &nullRows)
+  {
+    QueryResult result;
+    if (!switchTo(session) || !plan || !plan->cli)
+      {
+        result.sqlstate = "08003";
+        result.error = "NativeLite prepared statement is unavailable";
+        return result;
+      }
+    applySessionEnvironment(session);
+    if (session->failedTransaction)
+      {
+        result.sqlstate = "25P02";
+        result.error = "current transaction is aborted; ROLLBACK required";
+        updateTransactionStatus(session);
+        return result;
+      }
+    if (rows.empty() || rows.size() != nullRows.size())
+      {
+        result.sqlstate = "07001";
+        result.error = "NativeLite prepared batch is empty or malformed";
+        return result;
+      }
+    if (rows.size() > 1 && firstWord(plan->sourceSql) != "INSERT")
+      {
+        result.sqlstate = "0A000";
+        result.error = "NativeLite prepared batching requires INSERT statements";
+        return result;
+      }
+
+    // The executor's current local scan contract cannot bind a prepared
+    // parameter tuple while evaluating a scan predicate.  Point reads happen
+    // to recover through the dedicated key path, but aggregates, ranges and
+    // IN-lists can otherwise be evaluated with zero-valued RHS parameters
+    // and silently return no rows (TPCC exposed this as missing items,
+    // customers with no orders, and zero-row composite deletes).  Keep
+    // prepared binding for INSERTs and statements without a scan predicate;
+    // expand parameterized SELECT/UPDATE/DELETE statements into a literal
+    // statement in the same session/transaction until the scan TCB accepts
+    // the input ATP for all predicate forms.
+    const std::string sourceUpper = upper(plan->sourceSql);
+    const std::string sourceVerb = firstWord(plan->sourceSql);
+    if (rows.size() == 1 &&
+        (sourceVerb == "SELECT" || sourceVerb == "UPDATE" ||
+         sourceVerb == "DELETE") &&
+        sourceUpper.find('?') != std::string::npos)
+      {
+        std::string expandedSql;
+        if (!substituteT4Parameters(plan->sourceSql, rows[0], nullRows[0],
+                                    &expandedSql))
+          {
+            result.sqlstate = "07001";
+            result.error = "NativeLite could not expand prepared predicate";
+            return result;
+          }
+        return execute(session, expandedSql);
+      }
+
+    int active = activeExecutorRequests_.fetch_add(1) + 1;
+    int maximum = maximumExecutorRequests_.load();
+    while (active > maximum &&
+           !maximumExecutorRequests_.compare_exchange_weak(maximum, active))
+      {}
+    uint64_t affectedTotal = 0;
+      for (size_t row = 0; row < rows.size(); row++)
+      {
+        if (plan->executed &&
+            !reopenPreparedPlan(session, plan, &result))
+          break;
+        std::string bindingError;
+        if (!bindPreparedParameters(plan, rows[row], nullRows[row],
+                                    &bindingError))
+          {
+            result.sqlstate = "22023";
+            result.error = bindingError;
+            break;
+          }
+        Lng32 rebindRc = plan->cli->rebindInputBuffer();
+        if (rebindRc < 0)
+          {
+            setDiagnosticsError(plan->cli.get(), rebindRc, &result);
+            break;
+          }
+        Lng32 rc = plan->cli->exec();
+        if (rc < 0)
+          {
+            setDiagnosticsError(plan->cli.get(), rc, &result);
+            break;
+          }
+        result.columns = plan->description.columns;
+        while (result.ok())
+          {
+            rc = plan->cli->fetch();
+            if (rc == 100)
+              break;
+            if (rc < 0)
+              {
+                setDiagnosticsError(plan->cli.get(), rc, &result);
+                break;
+              }
+            std::vector<Cell> cells;
+            for (size_t column = 0; column < result.columns.size(); column++)
+              cells.push_back(formatCell(plan->cli.get(), session->env,
+                                          result.columns[column],
+                                          static_cast<short>(column + 1)));
+            result.rows.push_back(cells);
+          }
+        Int64 affected = 0;
+        plan->cli->GetRowsAffected(&affected);
+        if (affected > 0)
+          affectedTotal += static_cast<uint64_t>(affected);
+        // End the executor statement after each bound execution so local-lite
+        // implicit transactions publish their writes. The next execution
+        // reopens the same prepared plan and rebinds its descriptors.
+        if (result.ok())
+          {
+            plan->cli->fetchRowsEpilogue(plan->sql.c_str());
+          }
+        if (!result.ok())
+          break;
+        plan->executed = true;
+      }
+    if (result.ok())
+      result.commandTag = commandTag(plan->sourceSql, affectedTotal,
+                                     result.rows.size());
+    if (session->cancelRequested.load() && result.ok())
+      {
+        result.sqlstate = "57014";
+        result.error = "canceling statement due to user request";
+      }
+    if (!result.ok() && currentTransactionInProgress())
+      session->failedTransaction = true;
+    activeExecutorRequests_.fetch_sub(1);
+    updateTransactionStatus(session);
+    return result;
+  }
+
   QueryResult runStatement(const std::shared_ptr<Session> &session,
                            const std::string &sql, bool describeOnly)
   {
@@ -2005,6 +2559,67 @@ size_t countT4Parameters(const std::string &sql)
         count++;
     }
   return count;
+}
+
+bool rewriteT4ParametersAsVarchar(const std::string &sql,
+                                  std::string *output)
+{
+  output->clear();
+  bool singleQuoted = false;
+  bool doubleQuoted = false;
+  for (size_t i = 0; i < sql.size(); i++)
+    {
+      if (sql[i] == '\'' && !doubleQuoted)
+        {
+          output->push_back(sql[i]);
+          if (singleQuoted && i + 1 < sql.size() && sql[i + 1] == '\'')
+            output->push_back(sql[++i]);
+          else
+            singleQuoted = !singleQuoted;
+        }
+      else if (sql[i] == '"' && !singleQuoted)
+        {
+          doubleQuoted = !doubleQuoted;
+          output->push_back(sql[i]);
+        }
+      else if (sql[i] == '?' && !singleQuoted && !doubleQuoted)
+        *output += "CAST(? AS VARCHAR(256))";
+      else
+        output->push_back(sql[i]);
+    }
+  return !singleQuoted && !doubleQuoted;
+}
+
+bool splitT4Statements(const std::string &sql,
+                       std::vector<std::string> *statements)
+{
+  statements->clear();
+  bool singleQuoted = false;
+  bool doubleQuoted = false;
+  size_t begin = 0;
+  for (size_t i = 0; i < sql.size(); i++)
+    {
+      if (sql[i] == '\'' && !doubleQuoted)
+        {
+          if (singleQuoted && i + 1 < sql.size() && sql[i + 1] == '\'')
+            i++;
+          else
+            singleQuoted = !singleQuoted;
+        }
+      else if (sql[i] == '"' && !singleQuoted)
+        doubleQuoted = !doubleQuoted;
+      else if (sql[i] == ';' && !singleQuoted && !doubleQuoted)
+        {
+          std::string statement = trim(sql.substr(begin, i - begin));
+          if (!statement.empty())
+            statements->push_back(statement);
+          begin = i + 1;
+        }
+    }
+  std::string tail = trim(sql.substr(begin));
+  if (!tail.empty())
+    statements->push_back(tail);
+  return !singleQuoted && !doubleQuoted;
 }
 
 bool substituteT4Parameters(const std::string &sql,
@@ -2882,7 +3497,16 @@ private:
           }
       }
     T4StatementState state;
-    state.result = engine_.execute(session, sql);
+    std::vector<std::string> batch;
+    if (!splitT4Statements(sql, &batch))
+      {
+        state.result.sqlstate = "42601";
+        state.result.error = "NativeLite batch has unterminated quoted text";
+      }
+    else
+      state.result = batch.size() > 1
+          ? engine_.executeBatch(session, batch)
+          : engine_.execute(session, sql);
     (*statements)[label] = state;
     std::string reply;
     appendT4ExecuteReply(&reply, state.result);
@@ -2968,15 +3592,31 @@ private:
               }
           }
       }
-    // A bare NULL leaves some Trafodion predicates without an inferable input
-    // type during Describe (for example, INT = NULL). Use a harmless text
-    // literal; Describe compiles but never executes the substituted statement.
-    std::vector<std::string> dummy(state.parameterCount, "0");
-    std::vector<bool> nulls(state.parameterCount, false);
-    std::string describeSql;
-    if (!substituteT4Parameters(sql, dummy, nulls, &describeSql))
-      describeSql = sql;
-    state.result = engine_.describe(session, describeSql);
+    std::vector<std::string> multiStatements;
+    const bool isMultiStatement = splitT4Statements(sql, &multiStatements) &&
+        multiStatements.size() > 1;
+    if (!isMultiStatement)
+      {
+        state.preparedPlan = engine_.prepare(session, sql, &state.result);
+        state.prepared = state.preparedPlan.get() != NULL && state.result.ok();
+      }
+    if (!state.prepared)
+      {
+        // Keep the protocol usable for utility statements and for compiler
+        // forms that cannot expose a reusable CLI input descriptor. This is
+        // only the compatibility path; normal DML/queries use the plan above.
+        std::vector<std::string> dummy(state.parameterCount, "0");
+        std::vector<bool> nulls(state.parameterCount, false);
+        std::string describeSql;
+        if (!substituteT4Parameters(sql, dummy, nulls, &describeSql))
+          describeSql = sql;
+        if (isMultiStatement && splitT4Statements(describeSql,
+                                                  &multiStatements) &&
+            !multiStatements.empty())
+          state.result = engine_.describe(session, multiStatements.back());
+        else
+          state.result = engine_.describe(session, describeSql);
+      }
     (*statements)[label] = state;
 
     std::string reply;
@@ -3058,7 +3698,12 @@ private:
     bool valid = decodeT4ParameterRows(
         data, state.parameterCount, rowCount, &rows, &nullRows);
     std::string sql;
-    if (!valid || !buildT4BatchSql(
+    if (!valid)
+      {
+        sendT4Response(fd, request, std::string(), 1, 0);
+        return;
+      }
+    if (!state.prepared && !buildT4BatchSql(
             state.sql, rows, nullRows, &sql, &state.parameterParts,
             state.batchPrefix.empty() ? NULL : &state.batchPrefix,
             state.batchParameterParts.empty()
@@ -3067,8 +3712,9 @@ private:
         sendT4Response(fd, request, std::string(), 1, 0);
         return;
       }
+    const std::string &transactionSql = state.prepared ? state.sql : sql;
     if (!session->autoCommit && session->transactionStatus.load() == 'I' &&
-        !LocalLiteSqlTable_isUtilityStatement(sql.c_str()))
+        !LocalLiteSqlTable_isUtilityStatement(transactionSql.c_str()))
       {
         QueryResult begin = engine_.execute(session, "BEGIN");
         if (!begin.ok() && begin.error.find("already active") ==
@@ -3082,7 +3728,23 @@ private:
             return;
           }
       }
-    state.result = engine_.execute(session, sql);
+    if (state.prepared)
+      state.result = engine_.executePrepared(session, state.preparedPlan,
+                                             rows, nullRows);
+    else
+      {
+        std::vector<std::string> batch;
+        if (!splitT4Statements(sql, &batch))
+          {
+            state.result.sqlstate = "42601";
+            state.result.error =
+                "NativeLite batch has unterminated quoted text";
+          }
+        else
+          state.result = batch.size() > 1
+              ? engine_.executeBatch(session, batch)
+              : engine_.execute(session, sql);
+      }
     state.rowOffset = 0;
     std::string reply;
     appendT4ExecuteReply(&reply, state.result);

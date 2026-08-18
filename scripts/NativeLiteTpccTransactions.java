@@ -198,61 +198,46 @@ public final class NativeLiteTpccTransactions {
           result.getBigDecimal(3);
           require(!result.next(), "new-order header returned extra rows");
         }
-        PreparedStatement districtUpdate = prepared(
-            "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=? " +
-            "WHERE D_W_ID=? AND D_ID=?");
-        districtUpdate.setInt(1, orderId + 1);
-        districtUpdate.setInt(2, WAREHOUSE);
-        districtUpdate.setInt(3, district);
-        expectOne(districtUpdate.executeUpdate(), "new-order district update");
-
-        PreparedStatement orderInsert = prepared(
-            "INSERT INTO TPCC_ORDERS VALUES (?,?,?,?,?,?,?,?)");
-        orderInsert.setInt(1, WAREHOUSE);
-        orderInsert.setInt(2, district);
-        orderInsert.setInt(3, orderId);
-        orderInsert.setInt(4, customer);
-        orderInsert.setTimestamp(5, TX_TS);
-        orderInsert.setNull(6, java.sql.Types.INTEGER);
-        orderInsert.setInt(7, LINES_PER_ORDER);
-        orderInsert.setInt(8, 1);
-        expectOne(orderInsert.executeUpdate(), "new-order order insert");
-
-        PreparedStatement newOrderInsert = prepared(
-            "INSERT INTO TPCC_NEW_ORDER VALUES (?,?,?)");
-        newOrderInsert.setInt(1, WAREHOUSE);
-        newOrderInsert.setInt(2, district);
-        newOrderInsert.setInt(3, orderId);
-        expectOne(newOrderInsert.executeUpdate(), "new-order queue insert");
-
         int[] items = new int[LINES_PER_ORDER];
         for (int line = 1; line <= LINES_PER_ORDER; line++)
           items[line - 1] = district * 10 + line;
 
-        // Item price and stock state are read from the same snapshot. Join
-        // them into one request; the previous two batch queries still paid
-        // two T4 round trips before the mutation phase.
-        String itemStockSql =
-            "SELECT I.I_ID,I.I_PRICE,S.S_QUANTITY,S.S_YTD," +
-            "S.S_ORDER_CNT,S.S_DIST_01 FROM TPCC_ITEM I,TPCC_STOCK S " +
-            "WHERE S.S_W_ID=? AND S.S_I_ID=I.I_ID AND I.I_ID IN (" +
+        // Keep item and stock reads as separate key lookups.  The merged
+        // join form pushes S_I_ID=I_ID into the local item scan; that scan
+        // has no outer stock tuple while it is materializing TPCC_ITEM rows,
+        // so the parameterized IN predicate incorrectly filters every row.
+        // Both statements still execute in this transaction and therefore
+        // observe the same OCC snapshot, while preserving the TPC-C read
+        // semantics and the proven local primary-key access path.
+        String itemSql = "SELECT I_ID,I_PRICE FROM TPCC_ITEM WHERE I_ID IN (" +
             placeholders(items.length) + ")";
-        PreparedStatement itemStockQuery = prepared(itemStockSql);
-        itemStockQuery.setInt(1, WAREHOUSE);
+        PreparedStatement itemQuery = prepared(itemSql);
         for (int i = 0; i < items.length; i++)
-          itemStockQuery.setInt(i + 2, items[i]);
+          itemQuery.setInt(i + 1, items[i]);
         Map<Integer, BigDecimal> prices = new HashMap<>();
         List<Integer> uniqueItems = new ArrayList<>();
         Set<Integer> seenItems = new HashSet<>();
         for (int item : items)
           if (seenItems.add(item)) uniqueItems.add(item);
-        Map<Integer, StockState> stockByItem = new HashMap<>();
-        try (ResultSet result = itemStockQuery.executeQuery()) {
-          while (result.next()) {
+        try (ResultSet result = itemQuery.executeQuery()) {
+          while (result.next())
             prices.put(result.getInt(1), result.getBigDecimal(2));
+        }
+
+        String stockSql =
+            "SELECT S_I_ID,S_QUANTITY,S_YTD,S_ORDER_CNT,S_DIST_01 " +
+            "FROM TPCC_STOCK WHERE S_W_ID=? AND S_I_ID IN (" +
+            placeholders(uniqueItems.size()) + ")";
+        PreparedStatement stockQuery = prepared(stockSql);
+        stockQuery.setInt(1, WAREHOUSE);
+        for (int i = 0; i < uniqueItems.size(); i++)
+          stockQuery.setInt(i + 2, uniqueItems.get(i));
+        Map<Integer, StockState> stockByItem = new HashMap<>();
+        try (ResultSet result = stockQuery.executeQuery()) {
+          while (result.next()) {
             stockByItem.put(result.getInt(1), new StockState(
-                result.getInt(3), result.getInt(4), result.getInt(5),
-                result.getString(6)));
+                result.getInt(2), result.getInt(3), result.getInt(4),
+                result.getString(5)));
           }
         }
 
@@ -284,47 +269,67 @@ public final class NativeLiteTpccTransactions {
           stockUpdateSql.append("WHEN S_I_ID=? THEN ? ");
         stockUpdateSql.append("ELSE S_ORDER_CNT END WHERE S_W_ID=? AND S_I_ID IN (")
             .append(placeholders(uniqueItems.size())).append(')');
-        PreparedStatement stockUpdate = prepared(stockUpdateSql.toString());
-        int parameter = 1;
-        for (int item : uniqueItems) {
-          stockUpdate.setInt(parameter++, item);
-          stockUpdate.setInt(parameter++, stockByItem.get(item).quantity);
-        }
-        for (int item : uniqueItems) {
-          stockUpdate.setInt(parameter++, item);
-          stockUpdate.setInt(parameter++, stockByItem.get(item).ytd);
-        }
-        for (int item : uniqueItems) {
-          stockUpdate.setInt(parameter++, item);
-          stockUpdate.setInt(parameter++, stockByItem.get(item).orderCount);
-        }
-        stockUpdate.setInt(parameter++, WAREHOUSE);
-        for (int item : uniqueItems)
-          stockUpdate.setInt(parameter++, item);
-        require(stockUpdate.executeUpdate() == uniqueItems.size(),
-            "new-order stock batch affected the wrong number of rows");
-
         StringBuilder lineInsertSql = new StringBuilder(
             "INSERT INTO TPCC_ORDER_LINE VALUES ");
         for (int line = 0; line < LINES_PER_ORDER; line++) {
           if (line != 0) lineInsertSql.append(',');
           lineInsertSql.append("(?,?,?,?,?,?,?,?,?,?)");
         }
-        PreparedStatement lineInsert = prepared(lineInsertSql.toString());
-        parameter = 1;
-        for (int line = 0; line < LINES_PER_ORDER; line++) {
-          lineInsert.setInt(parameter++, WAREHOUSE);
-          lineInsert.setInt(parameter++, district);
-          lineInsert.setInt(parameter++, orderId);
-          lineInsert.setInt(parameter++, line + 1);
-          lineInsert.setInt(parameter++, items[line]);
-          lineInsert.setInt(parameter++, WAREHOUSE);
-          lineInsert.setNull(parameter++, java.sql.Types.TIMESTAMP);
-          lineInsert.setInt(parameter++, 5);
-          lineInsert.setBigDecimal(parameter++, amounts[line]);
-          lineInsert.setString(parameter++, stockByItem.get(items[line]).districtInfo);
+        // Send the mutation phase as one server-side batch. The T4 endpoint
+        // keeps the parameter rowset in one request, substitutes no values on
+        // the normal single-statement path, and executes these statements
+        // sequentially inside the current transaction.
+        String writeBatchSql =
+            "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=? " +
+            "WHERE D_W_ID=? AND D_ID=?;" +
+            "INSERT INTO TPCC_ORDERS VALUES (?,?,?,?,?,?,?,?);" +
+            "INSERT INTO TPCC_NEW_ORDER VALUES (?,?,?);" +
+            stockUpdateSql + ";" + lineInsertSql;
+        PreparedStatement writeBatch = prepared(writeBatchSql);
+        int parameter = 1;
+        writeBatch.setInt(parameter++, orderId + 1);
+        writeBatch.setInt(parameter++, WAREHOUSE);
+        writeBatch.setInt(parameter++, district);
+        writeBatch.setInt(parameter++, WAREHOUSE);
+        writeBatch.setInt(parameter++, district);
+        writeBatch.setInt(parameter++, orderId);
+        writeBatch.setInt(parameter++, customer);
+        writeBatch.setTimestamp(parameter++, TX_TS);
+        writeBatch.setNull(parameter++, java.sql.Types.INTEGER);
+        writeBatch.setInt(parameter++, LINES_PER_ORDER);
+        writeBatch.setInt(parameter++, 1);
+        writeBatch.setInt(parameter++, WAREHOUSE);
+        writeBatch.setInt(parameter++, district);
+        writeBatch.setInt(parameter++, orderId);
+        parameter = 1 + 3 + 8 + 3;
+        for (int item : uniqueItems) {
+          writeBatch.setInt(parameter++, item);
+          writeBatch.setInt(parameter++, stockByItem.get(item).quantity);
         }
-        require(lineInsert.executeUpdate() == LINES_PER_ORDER,
+        for (int item : uniqueItems) {
+          writeBatch.setInt(parameter++, item);
+          writeBatch.setInt(parameter++, stockByItem.get(item).ytd);
+        }
+        for (int item : uniqueItems) {
+          writeBatch.setInt(parameter++, item);
+          writeBatch.setInt(parameter++, stockByItem.get(item).orderCount);
+        }
+        writeBatch.setInt(parameter++, WAREHOUSE);
+        for (int item : uniqueItems)
+          writeBatch.setInt(parameter++, item);
+        for (int line = 0; line < LINES_PER_ORDER; line++) {
+          writeBatch.setInt(parameter++, WAREHOUSE);
+          writeBatch.setInt(parameter++, district);
+          writeBatch.setInt(parameter++, orderId);
+          writeBatch.setInt(parameter++, line + 1);
+          writeBatch.setInt(parameter++, items[line]);
+          writeBatch.setInt(parameter++, WAREHOUSE);
+          writeBatch.setNull(parameter++, java.sql.Types.TIMESTAMP);
+          writeBatch.setInt(parameter++, 5);
+          writeBatch.setBigDecimal(parameter++, amounts[line]);
+          writeBatch.setString(parameter++, stockByItem.get(items[line]).districtInfo);
+        }
+        require(writeBatch.executeUpdate() == LINES_PER_ORDER,
             "new-order line batch affected the wrong number of rows");
         connection.commit();
       } catch (SQLException | RuntimeException failure) {

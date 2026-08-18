@@ -104,6 +104,18 @@ private:
   // ---------------------------------------------------------------------
 };
 
+#ifdef TRAF_LOCAL_LITE
+// Executor-side vtable supplement for the dedicated NativeLite scan TDB.
+// No data members are permitted here; the compiler TDB owns the image.
+class LocalLiteRocksdbScanTdb : public ComTdbLocalLiteRocksdbScan
+{
+public:
+  LocalLiteRocksdbScanTdb() {}
+  virtual ~LocalLiteRocksdbScanTdb() {}
+  virtual ex_tcb *build(ex_globals *globals);
+};
+#endif
+
 class ExHbaseAccessTcb  : public ex_tcb
 {
   friend class ExHbaseTaskTcb;

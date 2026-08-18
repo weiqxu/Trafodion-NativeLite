@@ -87,7 +87,7 @@ grep -q 'LocalLiteRowCodec.cpp' "$generator_makefile" ||
   fail "generator build must compile local-lite primary key codec"
 grep -q 'LocalLiteUnsupportedHbaseTcb' "$storage_stubs" ||
   fail "local-lite HBase access build must create an executor TCB instead of returning NULL"
-grep -q 'LocalLiteHbaseScanTcb' "$storage_stubs" ||
+grep -q 'LocalLiteRocksdbScanTcb' "$storage_stubs" ||
   fail "local-lite SELECT must use an executor scan TCB"
 grep -q 'LocalLiteHbaseInsertTcb' "$storage_stubs" ||
   fail "local-lite INSERT must use an executor insert TCB"

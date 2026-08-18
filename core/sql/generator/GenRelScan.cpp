@@ -3218,6 +3218,15 @@ short HbaseAccess::codeGen(Generator * generator)
   ExpTupleDesc * rowIdAsciiTupleDesc = 0;
   ex_expr * rowIdExpr = NULL;
   ULng32 rowIdLength = 0;
+#ifdef TRAF_LOCAL_LITE
+  UInt16 localLiteBoundInputTuppIndex[
+    ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
+  UInt32 localLiteBoundInputOffset[
+    ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
+  UInt32 localLiteBoundInputLength[
+    ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
+  NABoolean localLiteBoundInputComplete = TRUE;
+#endif
   Queue * tdbListOfRangeRows = NULL;
   Queue * tdbListOfUniqueRows = NULL;
 
@@ -3251,8 +3260,70 @@ short HbaseAccess::codeGen(Generator * generator)
 		   rowIdAsciiTuppIndex, rowIdTuppIndex,
 		   rowIdAsciiRowLen, rowIdAsciiTupleDesc,
 		   rowIdLength, 
-		   rowIdExpr);
+	   rowIdExpr);
     }
+
+#ifdef TRAF_LOCAL_LITE
+  // A parameterized primary-key predicate is intentionally not represented
+  // by the legacy HbaseSearchKey list (that list is reserved for compile-time
+  // literal GETs).  Build the local scan's bound-key expression directly from
+  // the equality predicate RHS values and materialize them into the same
+  // exploded key tuple consumed by LocalLiteRocksdbScanTcb.
+  if (!rowIdExpr && getBeginKeyPred().entries() > 0 &&
+      getIndexDesc() && getIndexDesc()->getNAFileSet())
+    {
+      const NAColumnArray &keyColumns =
+        getIndexDesc()->getNAFileSet()->getIndexKeyColumns();
+      ValueIdList boundKeyVids;
+      NABoolean complete = TRUE;
+      for (CollIndex i = 0;
+           i < getBeginKeyPred().entries() && i < keyColumns.entries(); i++)
+        {
+          ItemExpr *predicate = getBeginKeyPred()[i].getItemExpr();
+          if (!predicate || predicate->getOperatorType() != ITM_EQUAL ||
+              !predicate->child(1))
+            {
+              complete = FALSE;
+              break;
+            }
+          ItemExpr *boundValue = predicate->child(1);
+          // Preserve the source map while coercing the parameter to the
+          // physical primary-key type.  preCodeGen is required here because
+          // this node is introduced after the regular predicate rewrite.
+          {
+            MapInfo *boundMap =
+              generator->getMapInfoAsIs(boundValue->getValueId());
+            Attributes *boundAttr = boundMap ? boundMap->getAttr() : NULL;
+            if (boundAttr)
+              {
+            localLiteBoundInputTuppIndex[i] =
+                static_cast<UInt16>(boundAttr->getAtpIndex());
+              localLiteBoundInputOffset[i] = boundAttr->getOffset();
+                localLiteBoundInputLength[i] = boundAttr->getLength();
+              }
+            else
+              localLiteBoundInputComplete = FALSE;
+          }
+          ItemExpr *castValue = new(generator->wHeap())
+            Cast(boundValue,
+                 keyColumns[i]->getType()->newCopy(generator->wHeap()));
+          castValue->bindNode(generator->getBindWA());
+          castValue->preCodeGen(generator);
+          boundKeyVids.insert(castValue->getValueId());
+        }
+      if (complete && boundKeyVids.entries() == keyColumns.entries())
+        {
+          ExpTupleDesc *boundKeyTupleDesc = NULL;
+          expGen->generateContiguousMoveExpr(
+              boundKeyVids, 0 /* no conversion nodes */, work_atp,
+              rowIdTuppIndex, ExpTupleDesc::SQLARK_EXPLODED_FORMAT,
+              rowIdLength, &rowIdExpr, &boundKeyTupleDesc,
+              ExpTupleDesc::LONG_FORMAT);
+          work_cri_desc->setTupleDescriptor(rowIdTuppIndex,
+                                             boundKeyTupleDesc);
+        }
+    }
+#endif
 
   genListsOfRows(generator,
 		 listOfRangeRows_,
@@ -3403,7 +3474,33 @@ short HbaseAccess::codeGen(Generator * generator)
         (getHbaseAccessOptions()->getHbaseVersions());
     }
 
-  // create hbasescan_tdb
+  // NativeLite scans have their own TDB image and executor contract.  Keep
+  // the legacy HBase construction only for non-local builds.
+#ifdef TRAF_LOCAL_LITE
+  ComTdbLocalLiteRocksdbScan *hbasescan_tdb = new(space)
+    ComTdbLocalLiteRocksdbScan(
+      tablename, convert_expr, scanExpr, rowIdExpr,
+      asciiRowLen, convertRowLen, rowIdLength, rowIdAsciiRowLen,
+      asciiTuppIndex, convertTuppIndex, rowIdTuppIndex,
+      rowIdAsciiTuppIndex, returnedDesc->noTuples()-1,
+      tdbListOfRangeRows, tdbListOfUniqueRows, listOfFetchedColNames,
+      work_cri_desc, givenDesc, returnedDesc, downqueuelength,
+      upqueuelength, expectedRows, numBuffers, buffersize);
+  for (CollIndex i = 0; i < getIndexDesc()->getNAFileSet()
+                                    ->getIndexKeyColumns().entries(); i++)
+    if (i >= ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS ||
+        localLiteBoundInputLength[i] == 0)
+      localLiteBoundInputComplete = FALSE;
+  if (rowIdExpr && localLiteBoundInputComplete)
+    for (CollIndex i = 0; i < getIndexDesc()->getNAFileSet()
+                                    ->getIndexKeyColumns().entries() &&
+                            i < ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS;
+       i++)
+    if (localLiteBoundInputLength[i] > 0)
+      hbasescan_tdb->setBoundKeyInput(
+          static_cast<UInt16>(i), localLiteBoundInputTuppIndex[i],
+          localLiteBoundInputOffset[i], localLiteBoundInputLength[i]);
+#else
   ComTdbHbaseAccess *hbasescan_tdb = new(space) 
     ComTdbHbaseAccess(
 		      ComTdbHbaseAccess::SELECT_,
@@ -3484,9 +3581,11 @@ short HbaseAccess::codeGen(Generator * generator)
 
                       pkeyColName
 		      );
+#endif
 
   generator->initTdbFields(hbasescan_tdb);
 
+#ifndef TRAF_LOCAL_LITE
   if (getTableDesc()->getNATable()->isHbaseRowTable()) //rowwiseHbaseFormat())
     hbasescan_tdb->setRowwiseFormat(TRUE);
 
@@ -3529,19 +3628,31 @@ short HbaseAccess::codeGen(Generator * generator)
     {
       hbasescan_tdb->setReadUncommittedScan(TRUE);
     }
+#else
+  // Dynamic primary-key predicates do not always produce an HbaseSearchKey
+  // (the legacy HBase path normally falls back to its key-range machinery),
+  // but the local executor can still evaluate the generated bound-key
+  // expression.  Mark only the primary access path as eligible so ranges and
+  // secondary indexes retain their scan behavior.
+  if (rowIdExpr && getIndexDesc() && getIndexDesc()->getNAFileSet() &&
+      getIndexDesc()->getNAFileSet()->getKeytag() == 0)
+    hbasescan_tdb->setUniqueKeyInfo(TRUE);
+#endif
 
   if(!generator->explainDisabled()) {
     generator->setExplainTuple(
        addExplainInfo(hbasescan_tdb, 0, 0, generator));
   }
 
+#ifndef TRAF_LOCAL_LITE
   if ((generator->computeStats()) && 
       (generator->collectStatsType() == ComTdb::PERTABLE_STATS
       || generator->collectStatsType() == ComTdb::OPERATOR_STATS))
     {
-      hbasescan_tdb->setPertableStatsTdbId((UInt16)generator->
+    hbasescan_tdb->setPertableStatsTdbId((UInt16)generator->
 					   getPertableStatsTdbId());
     }
+#endif
 
   generator->setCriDesc(givenDesc, Generator::DOWN);
   generator->setCriDesc(returnedDesc, Generator::UP);

@@ -2358,10 +2358,21 @@ RETCODE Statement::error(ComDiagsArea &diagsArea)
 }
 
 RETCODE Statement::execute(CliGlobals * cliGlobals, Descriptor * input_desc,
-			   ComDiagsArea &diagsArea, ExecState  execute_state,
-			   NABoolean fixupOnly, ULng32 cliflags)
+				   ComDiagsArea &diagsArea, ExecState  execute_state,
+				   NABoolean fixupOnly, ULng32 cliflags)
 {
   StmtDebug2("[BEGIN execute] %p, stmt_state %s", this, stmtState(getState()));
+
+  // A dynamic statement may be executed again after its cursor was closed.
+  // If a caller supplies the input descriptor again, discard the private
+  // re-execution copy first so fixup/evaluation reads the newly bound host
+  // values instead of retaining the previous execution's parameter row.
+  if (input_desc && inputData_)
+    {
+      heap_.deallocateMemory(inputData_);
+      inputData_ = NULL;
+      inputDatalen_ = 0;
+    }
 
   RETCODE retcode = SUCCESS;
   NABoolean schemaFileLabelTSChecked = 0;

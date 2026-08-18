@@ -108,7 +108,6 @@ class ComTdbHbaseAccess : public ComTdb
   friend class ExHbaseAccessBulkLoadPrepSQTcb;
   friend class ExHbaseAccessBulkLoadTaskTcb;
 #ifdef TRAF_LOCAL_LITE
-  friend class LocalLiteHbaseScanTcb;
   friend class LocalLiteHbaseInsertTcb;
   friend class LocalLiteHbaseUpdateTcb;
   friend class LocalLiteHbaseDeleteTcb;
@@ -1196,6 +1195,99 @@ class ComTdbHbaseCoProcAggr : public ComTdbHbaseCoProcAccess
  private:
   QueuePtr listOfAggrTypes_;
 };
+
+#ifdef TRAF_LOCAL_LITE
+// --------------------------------------------------------------------------
+// NativeLite scan TDB.  This is deliberately independent from
+// ComTdbHbaseAccess: local scans own parameter binding and the RocksDB
+// lookup lifecycle, while the HBase TDB remains an HBase-only contract.
+// --------------------------------------------------------------------------
+class ComTdbLocalLiteRocksdbScan : public ComTdb
+{
+  friend class LocalLiteRocksdbScanTdb;
+  friend class LocalLiteRocksdbScanTcb;
+
+public:
+  enum { MAX_BOUND_KEY_COLUMNS = 16 };
+  ComTdbLocalLiteRocksdbScan();
+  ComTdbLocalLiteRocksdbScan(
+      char *tableName, ex_expr *convertExpr, ex_expr *scanExpr,
+      ex_expr *rowIdExpr, UInt32 asciiRowLen, UInt32 convertRowLen,
+      UInt32 rowIdLen, UInt32 rowIdAsciiRowLen,
+      UInt16 asciiTuppIndex, UInt16 convertTuppIndex,
+      UInt16 rowIdTuppIndex, UInt16 rowIdAsciiTuppIndex,
+      UInt16 returnedTuppIndex, Queue *listOfScanRows, Queue *listOfGetRows,
+      Queue *listOfFetchedColNames, ex_cri_desc *workCriDesc,
+      ex_cri_desc *criDescParentDown, ex_cri_desc *criDescParentUp,
+      queue_index queueSizeDown, queue_index queueSizeUp,
+      Cardinality expectedRows, Lng32 numBuffers, ULng32 bufferSize);
+
+  virtual unsigned char getClassVersionID() { return 1; }
+  virtual void populateImageVersionIDArray()
+  {
+    setImageVersionID(1, getClassVersionID());
+    ComTdb::populateImageVersionIDArray();
+  }
+  virtual short getClassSize()
+  { return (short)sizeof(ComTdbLocalLiteRocksdbScan); }
+  virtual Long pack(void *space);
+  virtual Lng32 unpack(void *base, void *reallocator);
+  virtual const ComTdb *getChild(Int32) const { return NULL; }
+  virtual Int32 numChildren() const { return 0; }
+  virtual const char *getNodeName() const
+  { return "EX_LOCAL_LITE_ROCKSDB_SCAN"; }
+  virtual Int32 numExpressions() const { return 3; }
+  virtual const char *getExpressionName(Int32 pos) const;
+  virtual ex_expr *getExpressionNode(Int32 pos);
+
+  char *getTableName() const { return tableName_; }
+  Queue *listOfScanRows() const { return listOfScanRows_; }
+  Queue *listOfGetRows() const { return listOfGetRows_; }
+  Queue *listOfFetchedColNames() const { return listOfFetchedColNames_; }
+  UInt32 getRowIDLen() const { return rowIdLen_; }
+  UInt32 convertRowLen() const { return convertRowLen_; }
+  NABoolean uniqueKeyInfo() const { return (flags_ & 1) != 0; }
+  void setUniqueKeyInfo(NABoolean v)
+  { if (v) flags_ |= 1; else flags_ &= ~1U; }
+  void setBoundKeyInput(UInt16 keyIndex, UInt16 tuppIndex,
+                        UInt32 offset, UInt32 length)
+  {
+    if (keyIndex >= MAX_BOUND_KEY_COLUMNS)
+      return;
+    if (keyIndex >= boundKeyInputCount_)
+      boundKeyInputCount_ = keyIndex + 1;
+    boundKeyInputTuppIndex_[keyIndex] = tuppIndex;
+    boundKeyInputOffset_[keyIndex] = offset;
+    boundKeyInputLength_[keyIndex] = length;
+  }
+
+private:
+  ExExprPtr convertExpr_;
+  ExExprPtr scanExpr_;
+  ExExprPtr rowIdExpr_;
+  ExCriDescPtr workCriDesc_;
+  NABasicPtr tableName_;
+  QueuePtr listOfScanRows_;
+  QueuePtr listOfGetRows_;
+  QueuePtr listOfFetchedColNames_;
+  UInt32 asciiRowLen_;
+  UInt32 convertRowLen_;
+  UInt32 rowIdLen_;
+  UInt32 rowIdAsciiRowLen_;
+  UInt16 asciiTuppIndex_;
+  UInt16 convertTuppIndex_;
+  UInt16 rowIdTuppIndex_;
+  UInt16 rowIdAsciiTuppIndex_;
+  UInt16 returnedTuppIndex_;
+  UInt16 boundKeyInputCount_;
+  UInt16 boundKeyInputReserved_;
+  UInt16 boundKeyInputTuppIndex_[MAX_BOUND_KEY_COLUMNS];
+  UInt32 boundKeyInputOffset_[MAX_BOUND_KEY_COLUMNS];
+  UInt32 boundKeyInputLength_[MAX_BOUND_KEY_COLUMNS];
+  UInt32 flags_;
+  char fillers_[24];
+};
+#endif // TRAF_LOCAL_LITE
 
 // --------------------------------------------------------------------------
 // Template instantiation to produce a 64-bit pointer emulator class

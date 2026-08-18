@@ -24,10 +24,187 @@
 #include "ComTdbHbaseAccess.h"
 #include "ComTdbCommon.h"
 
+#ifdef TRAF_LOCAL_LITE
+namespace {
+// The compiler still emits the legacy row-list objects for generic HBase
+// paths.  NativeLite treats their wire image as a private, layout-compatible
+// descriptor so the local TDB/TCB never depends on ComTdbHbaseAccess types.
+class LocalLiteScanRowsImage : public NAVersionedObject
+{
+public:
+  LocalLiteScanRowsImage() : NAVersionedObject(-1) {}
+  NABasicPtr beginRowId_;
+  NABasicPtr endRowId_;
+  Lng32 beginKeyExclusive_;
+  Lng32 endKeyExclusive_;
+  QueuePtr colNames_;
+  Int64 colTS_;
+};
+class LocalLiteGetRowsImage : public NAVersionedObject
+{
+public:
+  LocalLiteGetRowsImage() : NAVersionedObject(-1) {}
+  QueuePtr rowIds_;
+  QueuePtr colNames_;
+  Int64 colTS_;
+};
+}
+#endif
+
 // Dummy constructor for "unpack" routines.
 ComTdbHbaseAccess::ComTdbHbaseAccess():
  ComTdb(ComTdb::ex_HBASE_ACCESS, eye_HBASE_ACCESS)
 {};
+
+#ifdef TRAF_LOCAL_LITE
+ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan()
+  : ComTdb(ComTdb::ex_LOCAL_LITE_ROCKSDB_SCAN, eye_LOCAL_LITE_ROCKSDB_SCAN),
+    convertExpr_(NULL), scanExpr_(NULL), rowIdExpr_(NULL),
+    workCriDesc_(NULL), tableName_(NULL), listOfScanRows_(NULL),
+    listOfGetRows_(NULL), listOfFetchedColNames_(NULL),
+    asciiRowLen_(0), convertRowLen_(0), rowIdLen_(0), rowIdAsciiRowLen_(0),
+    asciiTuppIndex_(0), convertTuppIndex_(0), rowIdTuppIndex_(0),
+    rowIdAsciiTuppIndex_(0), returnedTuppIndex_(0),
+    boundKeyInputCount_(0), boundKeyInputReserved_(0), flags_(0)
+{
+  for (UInt16 i = 0; i < MAX_BOUND_KEY_COLUMNS; i++)
+    {
+      boundKeyInputTuppIndex_[i] = 0;
+      boundKeyInputOffset_[i] = 0;
+      boundKeyInputLength_[i] = 0;
+    }
+}
+
+ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan(
+    char *tableName, ex_expr *convertExpr, ex_expr *scanExpr,
+    ex_expr *rowIdExpr, UInt32 asciiRowLen, UInt32 convertRowLen,
+    UInt32 rowIdLen, UInt32 rowIdAsciiRowLen, UInt16 asciiTuppIndex,
+    UInt16 convertTuppIndex, UInt16 rowIdTuppIndex,
+    UInt16 rowIdAsciiTuppIndex, UInt16 returnedTuppIndex,
+    Queue *listOfScanRows, Queue *listOfGetRows,
+    Queue *listOfFetchedColNames, ex_cri_desc *workCriDesc,
+    ex_cri_desc *criDescParentDown, ex_cri_desc *criDescParentUp,
+    queue_index queueSizeDown, queue_index queueSizeUp,
+    Cardinality expectedRows, Lng32 numBuffers, ULng32 bufferSize)
+  : ComTdb(ComTdb::ex_LOCAL_LITE_ROCKSDB_SCAN, eye_LOCAL_LITE_ROCKSDB_SCAN,
+           expectedRows, criDescParentDown, criDescParentUp,
+           queueSizeDown, queueSizeUp, numBuffers, bufferSize),
+    convertExpr_(convertExpr), scanExpr_(scanExpr), rowIdExpr_(rowIdExpr),
+    workCriDesc_(workCriDesc), tableName_(tableName),
+    listOfScanRows_(listOfScanRows), listOfGetRows_(listOfGetRows),
+    listOfFetchedColNames_(listOfFetchedColNames),
+    asciiRowLen_(asciiRowLen), convertRowLen_(convertRowLen),
+    rowIdLen_(rowIdLen), rowIdAsciiRowLen_(rowIdAsciiRowLen),
+    asciiTuppIndex_(asciiTuppIndex), convertTuppIndex_(convertTuppIndex),
+    rowIdTuppIndex_(rowIdTuppIndex),
+    rowIdAsciiTuppIndex_(rowIdAsciiTuppIndex),
+    returnedTuppIndex_(returnedTuppIndex),
+    boundKeyInputCount_(0), boundKeyInputReserved_(0), flags_(0)
+{
+  for (UInt16 i = 0; i < MAX_BOUND_KEY_COLUMNS; i++)
+    {
+      boundKeyInputTuppIndex_[i] = 0;
+      boundKeyInputOffset_[i] = 0;
+      boundKeyInputLength_[i] = 0;
+    }
+}
+
+const char *ComTdbLocalLiteRocksdbScan::getExpressionName(Int32 pos) const
+{
+  switch (pos)
+    {
+    case 0: return "Convert Expr";
+    case 1: return "Scan Expr";
+    case 2: return "Bound Key Expr";
+    default: return NULL;
+    }
+}
+
+ex_expr *ComTdbLocalLiteRocksdbScan::getExpressionNode(Int32 pos)
+{
+  switch (pos)
+    {
+    case 0: return convertExpr_;
+    case 1: return scanExpr_;
+    case 2: return rowIdExpr_;
+    default: return NULL;
+    }
+}
+
+Long ComTdbLocalLiteRocksdbScan::pack(void *space)
+{
+  tableName_.pack(space);
+  convertExpr_.pack(space);
+  scanExpr_.pack(space);
+  rowIdExpr_.pack(space);
+  workCriDesc_.pack(space);
+  listOfFetchedColNames_.pack(space);
+
+  if (listOfScanRows_ && listOfScanRows_->numEntries() > 0)
+    {
+      listOfScanRows_->position();
+      for (Lng32 i = 0; i < listOfScanRows_->numEntries(); i++)
+        {
+          LocalLiteScanRowsImage *row =
+            static_cast<LocalLiteScanRowsImage *>(listOfScanRows_->getNext());
+          row->beginRowId_.pack(space);
+          row->endRowId_.pack(space);
+          row->colNames_.pack(space);
+        }
+    }
+  listOfScanRows_.pack(space);
+
+  if (listOfGetRows_ && listOfGetRows_->numEntries() > 0)
+    {
+      listOfGetRows_->position();
+      for (Lng32 i = 0; i < listOfGetRows_->numEntries(); i++)
+        {
+          LocalLiteGetRowsImage *row =
+            static_cast<LocalLiteGetRowsImage *>(listOfGetRows_->getNext());
+          row->rowIds_.pack(space);
+          row->colNames_.pack(space);
+        }
+    }
+  listOfGetRows_.pack(space);
+  return ComTdb::pack(space);
+}
+
+Lng32 ComTdbLocalLiteRocksdbScan::unpack(void *base, void *reallocator)
+{
+  if (tableName_.unpack(base)) return -1;
+  if (convertExpr_.unpack(base, reallocator)) return -1;
+  if (scanExpr_.unpack(base, reallocator)) return -1;
+  if (rowIdExpr_.unpack(base, reallocator)) return -1;
+  if (workCriDesc_.unpack(base, reallocator)) return -1;
+  if (listOfFetchedColNames_.unpack(base, reallocator)) return -1;
+  if (listOfScanRows_.unpack(base, reallocator)) return -1;
+  if (listOfScanRows_ && listOfScanRows_->numEntries() > 0)
+    {
+      listOfScanRows_->position();
+      for (Lng32 i = 0; i < listOfScanRows_->numEntries(); i++)
+        {
+          LocalLiteScanRowsImage *row =
+            static_cast<LocalLiteScanRowsImage *>(listOfScanRows_->getNext());
+          if (row->beginRowId_.unpack(base)) return -1;
+          if (row->endRowId_.unpack(base)) return -1;
+          if (row->colNames_.unpack(base, reallocator)) return -1;
+        }
+    }
+  if (listOfGetRows_.unpack(base, reallocator)) return -1;
+  if (listOfGetRows_ && listOfGetRows_->numEntries() > 0)
+    {
+      listOfGetRows_->position();
+      for (Lng32 i = 0; i < listOfGetRows_->numEntries(); i++)
+        {
+          LocalLiteGetRowsImage *row =
+            static_cast<LocalLiteGetRowsImage *>(listOfGetRows_->getNext());
+          if (row->rowIds_.unpack(base, reallocator)) return -1;
+          if (row->colNames_.unpack(base, reallocator)) return -1;
+        }
+    }
+  return ComTdb::unpack(base, reallocator);
+}
+#endif
 
 ComTdbHbaseAccess::ComTdbHbaseAccess(
 				     ComTdbAccessType type,

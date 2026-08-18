@@ -727,6 +727,38 @@ Lng32 ExeCliInterface::exec(char * inputBuf, Lng32 inputBufLen)
   return retcode;
 }
 
+Lng32 ExeCliInterface::rebindInputBuffer()
+{
+  if (!input_desc_ || !inputBuf_)
+    return 0;
+  for (Lng32 entry = 1; entry <= numInputEntries_; entry++)
+    {
+      Lng32 nullIndOffset = -1;
+      Lng32 dataOffset = -1;
+      Lng32 rc = SQL_EXEC_GetDescItem(input_desc_, entry,
+                                      SQLDESC_NULL_IND_OFFSET,
+                                      &nullIndOffset, 0, 0, 0, 0);
+      if (rc != SUCCESS)
+        return rc;
+      rc = SQL_EXEC_GetDescItem(input_desc_, entry, SQLDESC_DATA_OFFSET,
+                                &dataOffset, 0, 0, 0, 0);
+      if (rc != SUCCESS)
+        return rc;
+      if (nullIndOffset >= 0)
+        {
+          rc = SQL_EXEC_SetDescItem(input_desc_, entry, SQLDESC_IND_PTR,
+                                    (Long)&inputBuf_[nullIndOffset], 0);
+          if (rc != SUCCESS)
+            return rc;
+        }
+      rc = SQL_EXEC_SetDescItem(input_desc_, entry, SQLDESC_VAR_PTR,
+                                (Long)&inputBuf_[dataOffset], 0);
+      if (rc != SUCCESS)
+        return rc;
+    }
+  return 0;
+}
+
 Lng32 ExeCliInterface::fetch()
 {
   Lng32 retcode = 0;

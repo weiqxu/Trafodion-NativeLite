@@ -525,6 +525,14 @@ case ex_LOB_INFO:
       break;
     }
 
+#ifdef TRAF_LOCAL_LITE
+  case ex_LOCAL_LITE_ROCKSDB_SCAN:
+    {
+      GetVTblPtr(vtblptr,LocalLiteRocksdbScanTdb);
+      break;
+    }
+#endif
+
   case ex_HBASE_COPROC_AGGR:
     {
       GetVTblPtr(vtblptr,ExHbaseCoProcAggrTdb);

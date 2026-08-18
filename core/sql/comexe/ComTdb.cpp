@@ -686,6 +686,14 @@ char *ComTdb::findVTblPtrCom(short classID)
     }
     break;
 
+#ifdef TRAF_LOCAL_LITE
+  case ex_LOCAL_LITE_ROCKSDB_SCAN:
+    {
+      GetVTblPtr(vtblptr, ComTdbLocalLiteRocksdbScan);
+    }
+    break;
+#endif
+
   case ex_HBASE_COPROC_AGGR:
     {
       GetVTblPtr(vtblptr, ComTdbHbaseCoProcAggr);
@@ -703,4 +711,3 @@ char *ComTdb::findVTblPtrCom(short classID)
   }
   return vtblptr;
 }
-

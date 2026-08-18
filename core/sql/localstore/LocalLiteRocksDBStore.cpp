@@ -5211,8 +5211,7 @@ public:
       LocalLiteMutexGuard atomicRead(
           LocalLiteStorageManager::instance().mutex());
       beginSequence_ = LocalLiteUnifiedRocksDBSequence();
-      LocalLiteStorageManager::instance().beginStatement(this,
-                                                         transactionId);
+      LocalLiteStorageManager::instance().beginStatement(this, transactionId);
       localLiteOccCoordinator.begin(this, beginSequence_);
       localLiteOccMetrics.transactionsStarted++;
     }

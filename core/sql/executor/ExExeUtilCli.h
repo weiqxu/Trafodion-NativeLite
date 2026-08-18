@@ -265,6 +265,10 @@ private:
 
   char * inputBuf() { return inputBuf_; };
   Int32  inputDatalen() { return inputDatalen_; };
+  // Reinstall descriptor pointers after SQL_EXEC_CloseStmt. Trafodion keeps
+  // the prepared statement, but closing its cursor may clear host-variable
+  // addresses before the next execution.
+  Lng32 rebindInputBuffer();
 
   void clearGlobalDiags();
 

@@ -348,10 +348,34 @@ static void localLiteTableNameParts(const char *name,
     *catalog = parts[parts.size() - 3];
 }
 
-class LocalLiteHbaseScanTcb : public ex_tcb
+class LocalLiteScanRowsImage : public NAVersionedObject
 {
 public:
-  LocalLiteHbaseScanTcb(const ComTdbHbaseAccess &tdb, ex_globals *globals)
+  LocalLiteScanRowsImage() : NAVersionedObject(-1) {}
+  NABasicPtr beginRowId_;
+  NABasicPtr endRowId_;
+  Lng32 beginKeyExclusive_;
+  Lng32 endKeyExclusive_;
+  QueuePtr colNames_;
+  Int64 colTS_;
+};
+
+class LocalLiteGetRowsImage : public NAVersionedObject
+{
+public:
+  LocalLiteGetRowsImage() : NAVersionedObject(-1) {}
+  Queue *rowIds() { return rowIds_; }
+  Queue *colNames() { return colNames_; }
+  QueuePtr rowIds_;
+  QueuePtr colNames_;
+  Int64 colTS_;
+};
+
+class LocalLiteRocksdbScanTcb : public ex_tcb
+{
+public:
+  LocalLiteRocksdbScanTcb(const ComTdbLocalLiteRocksdbScan &tdb,
+                          ex_globals *globals)
     : ex_tcb(tdb, 1, globals),
       qparent_(),
       pool_(NULL),
@@ -409,7 +433,7 @@ public:
                            FALSE, globals);
   }
 
-  ~LocalLiteHbaseScanTcb()
+  ~LocalLiteRocksdbScanTcb()
   {
     freeResources();
   }
@@ -530,15 +554,15 @@ public:
   }
 
 private:
-  const ComTdbHbaseAccess &scanTdb() const
+  const ComTdbLocalLiteRocksdbScan &scanTdb() const
   {
-    return static_cast<const ComTdbHbaseAccess &>(tdb);
+    return static_cast<const ComTdbLocalLiteRocksdbScan &>(tdb);
   }
 
-  ComTdbHbaseAccess &scanTdb()
+  ComTdbLocalLiteRocksdbScan &scanTdb()
   {
-    return const_cast<ComTdbHbaseAccess &>(
-        static_cast<const ComTdbHbaseAccess &>(tdb));
+    return const_cast<ComTdbLocalLiteRocksdbScan &>(
+        static_cast<const ComTdbLocalLiteRocksdbScan &>(tdb));
   }
 
   bool loadRows(std::string *error)
@@ -596,22 +620,72 @@ private:
   bool loadRuntimePrimaryGet(LocalLiteTxn *txn, std::string *error)
   {
     if (!scanTdb().uniqueKeyInfo() || !scanTdb().rowIdExpr_ ||
-        !rowIdRow_ || !rowIdAsciiRow_ || table_.primaryKeyColumns.empty())
+        !rowIdRow_ || table_.primaryKeyColumns.empty())
       return false;
     ExpTupleDesc *keyTd = scanTdb().workCriDesc_->getTupleDescriptor(
         scanTdb().rowIdTuppIndex_);
     if (!keyTd)
       return false;
     str_pad(rowIdRow_, scanTdb().rowIdLen_, '\0');
-    str_pad(rowIdAsciiRow_, scanTdb().rowIdAsciiRowLen_, '\0');
     workAtp_->getTupp(scanTdb().rowIdTuppIndex_).setDataPointer(rowIdRow_);
-    workAtp_->getTupp(scanTdb().rowIdAsciiTuppIndex_)
-      .setDataPointer(rowIdAsciiRow_);
+    if (rowIdAsciiRow_ && scanTdb().rowIdAsciiRowLen_ > 0)
+      {
+        str_pad(rowIdAsciiRow_, scanTdb().rowIdAsciiRowLen_, '\0');
+        workAtp_->getTupp(scanTdb().rowIdAsciiTuppIndex_)
+          .setDataPointer(rowIdAsciiRow_);
+      }
+    // The root input tuple is the authoritative prepared-parameter buffer.
+    // Materialize its fixed-width key bytes into the dedicated key tuple
+    // before evaluating the generated expression.  This also covers the
+    // aligned input layout where the expression VM intentionally does not
+    // dereference a missing child descriptor.
+    if (scanTdb().boundKeyInputCount_ > 0)
+      {
+        for (CollIndex i = 0; i < keyTd->numAttrs() &&
+                              i < scanTdb().boundKeyInputCount_; i++)
+          {
+            Attributes *attr = keyTd->getAttr(i);
+            if (!attr)
+              continue;
+            UInt16 tuppIndex = scanTdb().boundKeyInputTuppIndex_[i];
+            if (tuppIndex >= downEntry()->getAtp()->numTuples())
+              continue;
+            char *source = downEntry()->getAtp()
+              ->getTupp(tuppIndex).getDataPointer();
+            if (!source)
+              continue;
+            UInt32 copyLength = MINOF(attr->getLength(),
+                                      scanTdb().boundKeyInputLength_[i]);
+            str_cpy_all(rowIdRow_ + attr->getOffset(),
+                        source + scanTdb().boundKeyInputOffset_[i],
+                        copyLength);
+          }
+      }
     if (scanTdb().rowIdExpr_->eval(downEntry()->getAtp(), workAtp_) ==
         ex_expr::EXPR_ERROR)
       {
         *error = "local-lite runtime primary key evaluation failed";
         return false;
+      }
+    if (scanTdb().boundKeyInputCount_ > 0)
+      {
+        for (CollIndex i = 0; i < keyTd->numAttrs() &&
+                              i < scanTdb().boundKeyInputCount_; i++)
+          {
+            Attributes *attr = keyTd->getAttr(i);
+            if (!attr)
+              continue;
+            UInt16 tuppIndex = scanTdb().boundKeyInputTuppIndex_[i];
+            if (tuppIndex >= downEntry()->getAtp()->numTuples())
+              continue;
+            char *source = downEntry()->getAtp()
+              ->getTupp(tuppIndex).getDataPointer();
+            if (source)
+              str_cpy_all(rowIdRow_ + attr->getOffset(),
+                          source + scanTdb().boundKeyInputOffset_[i],
+                          MINOF(attr->getLength(),
+                                scanTdb().boundKeyInputLength_[i]));
+          }
       }
     std::string storageKey;
     if (!LocalLiteBuildPrimaryKeyFromExecutorTuple(
@@ -651,8 +725,8 @@ private:
     getRows->position();
     for (Lng32 i = 0; i < getRows->numEntries(); i++)
       {
-        ComTdbHbaseAccess::HbaseGetRows *hgr =
-          static_cast<ComTdbHbaseAccess::HbaseGetRows *>(getRows->getNext());
+        LocalLiteGetRowsImage *hgr =
+          static_cast<LocalLiteGetRowsImage *>(getRows->getNext());
         if (!hgr || !hgr->rowIds() || hgr->rowIds()->numEntries() == 0)
           {
             *error = "local-lite get row id list is empty";
@@ -908,7 +982,11 @@ private:
                                    &convertLen, error))
       return false;
 
-    if (scanTdb().scanExpr_)
+    // A generated bound-key lookup has already matched every physical
+    // primary-key column.  Its original predicate references the compiler's
+    // parameter tuple layout, which is not part of the dedicated scan TCB's
+    // output ATP; re-evaluating it would reject the row we just fetched.
+    if (scanTdb().scanExpr_ && scanTdb().boundKeyInputCount_ == 0)
       {
         ex_expr::exp_return_type evalRetCode =
           scanTdb().scanExpr_->eval(downEntry()->getAtp(), workAtp_);
@@ -1442,7 +1520,6 @@ private:
       }
     else if (!txn.insertRow(table_, encodedRow, &rowId, error))
       return false;
-
     matches_++;
     return true;
   }
@@ -2707,16 +2784,16 @@ Int64 getTransactionIDFromContext()
   return 0;
 }
 
+ex_tcb *LocalLiteRocksdbScanTdb::build(ex_globals *globals)
+{
+  LocalLiteRocksdbScanTcb *tcb =
+    new(globals->getSpace()) LocalLiteRocksdbScanTcb(*this, globals);
+  tcb->registerSubtasks();
+  return tcb;
+}
+
 ex_tcb *ExHbaseAccessTdb::build(ex_globals *globals)
 {
-  if (getAccessType() == ComTdbHbaseAccess::SELECT_)
-    {
-      LocalLiteHbaseScanTcb *tcb =
-        new(globals->getSpace()) LocalLiteHbaseScanTcb(*this, globals);
-      tcb->registerSubtasks();
-      return tcb;
-    }
-
   if (getAccessType() == ComTdbHbaseAccess::INSERT_ ||
       getAccessType() == ComTdbHbaseAccess::UPSERT_)
     {
