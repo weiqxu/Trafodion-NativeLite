@@ -76,6 +76,10 @@ cleanup() {
     mkdir -p "$artifact_dir"
     cp -a "$workload_report" "$operations_report" \
       "$artifact_dir/"
+    [[ ! -s "$test_root/bulk-load.json" ]] ||
+      cp -a "$test_root/bulk-load.json" "$artifact_dir/"
+    [[ ! -s "$test_root/bulk-load.manifest" ]] ||
+      cp -a "$test_root/bulk-load.manifest" "$artifact_dir/"
     rm -rf "$test_root"
   else
     rm -rf "$test_root"
@@ -132,6 +136,7 @@ if [[ "$native_bulk_load" == "1" ]]; then
   if [[ -n "$native_commit_rows" ]]; then
     bulk_loader_args+=(--commit-rows "$native_commit_rows")
   fi
+  bulk_loader_args+=(--manifest "$test_root/bulk-load.manifest")
   env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
     TRAF_LOCAL_STORE_DIR="$active_store" \
     TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \

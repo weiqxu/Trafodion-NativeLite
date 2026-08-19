@@ -24,6 +24,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -42,12 +43,6 @@ const char *kCatalog = "TRAFODION";
 const char *kSchema = "SEABASE";
 const char *kTimestamp = "2026-08-15 00:00:00";
 
-// Warehouse producers may encode rows concurrently, but the unified
-// TransactionDB publication path is intentionally serialized.  This keeps
-// the loader's worker/session isolation while avoiding lock-order inversion
-// between concurrent table/index publication batches.
-std::mutex gBulkPublicationMutex;
-
 struct Config
 {
   int warehouses;
@@ -60,6 +55,7 @@ struct Config
   int parallelWarehouses;
   long long seed;
   std::string report;
+  std::string manifest;
 
   Config()
     : warehouses(0), districts(0), customers(0), orders(0), newOrders(0),
@@ -67,6 +63,75 @@ struct Config
   {
   }
 };
+
+uint64_t checksumRows(const std::vector<std::string> &rows)
+{
+  uint64_t hash = 1469598103934665603ULL;
+  for (size_t row = 0; row < rows.size(); row++)
+    for (size_t byte = 0; byte < rows[row].size(); byte++)
+      {
+        hash ^= static_cast<unsigned char>(rows[row][byte]);
+        hash *= 1099511628211ULL;
+      }
+  return hash;
+}
+
+class ResumeManifest
+{
+public:
+  ResumeManifest() : recovering_(false) {}
+
+  bool open(const std::string &path, std::string *error)
+  {
+    path_ = path;
+    if (path_.empty()) return true;
+    std::ifstream input(path_.c_str());
+    std::string line;
+    while (std::getline(input, line))
+      if (!line.empty()) completed_.insert(line);
+    recovering_ = !completed_.empty();
+    output_.open(path_.c_str(), std::ios::app);
+    if (!output_)
+      {
+        *error = "cannot open native loader manifest: " + path_;
+        return false;
+      }
+    return true;
+  }
+
+  bool recovering() const { return recovering_; }
+
+  bool completed(const std::string &entry)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return completed_.find(entry) != completed_.end();
+  }
+
+  bool record(const std::string &entry, std::string *error)
+  {
+    if (path_.empty()) return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (completed_.find(entry) != completed_.end()) return true;
+    output_ << entry << '\n';
+    output_.flush();
+    if (!output_)
+      {
+        *error = "write native loader manifest: " + path_;
+        return false;
+      }
+    completed_.insert(entry);
+    return true;
+  }
+
+private:
+  std::string path_;
+  bool recovering_;
+  std::set<std::string> completed_;
+  std::ofstream output_;
+  std::mutex mutex_;
+};
+
+ResumeManifest *gResumeManifest = NULL;
 
 std::string trim(const std::string &value)
 {
@@ -203,8 +268,10 @@ struct Worker
 class BulkWriter
 {
 public:
-  BulkWriter(Worker *worker, const Config &config, const std::string &name)
-    : worker_(worker), config_(config), name_(name), rows_(0), committed_(0)
+  BulkWriter(Worker *worker, const Config &config, const std::string &name,
+             const std::string &partition)
+    : worker_(worker), config_(config), name_(name), partition_(partition),
+      rows_(0), committed_(0)
   {
   }
 
@@ -247,16 +314,56 @@ private:
     if (encoded_.empty())
       return true;
 
-    std::lock_guard<std::mutex> publicationLock(gBulkPublicationMutex);
+    const uint64_t checksum = checksumRows(encoded_);
+    std::ostringstream manifestEntry;
+    manifestEntry << name_ << '|' << partition_ << '|' << committed_ << '|'
+                  << encoded_.size() << '|' << std::hex << checksum;
+    if (gResumeManifest && gResumeManifest->completed(manifestEntry.str()))
+      {
+        encoded_.clear();
+        committed_++;
+        return true;
+      }
     if (!LocalLiteTxnManager::begin(worker_->context, &worker_->error))
       return false;
     LocalLiteTxn transaction(&worker_->store, worker_->context);
-    if (!transaction.insertRows(table_, encoded_, &worker_->error))
+    std::vector<std::string> pending;
+    if (gResumeManifest && gResumeManifest->recovering())
+      {
+        for (size_t i = 0; i < encoded_.size(); i++)
+          {
+            std::string key;
+            if (!LocalLiteBuildPrimaryKey(table_, encoded_[i], &key,
+                                          &worker_->error))
+              return false;
+            LocalLiteRow existing;
+            bool found = false;
+            if (!transaction.getRowByKey(table_, key, &existing, &found,
+                                         &worker_->error))
+              return false;
+            if (found && existing.value != encoded_[i])
+              {
+                worker_->error = "native loader resume checksum mismatch for " +
+                    name_ + " partition " + partition_;
+                return false;
+              }
+            if (!found) pending.push_back(encoded_[i]);
+          }
+      }
+    else
+      pending = encoded_;
+    if (!pending.empty() &&
+        !transaction.insertRows(table_, pending, &worker_->error))
       {
         LocalLiteTxnManager::rollback(worker_->context, &worker_->error);
         return false;
       }
-    if (!LocalLiteTxnManager::commit(worker_->context, &worker_->error))
+    if (pending.empty())
+      LocalLiteTxnManager::rollback(worker_->context, &worker_->error);
+    else if (!LocalLiteTxnManager::commit(worker_->context, &worker_->error))
+      return false;
+    if (gResumeManifest &&
+        !gResumeManifest->record(manifestEntry.str(), &worker_->error))
       return false;
     encoded_.clear();
     committed_++;
@@ -266,6 +373,7 @@ private:
   Worker *worker_;
   const Config &config_;
   std::string name_;
+  std::string partition_;
   LocalLiteTableDef table_;
   std::vector<std::string> encoded_;
   uint64_t rows_;
@@ -439,7 +547,7 @@ bool runSingle(const Config &config,
       *error = worker.error;
       return false;
     }
-  BulkWriter writer(&worker, config, name);
+  BulkWriter writer(&worker, config, name, "global");
   if (!writer.open() || !producer(writer) || !writer.finish())
     {
       *error = worker.error.empty() ? "native bulk writer failed" : worker.error;
@@ -475,7 +583,7 @@ bool runWarehouses(const Config &config,
           if (failed.load()) break;
           int warehouse = nextWarehouse.fetch_add(1);
           if (warehouse > config.warehouses) break;
-          BulkWriter writer(&worker, config, name);
+          BulkWriter writer(&worker, config, name, number(warehouse));
           if (!writer.open() || !producer(writer, warehouse) ||
               !writer.finish())
             {
@@ -500,6 +608,9 @@ bool runWarehouses(const Config &config,
 
 bool run(const Config &config, std::string *error)
 {
+  ResumeManifest manifest;
+  if (!manifest.open(config.manifest, error)) return false;
+  gResumeManifest = &manifest;
   if (!runSingle(config, tableName("TPCC_WAREHOUSE"),
                  [&](BulkWriter &writer) {
                    for (int w = 1; w <= config.warehouses; w++)
@@ -572,6 +683,7 @@ bool run(const Config &config, std::string *error)
                                return false;
                        return true;
                      }, error)) return false;
+  gResumeManifest = NULL;
   return true;
 }
 
@@ -579,7 +691,8 @@ void usage(const char *program)
 {
   std::cerr << "Usage: " << program
             << " --properties FILE [--scale qualification|multi]"
-               " [--commit-rows N] [--report FILE]" << std::endl;
+               " [--commit-rows N] [--report FILE] [--manifest FILE]"
+            << std::endl;
 }
 
 bool parseConfig(int argc, char **argv, Config *config, std::string *error)
@@ -607,6 +720,8 @@ bool parseConfig(int argc, char **argv, Config *config, std::string *error)
         }
       else if (option == "--report" && i + 1 < argc)
         config->report = argv[++i];
+      else if (option == "--manifest" && i + 1 < argc)
+        config->manifest = argv[++i];
       else
         {
           *error = "unknown or incomplete option: " + option;
@@ -691,6 +806,8 @@ int main(int argc, char **argv)
   std::ostringstream report;
   report << "{\"contract_version\":1,\"loader\":\"native\",\"warehouses\":"
          << config.warehouses << ",\"elapsed_ms\":" << elapsed
+         << ",\"parallel_warehouses\":" << config.parallelWarehouses
+         << ",\"server_metrics\":" << LocalLiteOccMetricsJson()
          << ",\"consistency\":\"deferred_to_sql_verifier\"}\n";
   std::cout << report.str();
   if (!config.report.empty())
