@@ -2,7 +2,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 bool LocalLiteBuildPrimaryKey(const LocalLiteTableDef &,
@@ -180,6 +182,12 @@ int main()
   index.keyColumns.push_back(0);
   index.descending.push_back(false);
   indexed.secondaryIndexes.push_back(index);
+  LocalLiteTableDef parallelA = a;
+  parallelA.name = "OCC_PARALLEL_A";
+  parallelA.objectUid = 7104;
+  LocalLiteTableDef parallelB = a;
+  parallelB.name = "OCC_PARALLEL_B";
+  parallelB.objectUid = 7105;
 
   LocalLiteRocksDBStore setup;
   std::string error;
@@ -188,11 +196,55 @@ int main()
       !setup.insertRow(a, "a0", &rowId, &error) || rowId != 1 ||
       !setup.createTable(b, &error) ||
       !setup.insertRow(b, "b0", &rowId, &error) || rowId != 1 ||
+      !setup.createTable(parallelA, &error) ||
+      !setup.insertRow(parallelA, "pa0", &rowId, &error) || rowId != 1 ||
+      !setup.createTable(parallelB, &error) ||
+      !setup.insertRow(parallelB, "pb0", &rowId, &error) || rowId != 1 ||
       !setup.createTable(indexed, &error) ||
       !setup.insertRow(indexed, "a", &rowId, &error) || rowId != 1 ||
       !setup.insertRow(indexed, "b", &rowId, &error) || rowId != 2)
     {
       fprintf(stderr, "setup failed: %s\n", error.c_str());
+      return 1;
+    }
+
+  // Disjoint read/write sets may overlap in the physical RocksDB commit while
+  // each transaction retains one atomic batch and OCC visibility boundary.
+  std::atomic<int> ready(0);
+  std::atomic<bool> go(false);
+  bool parallelPassed[2] = {false, false};
+  setenv("TRAF_LOCAL_LITE_COMMIT_HOLD_MS", "100", 1);
+  std::thread parallelFirst([&]() {
+    Context context;
+    LocalLiteRocksDBStore store;
+    std::string threadError;
+    if (!begin(context) || !update(&store, context, parallelA, 1, "pa1"))
+      return;
+    ready.fetch_add(1);
+    while (!go.load()) std::this_thread::yield();
+    parallelPassed[0] = commit(context, &threadError);
+  });
+  std::thread parallelSecond([&]() {
+    Context context;
+    LocalLiteRocksDBStore store;
+    std::string threadError;
+    if (!begin(context) || !update(&store, context, parallelB, 1, "pb1"))
+      return;
+    ready.fetch_add(1);
+    while (!go.load()) std::this_thread::yield();
+    parallelPassed[1] = commit(context, &threadError);
+  });
+  while (ready.load() != 2) std::this_thread::yield();
+  go.store(true);
+  parallelFirst.join();
+  parallelSecond.join();
+  unsetenv("TRAF_LOCAL_LITE_COMMIT_HOLD_MS");
+  if (!parallelPassed[0] || !parallelPassed[1] ||
+      metric(LocalLiteOccMetricsJson(),
+             "maximum_physical_commit_overlap") < 2)
+    {
+      fprintf(stderr, "disjoint physical commits did not overlap: %s\n",
+              LocalLiteOccMetricsJson().c_str());
       return 1;
     }
 

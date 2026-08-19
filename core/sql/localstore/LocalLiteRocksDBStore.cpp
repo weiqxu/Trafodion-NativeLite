@@ -4821,7 +4821,9 @@ struct LocalLiteOccMetrics
       fullScanValidationConflicts(0), historyOverflowAborts(0),
       commitLatchWaitUs(0), validationLatencyUs(0),
       referentialValidationLatencyUs(0), batchBuildLatencyUs(0),
-      publicationLatencyUs(0), visibilityPublicationLatencyUs(0) {}
+      publicationLatencyUs(0), visibilityPublicationLatencyUs(0),
+      commitIntentWaitUs(0), physicalCommits(0),
+      maximumPhysicalCommitOverlap(0) {}
 
   uint64_t transactionsStarted;
   uint64_t transactionsCommitted;
@@ -4846,6 +4848,9 @@ struct LocalLiteOccMetrics
   uint64_t batchBuildLatencyUs;
   uint64_t publicationLatencyUs;
   uint64_t visibilityPublicationLatencyUs;
+  uint64_t commitIntentWaitUs;
+  uint64_t physicalCommits;
+  uint64_t maximumPhysicalCommitOverlap;
 };
 
 static LocalLiteOccMetrics localLiteOccMetrics;
@@ -5085,6 +5090,161 @@ private:
 
 static LocalLiteOccCoordinator localLiteOccCoordinator;
 
+struct LocalLiteActiveCommit
+{
+  const void *owner;
+  OccReadSet reads;
+  OccWriteSet writes;
+};
+
+class LocalLiteCommitCoordinator
+{
+public:
+  LocalLiteCommitCoordinator() : physicalCommits_(0), maximumOverlap_(0)
+  {
+    pthread_mutex_init(&mutex_, NULL);
+    pthread_cond_init(&condition_, NULL);
+  }
+
+  ~LocalLiteCommitCoordinator()
+  {
+    pthread_cond_destroy(&condition_);
+    pthread_mutex_destroy(&mutex_);
+  }
+
+  void acquire(const void *owner,
+               const OccReadSet &reads,
+               const OccWriteSet &writes)
+  {
+    pthread_mutex_lock(&mutex_);
+    while (conflicts(reads, writes))
+      pthread_cond_wait(&condition_, &mutex_);
+    LocalLiteActiveCommit active;
+    active.owner = owner;
+    active.reads = reads;
+    active.writes = writes;
+    active_.push_back(active);
+    pthread_mutex_unlock(&mutex_);
+  }
+
+  void release(const void *owner)
+  {
+    pthread_mutex_lock(&mutex_);
+    for (std::vector<LocalLiteActiveCommit>::iterator active = active_.begin();
+         active != active_.end(); ++active)
+      if (active->owner == owner)
+        {
+          active_.erase(active);
+          break;
+        }
+    pthread_cond_broadcast(&condition_);
+    pthread_mutex_unlock(&mutex_);
+  }
+
+  void enterPhysicalCommit()
+  {
+    pthread_mutex_lock(&mutex_);
+    physicalCommits_++;
+    maximumOverlap_ = std::max(maximumOverlap_, physicalCommits_);
+    pthread_mutex_unlock(&mutex_);
+  }
+
+  void leavePhysicalCommit()
+  {
+    pthread_mutex_lock(&mutex_);
+    if (physicalCommits_ > 0)
+      physicalCommits_--;
+    pthread_mutex_unlock(&mutex_);
+  }
+
+  uint64_t maximumOverlap() const
+  {
+    pthread_mutex_lock(&mutex_);
+    const uint64_t result = maximumOverlap_;
+    pthread_mutex_unlock(&mutex_);
+    return result;
+  }
+
+  void resetMetrics()
+  {
+    pthread_mutex_lock(&mutex_);
+    maximumOverlap_ = physicalCommits_;
+    pthread_mutex_unlock(&mutex_);
+  }
+
+private:
+  static bool keyIntersectsRead(const OccWriteKey &write,
+                                const OccReadRange &read)
+  {
+    return write.first == read.objectUid &&
+        (write.second.empty() || read.full ||
+         (read.start == read.end
+              ? read.start == write.second
+              : write.second >= read.start &&
+                  (read.end.empty() || write.second < read.end)));
+  }
+
+  static bool readWriteConflict(const OccReadSet &reads,
+                                const OccWriteSet &writes)
+  {
+    for (OccReadSet::const_iterator read = reads.begin();
+         read != reads.end(); ++read)
+      for (OccWriteSet::const_iterator write = writes.begin();
+           write != writes.end(); ++write)
+        if (keyIntersectsRead(*write, *read))
+          return true;
+    return false;
+  }
+
+  static bool writeWriteConflict(const OccWriteSet &left,
+                                 const OccWriteSet &right)
+  {
+    for (OccWriteSet::const_iterator a = left.begin(); a != left.end(); ++a)
+      for (OccWriteSet::const_iterator b = right.begin(); b != right.end(); ++b)
+        if (a->first == b->first &&
+            (a->second.empty() || b->second.empty() || a->second == b->second))
+          return true;
+    return false;
+  }
+
+  bool conflicts(const OccReadSet &reads, const OccWriteSet &writes) const
+  {
+    for (std::vector<LocalLiteActiveCommit>::const_iterator active =
+           active_.begin(); active != active_.end(); ++active)
+      if (readWriteConflict(reads, active->writes) ||
+          readWriteConflict(active->reads, writes) ||
+          writeWriteConflict(writes, active->writes))
+        return true;
+    return false;
+  }
+
+  mutable pthread_mutex_t mutex_;
+  pthread_cond_t condition_;
+  std::vector<LocalLiteActiveCommit> active_;
+  uint64_t physicalCommits_;
+  uint64_t maximumOverlap_;
+};
+
+static LocalLiteCommitCoordinator localLiteCommitCoordinator;
+
+class LocalLiteCommitIntentGuard
+{
+public:
+  LocalLiteCommitIntentGuard(const void *owner,
+                             const OccReadSet &reads,
+                             const OccWriteSet &writes)
+    : owner_(owner)
+  {
+    localLiteCommitCoordinator.acquire(owner, reads, writes);
+  }
+  ~LocalLiteCommitIntentGuard()
+  {
+    localLiteCommitCoordinator.release(owner_);
+  }
+private:
+  const void *owner_;
+};
+
 static void publishOccTableChange(const void *owner, uint64_t objectUid)
 {
   if (objectUid == 0)
@@ -5287,6 +5447,9 @@ public:
     // Keep readers and writers behind one process-wide publication latch.
     // Every logical table and catalog record is a prefix view over the same
     // TransactionDB, so one physical write batch is the commit decision.
+    const uint64_t intentWaitStarted = monotonicMicros();
+    LocalLiteCommitIntentGuard commitIntent(this, readRanges, writeKeys);
+    const uint64_t intentAcquired = monotonicMicros();
     const uint64_t commitLatchWaitStarted = monotonicMicros();
     LocalLiteMutexGuard atomicPublication(
         LocalLiteStorageManager::instance().mutex());
@@ -5294,6 +5457,9 @@ public:
     if (commitLatchAcquired >= commitLatchWaitStarted)
       localLiteOccMetrics.commitLatchWaitUs +=
           commitLatchAcquired - commitLatchWaitStarted;
+    if (intentAcquired >= intentWaitStarted)
+      localLiteOccMetrics.commitIntentWaitUs +=
+          intentAcquired - intentWaitStarted;
     observeOccTransaction(pointReads, missingPointReads, fullScans,
                           primaryRangeReads, indexRangeReads,
                           readRanges.size(),
@@ -5352,13 +5518,24 @@ public:
          strcmp(commitFault, "before-journal") == 0))
       _exit(92);
     const uint64_t publicationStarted = monotonicMicros();
+    atomicPublication.unlock();
+    localLiteCommitCoordinator.enterPhysicalCommit();
+    const char *commitHold = getenv("TRAF_LOCAL_LITE_COMMIT_HOLD_MS");
+    if (commitHold && commitHold[0])
+      usleep(static_cast<useconds_t>(strtoul(commitHold, NULL, 10)) * 1000U);
     const bool publicationPassed =
         LocalLiteUnifiedWriteBatchCommit(
             batch, localLiteSynchronousCommit(), error);
+    localLiteCommitCoordinator.leavePhysicalCommit();
     const uint64_t publicationFinished = monotonicMicros();
+    atomicPublication.lock();
     if (publicationFinished >= publicationStarted)
       localLiteOccMetrics.publicationLatencyUs +=
           publicationFinished - publicationStarted;
+    localLiteOccMetrics.physicalCommits++;
+    localLiteOccMetrics.maximumPhysicalCommitOverlap = std::max(
+        localLiteOccMetrics.maximumPhysicalCommitOverlap,
+        localLiteCommitCoordinator.maximumOverlap());
     if (!publicationPassed)
       {
         LocalLiteUnifiedWriteBatchDestroy(batch);
@@ -9893,6 +10070,13 @@ std::string LocalLiteOccMetricsJson()
       << localLiteOccMetrics.publicationLatencyUs
       << ",\"visibility_publication_latency_us\":"
       << localLiteOccMetrics.visibilityPublicationLatencyUs
+      << ",\"commit_intent_wait_us\":"
+      << localLiteOccMetrics.commitIntentWaitUs
+      << ",\"physical_commits\":"
+      << localLiteOccMetrics.physicalCommits
+      << ",\"maximum_physical_commit_overlap\":"
+      << std::max(localLiteOccMetrics.maximumPhysicalCommitOverlap,
+                  localLiteCommitCoordinator.maximumOverlap())
       << ",\"synchronous_commit\":"
       << (localLiteSynchronousCommit() ? "true" : "false") << "}";
   return out.str();
@@ -9902,6 +10086,7 @@ void LocalLiteOccMetricsReset()
 {
   LocalLiteMutexGuard guard(LocalLiteStorageManager::instance().mutex());
   localLiteOccMetrics = LocalLiteOccMetrics();
+  localLiteCommitCoordinator.resetMetrics();
 }
 
 void LocalLiteTxnManager::beginStatement(LocalLiteTxnContext *txnContext,
