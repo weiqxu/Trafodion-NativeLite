@@ -640,7 +640,7 @@ public final class NativeLiteTpcc {
 
   public static void main(String[] args) throws Exception {
     require(args.length == 6,
-        "usage: NativeLiteTpcc URL load|verify qualification|smoke PROPERTIES SCHEMA REPORT");
+        "usage: NativeLiteTpcc URL load|schema|verify qualification|smoke PROPERTIES SCHEMA REPORT");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     Config config = new Config(loadProperties(Paths.get(args[3])), args[2]);
     try (Connection connection = DriverManager.getConnection(args[0], USER, "")) {
@@ -648,6 +648,9 @@ public final class NativeLiteTpcc {
       NativeLiteTpcc tpcc = new NativeLiteTpcc(connection, args[0], config,
           Paths.get(args[4]));
       if ("load".equals(args[1])) tpcc.load();
+      else if ("schema".equals(args[1])) {
+        tpcc.ensureSchema();
+      }
       else if ("verify".equals(args[1])) tpcc.verify();
       else throw new IllegalArgumentException("unknown command: " + args[1]);
       Files.write(Paths.get(args[5]), (tpcc.reportJson() + "\n").getBytes(

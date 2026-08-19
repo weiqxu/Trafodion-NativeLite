@@ -685,11 +685,20 @@ struct Session
   bool failedTransaction;
   bool autoCommit;
   uint64_t statementSequence;
+  std::thread::id ownerThread;
+  std::mutex lifecycleMutex;
+  std::condition_variable cancelCondition;
+  unsigned int activeCancels;
+  bool closing;
+  bool slotAcquired;
+  std::map<std::string, std::shared_ptr<NativeLitePreparedPlan> > planCache;
+  std::deque<std::string> planCacheLru;
 
   Session()
       : contextHandle(0), env(NULL), backendPid(0),
         cancelRequested(false), statementPending(false), transactionStatus('I'),
-        failedTransaction(false), autoCommit(true), statementSequence(0)
+        failedTransaction(false), autoCommit(true), statementSequence(0),
+        activeCancels(0), closing(false), slotAcquired(false)
   {
   }
 };
@@ -1078,24 +1087,33 @@ public:
   {
     if (!session)
       return;
-    if (!session->statementPending.load())
-      return;
-    session->cancelRequested.store(true);
+    SQLCTX_HANDLE contextHandle = 0;
+    {
+      std::lock_guard<std::mutex> lock(session->lifecycleMutex);
+      if (session->closing || !session->statementPending.load() ||
+          session->contextHandle == 0)
+        return;
+      session->activeCancels++;
+      contextHandle = session->contextHandle;
+      session->cancelRequested.store(true);
+    }
 
     // SQL_EXEC_Cancel is explicitly designed for a cancel thread and does not
     // acquire the normal CLI semaphore. Switch this thread to the target
     // ContextCli so cancellation cannot affect a peer session.
-    if (session->contextHandle != 0)
+    SQLCTX_HANDLE previous = 0;
+    if (SQL_EXEC_SwitchContext_Internal(contextHandle, &previous, TRUE) == 0)
       {
-        SQLCTX_HANDLE previous = 0;
-        if (SQL_EXEC_SwitchContext_Internal(session->contextHandle, &previous,
-                                            TRUE) == 0)
-          {
-            SQL_EXEC_Cancel(NULL);
-            if (previous != 0)
-              SQL_EXEC_SwitchContext_Internal(previous, NULL, TRUE);
-          }
+        SQL_EXEC_Cancel(NULL);
+        if (previous != 0)
+          SQL_EXEC_SwitchContext_Internal(previous, NULL, TRUE);
       }
+    {
+      std::lock_guard<std::mutex> lock(session->lifecycleMutex);
+      if (session->activeCancels > 0)
+        session->activeCancels--;
+      session->cancelCondition.notify_all();
+    }
   }
 
   void stop()
@@ -1107,16 +1125,7 @@ public:
           worker_.join();
         return;
       }
-    if (initialized_.load() && !initializationFailed_)
-      {
-        EngineRequest request(REQUEST_STOP);
-        submit(&request);
-      }
-    else
-      {
-        std::lock_guard<std::mutex> lock(queueMutex_);
-        queueCondition_.notify_all();
-      }
+    queueCondition_.notify_all();
     if (worker_.joinable())
       worker_.join();
   }
@@ -1124,28 +1133,11 @@ public:
 private:
   void submit(EngineRequest *request)
   {
-    // CLI contexts, global_sqlci_env and the compiler/executor heaps are
-    // worker-thread state.  Running requests directly on each JDBC client
-    // thread races those globals as soon as the TPCC loader opens many
-    // sessions (the M15 32-way loader exposed this as an FBString assert).
-    // Queue all client requests through the engine worker.  A statement can
-    // legitimately issue an internal request while already on that worker
-    // (for example the prepared-predicate compatibility path), so preserve a
-    // direct path only for this re-entrant case.
-    if (request->type != REQUEST_STOP &&
-        std::this_thread::get_id() == worker_.get_id())
-      {
-        runDirect(request);
-        return;
-      }
-    {
-      std::lock_guard<std::mutex> lock(queueMutex_);
-      requests_.push_back(request);
-    }
-    queueCondition_.notify_one();
-    std::unique_lock<std::mutex> requestLock(request->mutex);
-    request->condition.wait(requestLock,
-                            [request] { return request->complete; });
+    // Execution is session-affine in M21.  The connection thread owns the
+    // session ContextCli, SqlciEnv, compiler context and prepared plans for
+    // the whole connection lifetime.  Keep EngineRequest as a small local
+    // compatibility envelope while removing the global execution queue.
+    runDirect(request);
   }
 
   void runDirect(EngineRequest *request)
@@ -1163,6 +1155,18 @@ private:
 
   void processRequest(EngineRequest *request)
   {
+    if (request->session && request->type != REQUEST_CREATE)
+      {
+        const std::thread::id owner = request->session->ownerThread;
+        if (owner != std::thread::id() && owner != std::this_thread::get_id())
+          {
+            request->result.sqlstate = "08003";
+            request->result.error =
+                "NativeLite session request crossed its owner thread";
+            request->success = false;
+            return;
+          }
+      }
     if (request->type == REQUEST_CREATE)
       createSession(request);
     else if (request->type == REQUEST_DESTROY)
@@ -1240,25 +1244,14 @@ private:
     if (initializationFailed_)
       return;
 
-    for (;;)
-      {
-        EngineRequest *request = NULL;
-        {
-          std::unique_lock<std::mutex> lock(queueMutex_);
-          queueCondition_.wait(lock, [this] { return !requests_.empty(); });
-          request = requests_.front();
-          requests_.pop_front();
-        }
-
-        if (request->type == REQUEST_STOP)
-          {
-            request->success = true;
-            finish(request);
-            break;
-          }
-        processRequest(request);
-        finish(request);
-      }
+    // This thread is only the process bootstrap/lifecycle thread in M21.  It
+    // never consumes client execution requests.  Keeping the default context
+    // alive here lets connection threads create/delete session contexts under
+    // contextLifecycleMutex_ without sharing a session's TLS state.
+    {
+      std::unique_lock<std::mutex> lock(queueMutex_);
+      queueCondition_.wait(lock, [this] { return stopping_.load(); });
+    }
 
     storeLease_.close();
     global_sqlci_env = NULL;
@@ -1345,8 +1338,7 @@ private:
       }
 
     updateTransactionStatus(session);
-    SQL_EXEC_SwitchContext_Internal(defaultContext_, NULL, TRUE);
-    global_sqlci_env = NULL;
+    session->ownerThread = std::this_thread::get_id();
     request->success = true;
   }
 
@@ -1367,8 +1359,15 @@ private:
 
   void destroySession(EngineRequest *request)
   {
-    std::lock_guard<std::mutex> lifecycleLock(contextLifecycleMutex_);
     std::shared_ptr<Session> session = request->session;
+    if (session)
+      {
+        std::unique_lock<std::mutex> sessionLock(session->lifecycleMutex);
+        session->closing = true;
+        session->cancelCondition.wait(
+            sessionLock, [session] { return session->activeCancels == 0; });
+      }
+    std::lock_guard<std::mutex> lifecycleLock(contextLifecycleMutex_);
     if (!session || session->contextHandle == 0)
       {
         request->success = true;
@@ -2004,7 +2003,11 @@ private:
         plan->cli.reset(new ExeCliInterface(
             context->exHeap(), SQLCHARSETCODE_UTF8, context));
         plan->cli->setNotExeUtilInternalQuery(TRUE);
-        Lng32 rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
+        Lng32 rc = 0;
+        {
+          std::lock_guard<std::mutex> compilerLock(compilerMutex_);
+          rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
+        }
         if (rc < 0)
           {
             setDiagnosticsError(plan->cli.get(), rc, &result);
@@ -2072,7 +2075,11 @@ private:
     plan->cli.reset(new ExeCliInterface(context->exHeap(),
                                         SQLCHARSETCODE_UTF8, context));
     plan->cli->setNotExeUtilInternalQuery(TRUE);
-    Lng32 rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
+    Lng32 rc = 0;
+    {
+      std::lock_guard<std::mutex> compilerLock(compilerMutex_);
+      rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
+    }
     if (rc < 0)
       {
         setDiagnosticsError(plan->cli.get(), rc, result);
@@ -2237,6 +2244,89 @@ private:
     return result;
   }
 
+  bool automaticPlanCandidate(const std::string &sql,
+                              bool describeOnly) const
+  {
+    if (describeOnly || countT4Parameters(sql) != 0)
+      return false;
+    const std::string verb = firstWord(sql);
+    return verb == "SELECT" || verb == "INSERT" || verb == "UPDATE" ||
+           verb == "DELETE" || verb == "MERGE" || verb == "UPSERT";
+  }
+
+  std::shared_ptr<NativeLitePreparedPlan> findAutomaticPlan(
+      const std::shared_ptr<Session> &session, const std::string &sql)
+  {
+    std::map<std::string, std::shared_ptr<NativeLitePreparedPlan> >::iterator
+        found = session->planCache.find(sql);
+    if (found == session->planCache.end())
+      return std::shared_ptr<NativeLitePreparedPlan>();
+
+    session->planCacheLru.erase(std::remove(session->planCacheLru.begin(),
+                                            session->planCacheLru.end(), sql),
+                                session->planCacheLru.end());
+    session->planCacheLru.push_back(sql);
+    return found->second;
+  }
+
+  void rememberAutomaticPlan(const std::shared_ptr<Session> &session,
+                             const std::string &sql,
+                             const std::shared_ptr<NativeLitePreparedPlan> &plan)
+  {
+    static const size_t kAutomaticPlanCacheLimit = 64;
+    session->planCache[sql] = plan;
+    session->planCacheLru.erase(std::remove(session->planCacheLru.begin(),
+                                            session->planCacheLru.end(), sql),
+                                session->planCacheLru.end());
+    session->planCacheLru.push_back(sql);
+    while (session->planCacheLru.size() > kAutomaticPlanCacheLimit)
+      {
+        const std::string evicted = session->planCacheLru.front();
+        session->planCacheLru.pop_front();
+        session->planCache.erase(evicted);
+      }
+  }
+
+  void clearAutomaticPlans(const std::shared_ptr<Session> &session)
+  {
+    session->planCache.clear();
+    session->planCacheLru.clear();
+  }
+
+  QueryResult executeWithAutomaticPlan(
+      const std::shared_ptr<Session> &session, const std::string &sql)
+  {
+    std::shared_ptr<NativeLitePreparedPlan> plan =
+        findAutomaticPlan(session, sql);
+    if (!plan)
+      {
+        EngineRequest prepareRequest(REQUEST_PREPARE);
+        prepareRequest.session = session;
+        prepareRequest.sql = sql;
+        prepareStatement(&prepareRequest);
+        if (!prepareRequest.success || !prepareRequest.preparedPlan)
+          return prepareRequest.result;
+        plan = prepareRequest.preparedPlan;
+        rememberAutomaticPlan(session, sql, plan);
+      }
+
+    std::vector<std::vector<std::string> > rows(1);
+    std::vector<std::vector<bool> > nullRows(1);
+    QueryResult result = executePreparedStatement(session, plan, rows, nullRows);
+    if (!result.ok())
+      {
+        // A schema/catalog change should normally clear the cache before this
+        // path. Evict on any execution error as a conservative guard against
+        // an external metadata change or a stale CLI plan.
+        session->planCache.erase(sql);
+        session->planCacheLru.erase(std::remove(session->planCacheLru.begin(),
+                                                session->planCacheLru.end(),
+                                                sql),
+                                    session->planCacheLru.end());
+      }
+    return result;
+  }
+
   QueryResult runStatement(const std::shared_ptr<Session> &session,
                            const std::string &sql, bool describeOnly)
   {
@@ -2245,7 +2335,10 @@ private:
     std::string sqlWord = firstWord(sql);
     if (sqlWord == "CREATE" || sqlWord == "DROP" || sqlWord == "ALTER" ||
         sqlWord == "INITIALIZE")
-      catalogLock.lock();
+      {
+        clearAutomaticPlans(session);
+        catalogLock.lock();
+      }
     QueryResult result;
     if (!switchTo(session))
       {
@@ -2358,7 +2451,9 @@ private:
            !maximumExecutorRequests_.compare_exchange_weak(maximum, active))
       {}
     const char *holdText = getenv("TRAF_LOCAL_LITE_EXECUTOR_HOLD_MS");
-    if (holdText && holdText[0] && sql.find("M14E_OVERLAP") != std::string::npos)
+    if (holdText && holdText[0] &&
+        (sql.find("M14E_OVERLAP") != std::string::npos ||
+         sql.find("M21_OVERLAP") != std::string::npos))
       {
         char *end = NULL;
         long hold = strtol(holdText, &end, 10);
@@ -2437,7 +2532,18 @@ private:
         updateTransactionStatus(session);
         return result;
       }
-    rc = cli.fetchRowsPrologue(executableSql.c_str(), TRUE);
+
+    if (automaticPlanCandidate(executableSql, describeOnly))
+      {
+        QueryResult cached = executeWithAutomaticPlan(session, executableSql);
+        activeExecutorRequests_.fetch_sub(1);
+        return cached;
+      }
+
+    {
+      std::lock_guard<std::mutex> compilerLock(compilerMutex_);
+      rc = cli.fetchRowsPrologue(executableSql.c_str(), TRUE);
+    }
     if (rc < 0)
       {
         setDiagnosticsError(&cli, rc, &result);
@@ -2498,7 +2604,6 @@ private:
   std::mutex queueMutex_;
   std::condition_variable queueCondition_;
   std::condition_variable readyCondition_;
-  std::deque<EngineRequest *> requests_;
   std::atomic<bool> initialized_;
   bool initializationFailed_;
   std::string initializationError_;
@@ -2508,6 +2613,10 @@ private:
   std::mutex catalogMutex_;
   std::mutex utilityMutex_;
   std::mutex contextLifecycleMutex_;
+  // The legacy optimizer/compiler has process-global mutable state.  Protect
+  // only plan construction; prepared-plan execution and storage publication
+  // remain outside this mutex and are session-concurrent.
+  std::mutex compilerMutex_;
   std::atomic<int> activeExecutorRequests_;
   std::atomic<int> maximumExecutorRequests_;
   LocalLiteRocksDBStore storeLease_;
@@ -2873,9 +2982,10 @@ class NativeLiteServer
 {
 public:
   NativeLiteServer(const std::string &host, int port,
-                   const std::string &unixSocket)
+                   const std::string &unixSocket, unsigned int maxSessions)
       : host_(host), port_(port), unixSocket_(unixSocket), listenFd_(-1),
         ownsUnixSocket_(false), unixSocketDevice_(0), unixSocketInode_(0),
+        maxSessions_(maxSessions), activeSessions_(0),
         // Dialogue ids are local to this server process.  Keep them within
         // the signed 32-bit range expected by the T4 JDBC driver; using the
         // process id as a prefix overflows once WSL process ids grow past
@@ -2904,6 +3014,7 @@ public:
     std::cout << "NativeLite server ready on "
               << (unixSocket_.empty() ? host_ + ":" + portString()
                                       : unixSocket_)
+              << " workers=" << maxSessions_
               << std::endl;
     while (!gStopping.load())
       {
@@ -3182,14 +3293,29 @@ private:
         sendT4Response(fd, request, std::string(), 1, 0);
         return closeClientFd(fd);
       }
+    if (!tryAcquireSessionSlot())
+      {
+        QueryResult capacity;
+        capacity.sqlstate = "53300";
+        capacity.error = "NativeLite session capacity exhausted (limit=" +
+                         std::to_string(maxSessions_) + ")";
+        std::string errorBody;
+        appendT4ConnectError(&errorBody, capacity);
+        sendT4Response(fd, request, errorBody);
+        return closeClientFd(fd);
+      }
+    session->slotAcquired = true;
     std::string createError;
     if (!engine_.create(session, &createError))
       {
+        QueryResult failure;
+        failure.sqlstate = "08004";
+        failure.error = createError.empty() ?
+            "NativeLite could not create a session context" : createError;
         std::string errorBody;
-        appendU32(&errorBody, 6);
-        appendU32(&errorBody, 0);
-        appendU32(&errorBody, 0);
+        appendT4ConnectError(&errorBody, failure);
         sendT4Response(fd, request, errorBody);
+        releaseSessionSlot(session);
         return closeClientFd(fd);
       }
     {
@@ -3384,6 +3510,16 @@ private:
     appendU32(reply, static_cast<uint32_t>(error.size() + 4));
     appendU32(reply, 1);
     reply->append(error);
+  }
+
+  void appendT4ConnectError(std::string *reply, const QueryResult &result)
+  {
+    // SQLCONNECT uses InitializeDialogueReply's SQLError list rather than
+    // the execute-reply diagnostic envelope used after a session exists.
+    appendU32(reply, 3); // odbc_SQLSvc_InitializeDialogue_SQLError_exn_
+    appendU32(reply, 0); // exception detail
+    appendU32(reply, 1); // one ERROR_DESC_def
+    appendT4ErrorDescriptor(reply, result);
   }
 
   void appendT4ErrorDescriptor(std::string *reply, const QueryResult &result)
@@ -4112,7 +4248,25 @@ private:
       sessions_.erase(session->backendPid);
     }
     engine_.destroy(session);
+    releaseSessionSlot(session);
     closeClientFd(fd);
+  }
+
+  bool tryAcquireSessionSlot()
+  {
+    int current = activeSessions_.load();
+    while (current < static_cast<int>(maxSessions_))
+      if (activeSessions_.compare_exchange_weak(current, current + 1))
+        return true;
+    return false;
+  }
+
+  void releaseSessionSlot(const std::shared_ptr<Session> &session)
+  {
+    if (!session || !session->slotAcquired)
+      return;
+    session->slotAcquired = false;
+    activeSessions_.fetch_sub(1);
   }
 
   void closeClientFd(int fd)
@@ -4133,6 +4287,8 @@ private:
   dev_t unixSocketDevice_;
   ino_t unixSocketInode_;
   NativeLiteEngine engine_;
+  unsigned int maxSessions_;
+  std::atomic<int> activeSessions_;
   std::atomic<int32_t> nextDialogueId_;
   std::mutex sessionMutex_;
   std::map<int32_t, std::weak_ptr<Session> > sessions_;
@@ -4154,7 +4310,15 @@ void usage(const char *program)
 {
   std::cerr << "Usage: " << program
             << " [--listen 127.0.0.1] [--port 23400]"
-               " [--unix-socket PATH]" << std::endl;
+               " [--unix-socket PATH] [--workers N]" << std::endl;
+}
+
+unsigned int defaultWorkerLimit()
+{
+  unsigned int concurrency = std::thread::hardware_concurrency();
+  if (concurrency == 0)
+    concurrency = 2;
+  return std::min<unsigned int>(32, std::max<unsigned int>(2, concurrency));
 }
 
 } // namespace
@@ -4164,6 +4328,7 @@ int main(int argc, char **argv)
   std::string host = "127.0.0.1";
   int port = 23400;
   std::string unixSocket;
+  unsigned int workers = defaultWorkerLimit();
   for (int i = 1; i < argc; i++)
     {
       std::string option = argv[i];
@@ -4182,6 +4347,17 @@ int main(int argc, char **argv)
         }
       else if (option == "--unix-socket" && i + 1 < argc)
         unixSocket = argv[++i];
+      else if (option == "--workers" && i + 1 < argc)
+        {
+          char *end = NULL;
+          long parsed = strtol(argv[++i], &end, 10);
+          if (!end || *end != '\0' || parsed < 1 || parsed > 256)
+            {
+              usage(argv[0]);
+              return 2;
+            }
+          workers = static_cast<unsigned int>(parsed);
+        }
       else if (option == "--help")
         {
           usage(argv[0]);
@@ -4204,7 +4380,7 @@ int main(int argc, char **argv)
   signal(SIGINT, signalHandler);
   signal(SIGTERM, signalHandler);
 
-  NativeLiteServer server(host, port, unixSocket);
+  NativeLiteServer server(host, port, unixSocket, workers);
   std::string error;
   if (!server.start(&error))
     {

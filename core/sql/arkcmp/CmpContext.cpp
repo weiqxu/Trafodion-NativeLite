@@ -110,8 +110,7 @@ extern THREAD_P jmp_buf CmpInternalErrorJmpBuf;
 // Methods for CmpContext
 // -----------------------------------------------------------------------
 
-NABoolean CmpContext::useReservedNameSpace_ = FALSE;
-Int32 CmpContext::authorizationState_ = 0;
+THREAD_P Int32 CmpContext::authorizationState_ = 0;
 
 CmpContext::CmpContext(UInt32 f, CollHeap * h)
 : heap_((NAHeap *)h), 

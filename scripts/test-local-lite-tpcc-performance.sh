@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+bulk_loader="$repo_root/core/sqf/export/bin64d/nativelite-bulk-loader"
 driver_source="$repo_root/core/conn/jdbcT4/src/main/java"
 loader_source="$repo_root/scripts/NativeLiteTpcc.java"
 transaction_source="$repo_root/scripts/NativeLiteTpccTransactions.java"
@@ -21,9 +22,15 @@ else
   sqf_libs="$repo_root/core/sqf/export/lib64d"
 fi
 traf_home="$repo_root/core/sqf"
+workers=${NATIVELITE_WORKERS:-32}
+native_bulk_load=${TPCC_NATIVE_BULK_LOAD:-0}
+native_commit_rows=${TPCC_NATIVE_COMMIT_ROWS:-}
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 [[ -x "$server" ]] || fail "missing built NativeLite server: $server"
+if [[ "$native_bulk_load" == "1" ]]; then
+  [[ -x "$bulk_loader" ]] || fail "missing NativeLite bulk loader: $bulk_loader"
+fi
 
 slf4j_jar=${SLF4J_API_JAR:-}
 if [[ -z "$slf4j_jar" && -r /usr/share/java/slf4j-api.jar ]]; then
@@ -85,13 +92,13 @@ start_server() {
       TRAF_LOCAL_LITE_MINIMUM_FREE_BYTES="$minimum_free" \
       TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \
       LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
-      "$server" --listen 127.0.0.1 --port "$port" >"$server_log" 2>&1 &
+      "$server" --listen 127.0.0.1 --port "$port" --workers "$workers" >"$server_log" 2>&1 &
   else
     env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
       TRAF_LOCAL_STORE_DIR="$active_store" \
       TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \
       LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
-      "$server" --listen 127.0.0.1 --port "$port" >"$server_log" 2>&1 &
+      "$server" --listen 127.0.0.1 --port "$port" --workers "$workers" >"$server_log" 2>&1 &
   fi
   server_pid=$!
   for _ in $(seq 1 300); do
@@ -113,9 +120,33 @@ find "$driver_source" -name '*.java' -print0 | \
 javac -Xlint:all -cp "$classes_dir:$slf4j_jar" -d "$classes_dir" \
   "$loader_source" "$transaction_source" "$workload_source"
 
-start_server
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
-  "$jdbc_url" load "$tpcc_scale" "$properties" "$schema" "$test_root/load.json"
+if [[ "$native_bulk_load" == "1" ]]; then
+  # Create the catalog through the supported SQL path, then close the server
+  # before the native loader opens the same unified RocksDB store.
+  start_server
+  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+    "$jdbc_url" schema "$tpcc_scale" "$properties" "$schema" \
+    "$test_root/schema.json"
+  stop_server
+  bulk_loader_args=(--properties "$properties" --scale "$tpcc_scale")
+  if [[ -n "$native_commit_rows" ]]; then
+    bulk_loader_args+=(--commit-rows "$native_commit_rows")
+  fi
+  env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
+    TRAF_LOCAL_STORE_DIR="$active_store" \
+    TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \
+    LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
+    "$bulk_loader" "${bulk_loader_args[@]}" \
+    --report "$test_root/bulk-load.json"
+  start_server
+  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+    "$jdbc_url" verify "$tpcc_scale" "$properties" "$schema" \
+    "$test_root/load.json"
+else
+  start_server
+  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+    "$jdbc_url" load "$tpcc_scale" "$properties" "$schema" "$test_root/load.json"
+fi
 rss_before=$(awk '/VmRSS:/ {print $2}' "/proc/$server_pid/status")
 store_bytes_before=$(du -sb "$primary_store" | awk '{print $1}')
 java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
@@ -172,7 +203,7 @@ env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
   TRAF_LOCAL_LITE_MINIMUM_FREE_BYTES=18446744073709551615 \
   TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \
   LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
-  "$server" --listen 127.0.0.1 --port "$port" >"$server_log" 2>&1 &
+  "$server" --listen 127.0.0.1 --port "$port" --workers "$workers" >"$server_log" 2>&1 &
 server_pid=$!
 for _ in $(seq 1 300); do
   if grep -q 'NativeLite server ready' "$server_log"; then

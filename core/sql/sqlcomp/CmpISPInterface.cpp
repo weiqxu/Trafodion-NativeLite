@@ -42,6 +42,8 @@
 #include "NATableSt.h"
 #include "NARoutine.h"
 
+#include <mutex>
+
 
 CmpISPInterface::CmpISPInterface()
 {
@@ -50,36 +52,30 @@ CmpISPInterface::CmpISPInterface()
 
 void CmpISPInterface::InitISPFuncs()
 {
-  SP_REGISTER_FUNCPTR regFunc = &(CmpISPFuncs::RegFuncs);
+  static std::once_flag initOnce;
+  std::call_once(initOnce, [this]() {
+    SP_REGISTER_FUNCPTR regFunc = &(CmpISPFuncs::RegFuncs);
 
-  if ( initCalled_ )
-    return;
+    // The stored-procedure registry is process-global and immutable after
+    // startup.  Protect its first construction while allowing independent
+    // embedded compiler contexts to initialize concurrently.
+    QueryCacheStatStoredProcedure::Initialize(regFunc);
+    QueryCacheEntriesStoredProcedure::Initialize(regFunc);
+    QueryCacheDeleteStoredProcedure::Initialize(regFunc);
 
-  // todo, error handling.
-  // Query cache virtual tables
-  QueryCacheStatStoredProcedure::Initialize(regFunc);
-  QueryCacheEntriesStoredProcedure::Initialize(regFunc);
-  QueryCacheDeleteStoredProcedure::Initialize(regFunc);
+    HybridQueryCacheStatStoredProcedure::Initialize(regFunc);
+    HybridQueryCacheEntriesStoredProcedure::Initialize(regFunc);
 
-  HybridQueryCacheStatStoredProcedure::Initialize(regFunc);
-  HybridQueryCacheEntriesStoredProcedure::Initialize(regFunc);
-  
-  // NATable cache statistics virtual table
-  NATableCacheStatStoredProcedure::Initialize(regFunc);
-  NATableCacheEntriesStoredProcedure::Initialize(regFunc);
+    NATableCacheStatStoredProcedure::Initialize(regFunc);
+    NATableCacheEntriesStoredProcedure::Initialize(regFunc);
+    NATableCacheDeleteStoredProcedure::Initialize(regFunc);
 
-    // NATable cache statistics delete
-  NATableCacheDeleteStoredProcedure::Initialize(regFunc);
+    NARoutineCacheStatStoredProcedure::Initialize(regFunc);
+    NARoutineCacheDeleteStoredProcedure::Initialize(regFunc);
 
-  // NARoutine cache statistics virtual table
-  NARoutineCacheStatStoredProcedure::Initialize(regFunc);
-
-  // NARoutine cache statistics delete
-  NARoutineCacheDeleteStoredProcedure::Initialize(regFunc);
-
-  // insert an empty entry to indicate end of array
-  CmpISPFuncs::procFuncsArray_.insert(CmpISPFuncs::ProcFuncsStruct());
-  initCalled_ = TRUE;
+    CmpISPFuncs::procFuncsArray_.insert(CmpISPFuncs::ProcFuncsStruct());
+    initCalled_ = TRUE;
+  });
 }
 
 CmpISPInterface::~CmpISPInterface()
@@ -87,11 +83,9 @@ CmpISPInterface::~CmpISPInterface()
 }
 
 //
-// NOTE: The cmpISPInterface variable is being left as a global
-//       because, once it is initialized, it is never changed
-//       AND the initial thread in the process should initialize it
-//       before any other Compiler Instance threads can be created.
+// NOTE: The cmpISPInterface variable remains process-global because the
+//       registry is immutable after its once-only initialization.  The
+//       initialization itself is protected by std::call_once so embedded
+//       compiler instances may start on independent session threads.
 //
 CmpISPInterface cmpISPInterface;
-
-

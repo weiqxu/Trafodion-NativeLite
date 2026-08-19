@@ -5541,6 +5541,50 @@ public:
     return true;
   }
 
+  bool insertRows(LocalLiteRocksDBStore *store,
+                  const LocalLiteTableDef &table,
+                  const std::vector<std::string> &encodedRows,
+                  std::string *error)
+  {
+    LocalLiteMutexGuard guard(&mutex_);
+    if (!active_)
+      {
+        setError(error, "local-lite bulk insert requires an active transaction");
+        return false;
+      }
+    if (encodedRows.empty())
+      return true;
+
+    PendingTable &pending = pendingTables_[tableKey(table)];
+    if (!pending.initialized)
+      {
+        LocalLiteTableDef loaded;
+        if (!store->loadTable(table.catalog, table.schema, table.name,
+                              &loaded, error))
+          return false;
+        pending.table = loaded;
+        pending.nextRowId = loaded.nextRowId;
+        pending.initialized = true;
+      }
+
+    // Do not perform the per-row scan used by insertRow().  The unified
+    // commit path already builds one RecordMap and rejects duplicate primary,
+    // unique, and secondary-index keys for the whole batch.  This keeps a
+    // 100K-row native load O(rows) in the staging path instead of repeatedly
+    // comparing every new row with all prior pending rows.
+    pending.rows.reserve(pending.rows.size() + encodedRows.size());
+    for (size_t i = 0; i < encodedRows.size(); i++)
+      {
+        LocalLiteRow row;
+        row.rowId = pending.nextRowId++;
+        row.value = encodedRows[i];
+        if (!recordRowWriteLocked(pending.table, row, error))
+          return false;
+        pending.rows.push_back(row);
+      }
+    return true;
+  }
+
   bool updateRows(LocalLiteRocksDBStore *store,
                   const LocalLiteTableDef &table,
                   const std::vector<LocalLiteRowMutation> &mutations,
@@ -9458,6 +9502,24 @@ bool LocalLiteTxn::insertRow(const LocalLiteTableDef &table,
     }
 
   return txnContext_->insertRow(store_, table, encodedRow, rowId, error);
+}
+
+bool LocalLiteTxn::insertRows(
+    const LocalLiteTableDef &table,
+    const std::vector<std::string> &encodedRows,
+    std::string *error)
+{
+  if (!store_)
+    {
+      setError(error, "local-lite transaction missing store");
+      return false;
+    }
+  if (!txnContext_)
+    {
+      setError(error, "local-lite transaction missing session context");
+      return false;
+    }
+  return txnContext_->insertRows(store_, table, encodedRows, error);
 }
 
 bool LocalLiteTxn::upsertRow(const LocalLiteTableDef &table,

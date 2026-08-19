@@ -6,6 +6,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -64,22 +66,24 @@ public final class NativeLiteTpccConcurrency {
     }
   }
 
-  private static void concurrentExecutor(String url) throws Exception {
-    try (Connection first = connect(url); Connection second = connect(url)) {
-      CountDownLatch ready = new CountDownLatch(2);
+  private static void concurrentExecutor(String url, int clientCount) throws Exception {
+    List<Connection> connections = new ArrayList<>();
+    try {
+      for (int index = 0; index < clientCount; index++)
+        connections.add(connect(url));
       CountDownLatch start = new CountDownLatch(1);
+      CountDownLatch ready = new CountDownLatch(clientCount);
       AtomicReference<Throwable> failure = new AtomicReference<>();
-      Thread[] workers = new Thread[2];
-      Connection[] connections = {first, second};
+      Thread[] workers = new Thread[clientCount];
       for (int index = 0; index < workers.length; index++) {
-        final Connection connection = connections[index];
+        final Connection connection = connections.get(index);
         workers[index] = new Thread(() -> {
           try {
             ready.countDown();
             start.await();
             require(queryInt(connection,
                 "SELECT COUNT(*) FROM TPCC_ORDER_LINE " +
-                "WHERE 1=1 /* M14E_OVERLAP */") == 2002,
+                "WHERE 1=1 /* M21_OVERLAP */") == 2002,
                 "concurrent executor returned the wrong count");
             connection.rollback();
           } catch (Throwable problem) {
@@ -97,11 +101,13 @@ public final class NativeLiteTpccConcurrency {
         require(!worker.isAlive(), worker.getName() + " did not finish");
       if (failure.get() != null)
         throw new AssertionError("concurrent executor failed", failure.get());
-      require(queryInt(first, "SELECT NATIVE_LITE_EXECUTOR_OVERLAP()") >= 2,
+      require(queryInt(connections.get(0), "SELECT NATIVE_LITE_EXECUTOR_OVERLAP()") >= 2,
           "server did not observe compiler/executor overlap");
       require(elapsedMillis < 10000,
           "overlap probe did not complete within 10 seconds");
-      first.rollback();
+      for (Connection connection : connections) connection.rollback();
+    } finally {
+      for (Connection connection : connections) connection.close();
     }
   }
 
@@ -123,17 +129,48 @@ public final class NativeLiteTpccConcurrency {
     }
   }
 
+  private static void capacityProbe(String url) throws Exception {
+    try (Connection first = connect(url); Connection second = connect(url)) {
+      try {
+        connect(url).close();
+        throw new AssertionError("third session unexpectedly bypassed capacity limit");
+      } catch (SQLException expected) {
+        String state = expected.getSQLState();
+        String detail = expected.getMessage() == null ? "" : expected.getMessage();
+        require("53300".equals(state) || detail.contains("53300") ||
+            detail.toLowerCase().contains("capacity exhausted"),
+            "capacity error was not reported: SQLSTATE=" + state +
+            " message=" + detail);
+      }
+      first.close();
+      try (Connection replacement = connect(url)) {
+        require(replacement != null,
+            "replacement session failed after capacity was released");
+      }
+      second.rollback();
+    }
+  }
+
   public static void main(String[] args) throws Exception {
-    require(args.length == 2,
-        "usage: NativeLiteTpccConcurrency JDBC_URL REPORT");
+    require(args.length == 2 || args.length == 3,
+        "usage: NativeLiteTpccConcurrency JDBC_URL REPORT [CLIENTS]");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
+    if (args.length == 2 && "capacity".equals(args[1])) {
+      capacityProbe(args[0]);
+      System.out.println("LocalLite M21 session capacity probe passed");
+      return;
+    }
     sessionSchemaIsolation(args[0]);
+    int clientCount = args.length == 3 ? Integer.parseInt(args[2]) : 2;
+    require(clientCount >= 2 && clientCount <= 256,
+        "client count must be between 2 and 256");
     for (int iteration = 0; iteration < 5; iteration++)
-      concurrentExecutor(args[0]);
+      concurrentExecutor(args[0], clientCount);
     diagnosticAndPeerSurvival(args[0]);
     String report = "{\"contract_version\":1," +
         "\"compiler_executor_overlap\":\"pass\"," +
         "\"minimum_observed_overlap\":2,\"race_iterations\":5," +
+        "\"client_count\":" + clientCount + "," +
         "\"session_schema_isolation\":\"pass\"," +
         "\"diagnostic_isolation\":\"pass\"," +
         "\"peer_survival\":\"pass\",\"ddl_policy\":\"serialized\"," +

@@ -512,6 +512,9 @@ public:
                  const std::string &encodedRow,
                  uint64_t *rowId,
                  std::string *error);
+  bool insertRows(const LocalLiteTableDef &table,
+                  const std::vector<std::string> &encodedRows,
+                  std::string *error);
   bool upsertRow(const LocalLiteTableDef &table,
                  const std::string &encodedRow,
                  uint64_t *rowId,

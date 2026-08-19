@@ -82,7 +82,7 @@ ostream &operator<<(ostream &dest, const ComDiagsArea& da);
 //
 // Save 4K bytes of memory for the error handling when running out of VM.
 
-static char* mainNewHandler_CharSave = new char[4096];
+static THREAD_P char* mainNewHandler_CharSave = NULL;
 
 
 static Int32  mainNewHandler(size_t s)
@@ -114,6 +114,8 @@ extern THREAD_P jmp_buf CmpInternalErrorJmpBuf;
 
 static void initializeArkcmp()
 {
+  if (mainNewHandler_CharSave == NULL)
+    mainNewHandler_CharSave = new char[4096];
   CmpInternalErrorJmpBufPtr = &CmpInternalErrorJmpBuf;
   // noop for now
 }
@@ -152,11 +154,22 @@ Int32 arkcmp_main_entry()
                            (Lng32)524288);
       try
       {
-        CLISemaphore *cliSemaphore;
-        cliSemaphore = GetCliGlobals()->getSemaphore();
+        // CmpContext owns legacy compiler metadata whose first construction is
+        // not reentrant.  Keep only this bootstrap critical section serialized;
+        // the resulting context and all statement execution remain thread
+        // affine and can run concurrently after initialization.
+        CLISemaphore *cliSemaphore = GetCliGlobals()->getSemaphore();
         cliSemaphore->get();
-        context= new (cmpContextHeap)CmpContext(CmpContext::IS_DYNAMIC_SQL,
+        try
+          {
+            context= new (cmpContextHeap)CmpContext(CmpContext::IS_DYNAMIC_SQL,
 			 cmpContextHeap);
+          }
+        catch (...)
+          {
+            cliSemaphore->release();
+            throw;
+          }
         cliSemaphore->release();
 
          if (! context->getSchemaDB()->getDefaults().getSqlParser_NADefaults_Ptr())

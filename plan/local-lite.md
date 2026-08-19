@@ -1472,12 +1472,33 @@ make local-lite-m11
 
 Detailed design and current validation limits: `plan/local-lite-tpcc-m20-design.md`.
 
+## M21 Thread-Affine Multi-Worker Execution
+
+- [x] Dispatch client requests directly on the owning connection thread and
+  retain per-session CLI/compiler/transaction/diagnostic state.
+- [x] Add bounded `--workers` session capacity, SQLCONNECT SQLSTATE `53300`,
+  safe cancel/destroy quiescence, and capacity slot reuse.
+- [x] Protect legacy compiler plan construction while leaving executor/storage
+  work concurrent across sessions.
+- [x] Pass the final 32-client session/schema/diagnostic/peer-survival gate.
+- [x] Pass the 10-warehouse/32-terminal multi-scale TPCC-like workload with
+  consistency, checkpoint, clean restart, unclean restart, and checkpoint
+  restore checks. Observed 1.907 TPS, 0.038462 throughput variance, 582 OCC
+  server conflicts, and p95 new-order latency 63.904 seconds; this is a
+  functional/concurrency result, not a claim against the former latency target.
+- [ ] Complete qualification-scale 10-warehouse cardinality run in the local
+  WSL2 environment; the full 100000-item/300000-customer path was stopped after
+  synchronous RocksDB loading exceeded the practical test window.
+
+Detailed M21 design, controls, test commands, and limits:
+`plan/local-lite-tpcc-m21-design.md`.
+
 - Keep the full Trafodion build unchanged unless `TRAF_LOCAL_LITE=1` is set.
 - Keep all local-lite behavior compile-time gated by `TRAF_LOCAL_LITE`.
 - Prefer small native stubs over compiling Java/Hadoop-backed code.
 - Keep the RocksDB local store native-only and process-owned; client sessions
-  must reach it through their explicit transaction context and the serialized
-  server engine boundary.
+  must reach it through their explicit transaction context and a session-affine
+  execution boundary, while shared storage/OCC publication remains synchronized.
 - Disabled HDFS/Hive/HBase paths must fail explicitly.
 - Treat `sqlci` and the bounded M11 `nativelite-server` as the supported
   standalone runtimes; do not imply `mxosrvr`, DCS, REST, or the full SQF

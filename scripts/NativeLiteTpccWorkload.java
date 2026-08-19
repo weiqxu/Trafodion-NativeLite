@@ -148,7 +148,10 @@ public final class NativeLiteTpccWorkload {
         try {
           ready.countDown();
           start.await();
-          runTerminal(url, repetition * 100 + selectedWarehouse,
+          // The terminal identity must remain unique when several terminals
+          // are mapped to the same warehouse; it is also used to derive the
+          // deterministic TPCC_HISTORY key in payment transactions.
+          runTerminal(url, repetition * 100 + selectedTerminal,
               selectedWarehouse, districts, customers, transactionCount,
               stats);
         } catch (Throwable problem) {
