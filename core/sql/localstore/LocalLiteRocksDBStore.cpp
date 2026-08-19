@@ -4817,8 +4817,11 @@ struct LocalLiteOccMetrics
       rangeReads(0), fullScans(0), primaryRangeReads(0),
       indexRangeReads(0), readRanges(0),
       writeKeys(0), validationCandidates(0), validationConflicts(0),
-      historyOverflowAborts(0), validationLatencyUs(0),
-      publicationLatencyUs(0) {}
+      pointValidationConflicts(0), rangeValidationConflicts(0),
+      fullScanValidationConflicts(0), historyOverflowAborts(0),
+      commitLatchWaitUs(0), validationLatencyUs(0),
+      referentialValidationLatencyUs(0), batchBuildLatencyUs(0),
+      publicationLatencyUs(0), visibilityPublicationLatencyUs(0) {}
 
   uint64_t transactionsStarted;
   uint64_t transactionsCommitted;
@@ -4833,9 +4836,16 @@ struct LocalLiteOccMetrics
   uint64_t writeKeys;
   uint64_t validationCandidates;
   uint64_t validationConflicts;
+  uint64_t pointValidationConflicts;
+  uint64_t rangeValidationConflicts;
+  uint64_t fullScanValidationConflicts;
   uint64_t historyOverflowAborts;
+  uint64_t commitLatchWaitUs;
   uint64_t validationLatencyUs;
+  uint64_t referentialValidationLatencyUs;
+  uint64_t batchBuildLatencyUs;
   uint64_t publicationLatencyUs;
+  uint64_t visibilityPublicationLatencyUs;
 };
 
 static LocalLiteOccMetrics localLiteOccMetrics;
@@ -4960,6 +4970,12 @@ public:
                             read->full ? 1 : 0);
                   validationConflicts_++;
                   localLiteOccMetrics.validationConflicts++;
+                  if (read->full)
+                    localLiteOccMetrics.fullScanValidationConflicts++;
+                  else if (read->start == read->end)
+                    localLiteOccMetrics.pointValidationConflicts++;
+                  else
+                    localLiteOccMetrics.rangeValidationConflicts++;
                   localLiteOccMetrics.transactionsAbortedConflict++;
                   setError(error,
                            "local-lite serializable validation failed "
@@ -5263,8 +5279,13 @@ public:
     // Keep readers and writers behind one process-wide publication latch.
     // Every logical table and catalog record is a prefix view over the same
     // TransactionDB, so one physical write batch is the commit decision.
+    const uint64_t commitLatchWaitStarted = monotonicMicros();
     LocalLiteMutexGuard atomicPublication(
         LocalLiteStorageManager::instance().mutex());
+    const uint64_t commitLatchAcquired = monotonicMicros();
+    if (commitLatchAcquired >= commitLatchWaitStarted)
+      localLiteOccMetrics.commitLatchWaitUs +=
+          commitLatchAcquired - commitLatchWaitStarted;
     observeOccTransaction(pointReads, missingPointReads, fullScans,
                           primaryRangeReads, indexRangeReads,
                           readRanges.size(),
@@ -5284,13 +5305,21 @@ public:
         transactionStore_.close();
         return false;
       }
-    if (!validatePendingReferentialIntegrity(pending, error))
+    const uint64_t referentialValidationStarted = monotonicMicros();
+    const bool referentialValidationPassed =
+        validatePendingReferentialIntegrity(pending, error);
+    const uint64_t referentialValidationFinished = monotonicMicros();
+    if (referentialValidationFinished >= referentialValidationStarted)
+      localLiteOccMetrics.referentialValidationLatencyUs +=
+          referentialValidationFinished - referentialValidationStarted;
+    if (!referentialValidationPassed)
       {
         endOcc();
         atomicPublication.unlock();
         transactionStore_.close();
         return false;
       }
+    const uint64_t batchBuildStarted = monotonicMicros();
     LocalLiteUnifiedWriteBatch *batch = LocalLiteUnifiedWriteBatchCreate();
     for (PendingMap::const_iterator t = pending.begin();
          t != pending.end(); ++t)
@@ -5304,6 +5333,10 @@ public:
           transactionStore_.close();
           return false;
         }
+    const uint64_t batchBuildFinished = monotonicMicros();
+    if (batchBuildFinished >= batchBuildStarted)
+      localLiteOccMetrics.batchBuildLatencyUs +=
+          batchBuildFinished - batchBuildStarted;
 
     const char *commitFault = getenv("TRAF_LOCAL_LITE_COMMIT_FAULT");
     if (commitFault &&
@@ -5332,8 +5365,13 @@ public:
          strcmp(commitFault, "after-journal") == 0))
       _exit(93);
 
+    const uint64_t visibilityStarted = monotonicMicros();
     localLiteOccCoordinator.publish(this, LocalLiteUnifiedRocksDBSequence(),
                                     writeKeys);
+    const uint64_t visibilityFinished = monotonicMicros();
+    if (visibilityFinished >= visibilityStarted)
+      localLiteOccMetrics.visibilityPublicationLatencyUs +=
+          visibilityFinished - visibilityStarted;
     localLiteOccMetrics.transactionsCommitted++;
     endOcc();
     atomicPublication.unlock();
@@ -9827,12 +9865,26 @@ std::string LocalLiteOccMetricsJson()
       << localLiteOccMetrics.validationCandidates
       << ",\"validation_conflicts\":"
       << localLiteOccMetrics.validationConflicts
+      << ",\"point_validation_conflicts\":"
+      << localLiteOccMetrics.pointValidationConflicts
+      << ",\"range_validation_conflicts\":"
+      << localLiteOccMetrics.rangeValidationConflicts
+      << ",\"full_scan_validation_conflicts\":"
+      << localLiteOccMetrics.fullScanValidationConflicts
       << ",\"history_overflow_aborts\":"
       << localLiteOccMetrics.historyOverflowAborts
+      << ",\"commit_latch_wait_us\":"
+      << localLiteOccMetrics.commitLatchWaitUs
       << ",\"validation_latency_us\":"
       << localLiteOccMetrics.validationLatencyUs
+      << ",\"referential_validation_latency_us\":"
+      << localLiteOccMetrics.referentialValidationLatencyUs
+      << ",\"batch_build_latency_us\":"
+      << localLiteOccMetrics.batchBuildLatencyUs
       << ",\"publication_latency_us\":"
       << localLiteOccMetrics.publicationLatencyUs
+      << ",\"visibility_publication_latency_us\":"
+      << localLiteOccMetrics.visibilityPublicationLatencyUs
       << ",\"synchronous_commit\":"
       << (localLiteSynchronousCommit() ? "true" : "false") << "}";
   return out.str();
