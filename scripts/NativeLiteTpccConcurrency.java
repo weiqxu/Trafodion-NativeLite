@@ -103,6 +103,9 @@ public final class NativeLiteTpccConcurrency {
         throw new AssertionError("concurrent executor failed", failure.get());
       require(queryInt(connections.get(0), "SELECT NATIVE_LITE_EXECUTOR_OVERLAP()") >= 2,
           "server did not observe compiler/executor overlap");
+      require(queryInt(connections.get(0), "SELECT NATIVE_LITE_COMPILER_OVERLAP()") >=
+          Math.min(4, clientCount),
+          "server did not observe session-owned compiler overlap");
       require(elapsedMillis < 10000,
           "overlap probe did not complete within 10 seconds");
       for (Connection connection : connections) connection.rollback();
@@ -169,7 +172,8 @@ public final class NativeLiteTpccConcurrency {
     diagnosticAndPeerSurvival(args[0]);
     String report = "{\"contract_version\":1," +
         "\"compiler_executor_overlap\":\"pass\"," +
-        "\"minimum_observed_overlap\":2,\"race_iterations\":5," +
+        "\"minimum_observed_overlap\":2,\"minimum_compile_overlap\":4," +
+        "\"race_iterations\":5," +
         "\"client_count\":" + clientCount + "," +
         "\"session_schema_isolation\":\"pass\"," +
         "\"diagnostic_isolation\":\"pass\"," +

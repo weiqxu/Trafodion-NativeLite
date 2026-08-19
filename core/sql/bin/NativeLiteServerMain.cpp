@@ -687,6 +687,7 @@ struct Session
   uint64_t statementSequence;
   std::thread::id ownerThread;
   std::mutex lifecycleMutex;
+  std::mutex compilerMutex;
   std::condition_variable cancelCondition;
   unsigned int activeCancels;
   bool closing;
@@ -962,7 +963,8 @@ public:
   NativeLiteEngine()
       : initialized_(false), initializationFailed_(false), stopping_(false),
         defaultContext_(0), bootstrapEnv_(NULL), activeExecutorRequests_(0),
-        maximumExecutorRequests_(0)
+        maximumExecutorRequests_(0), activeCompilerRequests_(0),
+        maximumCompilerRequests_(0)
   {
     worker_ = std::thread(&NativeLiteEngine::run, this);
   }
@@ -1461,6 +1463,25 @@ private:
         return result;
       }
 
+    if (normalized == "SELECT NATIVE_LITE_COMPILER_OVERLAP()" ||
+        normalized == "SELECT NATIVELITE_COMPILER_OVERLAP()")
+      {
+        *handled = true;
+        Column column;
+        column.name = "native_lite_compiler_overlap";
+        column.oid = 23;
+        column.typeLength = 4;
+        result.columns.push_back(column);
+        result.commandTag = "SELECT 1";
+        if (!describeOnly)
+          {
+            std::ostringstream value;
+            value << maximumCompilerRequests_.load();
+            result.rows.push_back(std::vector<Cell>(1, Cell(value.str())));
+          }
+        return result;
+      }
+
     if (normalized == "SELECT NATIVE_LITE_OCC_METRICS()" ||
         normalized == "SELECT NATIVELITE_OCC_METRICS()")
       {
@@ -1492,6 +1513,26 @@ private:
           {
             LocalLiteOccMetricsReset();
             result.rows.push_back(std::vector<Cell>(1, Cell("ok")));
+          }
+        return result;
+      }
+
+    if (normalized == "SELECT NATIVE_LITE_COMPILER_METRICS()" ||
+        normalized == "SELECT NATIVELITE_COMPILER_METRICS()")
+      {
+        *handled = true;
+        Column column;
+        column.name = "native_lite_compiler_metrics";
+        column.oid = 25;
+        column.typeLength = -1;
+        result.columns.push_back(column);
+        result.commandTag = "SELECT 1";
+        if (!describeOnly)
+          {
+            std::ostringstream value;
+            value << "{\"maximum_compile_overlap\":"
+                  << maximumCompilerRequests_.load() << "}";
+            result.rows.push_back(std::vector<Cell>(1, Cell(value.str())));
           }
         return result;
       }
@@ -1966,6 +2007,23 @@ private:
     return true;
   }
 
+  Lng32 compilePlan(const std::shared_ptr<Session> &session,
+                    ExeCliInterface *cli, const std::string &sql)
+  {
+    std::lock_guard<std::mutex> sessionCompilerLock(session->compilerMutex);
+    const int active = activeCompilerRequests_.fetch_add(1) + 1;
+    int maximum = maximumCompilerRequests_.load();
+    while (active > maximum &&
+           !maximumCompilerRequests_.compare_exchange_weak(maximum, active))
+      {}
+    const char *hold = getenv("TRAF_LOCAL_LITE_COMPILER_HOLD_MS");
+    if (hold && hold[0])
+      usleep(static_cast<useconds_t>(strtoul(hold, NULL, 10)) * 1000U);
+    const Lng32 result = cli->fetchRowsPrologue(sql.c_str(), TRUE);
+    activeCompilerRequests_.fetch_sub(1);
+    return result;
+  }
+
   void prepareStatement(EngineRequest *request)
   {
     QueryResult result;
@@ -2004,10 +2062,7 @@ private:
             context->exHeap(), SQLCHARSETCODE_UTF8, context));
         plan->cli->setNotExeUtilInternalQuery(TRUE);
         Lng32 rc = 0;
-        {
-          std::lock_guard<std::mutex> compilerLock(compilerMutex_);
-          rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
-        }
+        rc = compilePlan(request->session, plan->cli.get(), plan->sql);
         if (rc < 0)
           {
             setDiagnosticsError(plan->cli.get(), rc, &result);
@@ -2076,10 +2131,7 @@ private:
                                         SQLCHARSETCODE_UTF8, context));
     plan->cli->setNotExeUtilInternalQuery(TRUE);
     Lng32 rc = 0;
-    {
-      std::lock_guard<std::mutex> compilerLock(compilerMutex_);
-      rc = plan->cli->fetchRowsPrologue(plan->sql.c_str(), TRUE);
-    }
+    rc = compilePlan(session, plan->cli.get(), plan->sql);
     if (rc < 0)
       {
         setDiagnosticsError(plan->cli.get(), rc, result);
@@ -2137,33 +2189,10 @@ private:
         return result;
       }
 
-    // The executor's current local scan contract cannot bind a prepared
-    // parameter tuple while evaluating a scan predicate.  Point reads happen
-    // to recover through the dedicated key path, but aggregates, ranges and
-    // IN-lists can otherwise be evaluated with zero-valued RHS parameters
-    // and silently return no rows (TPCC exposed this as missing items,
-    // customers with no orders, and zero-row composite deletes).  Keep
-    // prepared binding for INSERTs and statements without a scan predicate;
-    // expand parameterized SELECT/UPDATE/DELETE statements into a literal
-    // statement in the same session/transaction until the scan TCB accepts
-    // the input ATP for all predicate forms.
-    const std::string sourceUpper = upper(plan->sourceSql);
-    const std::string sourceVerb = firstWord(plan->sourceSql);
-    if (rows.size() == 1 &&
-        (sourceVerb == "SELECT" || sourceVerb == "UPDATE" ||
-         sourceVerb == "DELETE") &&
-        sourceUpper.find('?') != std::string::npos)
-      {
-        std::string expandedSql;
-        if (!substituteT4Parameters(plan->sourceSql, rows[0], nullRows[0],
-                                    &expandedSql))
-          {
-            result.sqlstate = "07001";
-            result.error = "NativeLite could not expand prepared predicate";
-            return result;
-          }
-        return execute(session, expandedSql);
-      }
+    // M22E keeps the bound descriptor tuple attached to the root ATP. The
+    // LocalLite scan TCB materializes dynamic primary keys from that tuple and
+    // evaluates residual/range predicates against the same bound input, so
+    // prepared SELECT/UPDATE/DELETE no longer require literal SQL expansion.
 
     int active = activeExecutorRequests_.fetch_add(1) + 1;
     int maximum = maximumExecutorRequests_.load();
@@ -2540,10 +2569,7 @@ private:
         return cached;
       }
 
-    {
-      std::lock_guard<std::mutex> compilerLock(compilerMutex_);
-      rc = cli.fetchRowsPrologue(executableSql.c_str(), TRUE);
-    }
+    rc = compilePlan(session, &cli, executableSql);
     if (rc < 0)
       {
         setDiagnosticsError(&cli, rc, &result);
@@ -2613,12 +2639,10 @@ private:
   std::mutex catalogMutex_;
   std::mutex utilityMutex_;
   std::mutex contextLifecycleMutex_;
-  // The legacy optimizer/compiler has process-global mutable state.  Protect
-  // only plan construction; prepared-plan execution and storage publication
-  // remain outside this mutex and are session-concurrent.
-  std::mutex compilerMutex_;
   std::atomic<int> activeExecutorRequests_;
   std::atomic<int> maximumExecutorRequests_;
+  std::atomic<int> activeCompilerRequests_;
+  std::atomic<int> maximumCompilerRequests_;
   LocalLiteRocksDBStore storeLease_;
 };
 

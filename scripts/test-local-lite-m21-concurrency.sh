@@ -68,6 +68,7 @@ javac -Xlint:all -cp "$classes_dir:$slf4j_jar" -d "$classes_dir" \
 
 env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
   TRAF_LOCAL_STORE_DIR="$store_dir" TRAF_LOCAL_LITE_EXECUTOR_HOLD_MS=400 \
+  TRAF_LOCAL_LITE_COMPILER_HOLD_MS=100 \
   LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
   "$server" --listen 127.0.0.1 --port "$port" --workers "$clients" >"$server_log" 2>&1 &
 server_pid=$!
