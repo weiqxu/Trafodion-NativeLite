@@ -4959,11 +4959,18 @@ public:
                            (read->end.empty() || write->key < read->end));
               if (intersects)
                 {
+                  const char *conflictType = read->full ? "full_scan" :
+                      (read->start == read->end ? "point" : "range");
                   if (getenv("TRAF_LOCAL_LITE_TRACE_OCC"))
                     fprintf(stderr,
-                            "LOCAL_LITE_OCC_CONFLICT object_uid=%llu "
-                            "write=%s read_start=%s read_end=%s full=%d\n",
+                            "LOCAL_LITE_OCC_CONFLICT type=%s owner=%p "
+                            "object_uid=%llu start_sequence=%llu "
+                            "write_sequence=%llu write=%s read_start=%s "
+                            "read_end=%s full=%d\n",
+                            conflictType, owner,
                             static_cast<unsigned long long>(read->objectUid),
+                            static_cast<unsigned long long>(startSequence),
+                            static_cast<unsigned long long>(write->sequence),
                             localLiteHexKey(write->key).c_str(),
                             localLiteHexKey(read->start).c_str(),
                             localLiteHexKey(read->end).c_str(),
@@ -4979,7 +4986,8 @@ public:
                   localLiteOccMetrics.transactionsAbortedConflict++;
                   setError(error,
                            "local-lite serializable validation failed "
-                           "(SQLSTATE 40001, OCC read/write conflict); "
+                           "(SQLSTATE 40001, OCC read/write conflict, type=" +
+                           std::string(conflictType) + "); "
                            "restart transaction");
                   return false;
                 }

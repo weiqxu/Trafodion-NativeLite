@@ -1,6 +1,7 @@
 #include "LocalLiteRocksDBStore.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string>
 #include <vector>
 
@@ -143,6 +144,15 @@ static bool expectConflict(Context &context, const char *caseName)
       return false;
     }
   return true;
+}
+
+static uint64_t metric(const std::string &json, const std::string &name)
+{
+  const std::string marker = "\"" + name + "\":";
+  const size_t position = json.find(marker);
+  if (position == std::string::npos)
+    return 0;
+  return strtoull(json.c_str() + position + marker.size(), NULL, 10);
 }
 
 int main()
@@ -302,6 +312,16 @@ int main()
       !update(&ddlReaderStore, ddlReader, b, 1, "b-ddl-reader") ||
       !expectConflict(ddlReader, "DDL conflict"))
     return 1;
+
+  const std::string metrics = LocalLiteOccMetricsJson();
+  if (metric(metrics, "point_validation_conflicts") < 2 ||
+      metric(metrics, "range_validation_conflicts") < 1 ||
+      metric(metrics, "full_scan_validation_conflicts") < 2)
+    {
+      fprintf(stderr, "OCC conflict classification is incomplete: %s\n",
+              metrics.c_str());
+      return 1;
+    }
 
   printf("local-lite Trafodion OCC validation probe passed\n");
   return 0;
