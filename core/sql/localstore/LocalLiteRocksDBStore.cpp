@@ -6018,6 +6018,20 @@ public:
           readExecutionId = localTxnId_;
           recordFullScanLocked(table);
         }
+      else if (table.name.size() >= 6 &&
+               table.name.compare(table.name.size() - 6, 6,
+                                  "__TEMP") == 0 &&
+               table.columns.size() >= 2 &&
+               table.columns[0].name == "@UNIQUE_EXECUTE_ID" &&
+               table.columns[1].name == "@UNIQUE_IUD_ID")
+        {
+          // Trigger transition rows are materialized during the statement.
+          // A snapshot established before that materialization must not hide
+          // the statement's own scratch rows. Concurrent executions remain
+          // isolated by the generated @UNIQUE_EXECUTE_ID predicate.
+          readOwner = NULL;
+          readExecutionId = 0;
+        }
     }
 
     if (!store->scanRows(table, readOwner, readExecutionId,

@@ -1,7 +1,6 @@
 # LocalLite M22: concurrent commit and full-scale qualification
 
-Status: M22A-M22G complete; M22H release audit active. M22 is complete only
-when every M22A-M22H gate passes without relaxing durability, cardinality,
+Status: complete. M22A-M22H pass without relaxing durability, cardinality,
 latency, throughput, or recovery thresholds.
 
 ## Completion contract
@@ -83,6 +82,10 @@ Run Debug and Release builds, M10-M22 gates, native and allowlisted legacy
 regressions, T4 JDBC, OCC/isolation, fault recovery, and the full qualification.
 M22 remains active if any prerequisite, performance target, report-integrity
 check, or source-tree cleanliness check fails.
+
+`scripts/test-local-lite-m22h.sh` is the authoritative clean-tree release
+audit. It records every gate in an external audit log and binds the final full
+qualification reports to the audited Git revision by SHA-256.
 
 ## Required commit organization
 

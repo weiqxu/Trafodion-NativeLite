@@ -3269,7 +3269,8 @@ short HbaseAccess::codeGen(Generator * generator)
   // literal GETs).  Build the local scan's bound-key expression directly from
   // the equality predicate RHS values and materialize them into the same
   // exploded key tuple consumed by LocalLiteRocksdbScanTcb.
-  if (!rowIdExpr && getBeginKeyPred().entries() > 0 &&
+  if (!rowIdExpr && (!tablename || !strstr(tablename, "__TEMP")) &&
+      getBeginKeyPred().entries() > 0 &&
       getIndexDesc() && getIndexDesc()->getNAFileSet())
     {
       const NAColumnArray &keyColumns =
@@ -3290,7 +3291,12 @@ short HbaseAccess::codeGen(Generator * generator)
           // Preserve the source map while coercing the parameter to the
           // physical primary-key type.  preCodeGen is required here because
           // this node is introduced after the regular predicate rewrite.
-          {
+          // Only unnamed positional parameters are backed by the reduced T4
+          // root input tuple. SQLCI named parameters and trigger-generated
+          // values must keep the normal generated-expression path.
+          if (boundValue->getOperatorType() == ITM_DYN_PARAM &&
+              ((DynamicParam *) boundValue)->getName().isNull())
+            {
             MapInfo *boundMap =
               generator->getMapInfoAsIs(boundValue->getValueId());
             Attributes *boundAttr = boundMap ? boundMap->getAttr() : NULL;
@@ -3303,7 +3309,15 @@ short HbaseAccess::codeGen(Generator * generator)
               }
             else
               localLiteBoundInputComplete = FALSE;
-          }
+            }
+          else if (boundValue->getOperatorType() == ITM_DYN_PARAM)
+            {
+              localLiteBoundInputComplete = FALSE;
+              // Named parameters do not use the reduced positional-input
+              // layout. Constants and generated values need no direct copy;
+              // the bound-key expression materializes them normally.
+              complete = FALSE;
+            }
           ItemExpr *castValue = new(generator->wHeap())
             Cast(boundValue,
                  keyColumns[i]->getType()->newCopy(generator->wHeap()));
@@ -3486,11 +3500,9 @@ short HbaseAccess::codeGen(Generator * generator)
       tdbListOfRangeRows, tdbListOfUniqueRows, listOfFetchedColNames,
       work_cri_desc, givenDesc, returnedDesc, downqueuelength,
       upqueuelength, expectedRows, numBuffers, buffersize);
-  for (CollIndex i = 0; i < getIndexDesc()->getNAFileSet()
-                                    ->getIndexKeyColumns().entries(); i++)
-    if (i >= ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS ||
-        localLiteBoundInputLength[i] == 0)
-      localLiteBoundInputComplete = FALSE;
+  if (getIndexDesc()->getNAFileSet()->getIndexKeyColumns().entries() >
+      ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS)
+    localLiteBoundInputComplete = FALSE;
   if (rowIdExpr && localLiteBoundInputComplete)
     for (CollIndex i = 0; i < getIndexDesc()->getNAFileSet()
                                     ->getIndexKeyColumns().entries() &&

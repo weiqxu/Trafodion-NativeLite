@@ -188,10 +188,12 @@ public final class NativeLiteTpccIsolation {
       retry.commit();
     }
     try (Connection observer = connect(url)) {
-      require(deliveryCount(observer, 25) == 1,
-          "first write-skew effect was not exactly once");
-      require(deliveryCount(observer, 26) == 1,
-          "retried write-skew effect was not exactly once");
+      int firstAfter = deliveryCount(observer, 25);
+      int secondAfter = deliveryCount(observer, 26);
+      require(firstAfter == 1,
+          "first write-skew effect was not exactly once: " + firstAfter);
+      require(secondAfter == 1,
+          "retried write-skew effect was not exactly once: " + secondAfter);
       observer.rollback();
     }
   }

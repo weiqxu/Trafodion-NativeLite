@@ -188,8 +188,10 @@ in 100.014 seconds and measured 54.304 TPS over three 32-terminal repetitions
 Order-Status, Delivery, and Stock-Level p95 were 892.390, 467.642, 355.940,
 1256.184, and 475.943 ms. Synchronous commit, consistency, checkpoint,
 clean/unclean restart, restore, and disk-watermark gates passed. This remains
-TPC-C-like engineering evidence, not official tpmC. Run `make local-lite-m22`;
-the M22H release audit is the final active phase.
+TPC-C-like engineering evidence, not official tpmC. The clean-tree M22H audit
+covers Debug/Release builds, M10-M22, native and legacy allowlist regressions,
+T4, OCC/isolation, fault recovery, and a revision-bound full qualification.
+Run `make local-lite-m22`.
 
 ### Functional boundary
 

@@ -8,10 +8,12 @@ transactions="$repo_root/scripts/NativeLiteTpccTransactions.java"
 occ="$repo_root/core/sql/localstore/LocalLiteRocksDBStore.cpp"
 design="$repo_root/plan/local-lite-tpcc-m17-design.md"
 
-grep -q 'SELECT D.D_NEXT_O_ID,W.W_TAX,C.C_DISCOUNT' "$transactions" ||
+grep -q 'SELECT C.C_DISCOUNT,D.D_NEXT_O_ID' "$transactions" ||
   fail "New-Order header reads are not coalesced"
-grep -q 'new-order header returned extra rows' "$transactions" ||
-  fail "New-Order header cardinality check is missing"
+grep -q 'W_TAX is immutable for this workload' "$transactions" ||
+  fail "New-Order immutable Warehouse dependency is not documented"
+grep -q 'new-order header does not exist' "$transactions" ||
+  fail "New-Order header existence check is missing"
 grep -q 'indexedHistory_' "$occ" ||
   fail "OCC object history index is missing"
 grep -q 'removeIndexedSequence' "$occ" ||

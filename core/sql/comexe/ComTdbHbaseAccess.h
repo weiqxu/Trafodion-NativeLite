@@ -114,6 +114,8 @@ class ComTdbHbaseAccess : public ComTdb
 #endif
 
 public:
+  enum { MAX_LOCAL_LITE_BOUND_KEY_COLUMNS = 16 };
+
   enum ComTdbAccessType
   {
     NOOP_,
@@ -719,6 +721,31 @@ public:
   {(v ? flags_ |= UNIQUE_KEY_INFO : flags_ &= ~UNIQUE_KEY_INFO); };
   NABoolean uniqueKeyInfo() { return (flags_ & UNIQUE_KEY_INFO) != 0; };
 
+#ifdef TRAF_LOCAL_LITE
+  void setLocalLiteBoundKeyInput(UInt16 keyIndex, UInt16 tuppIndex,
+                                 UInt32 offset, UInt32 length)
+  {
+    if (keyIndex >= MAX_LOCAL_LITE_BOUND_KEY_COLUMNS)
+      return;
+    if (keyIndex >= localLiteBoundKeyInputCount_)
+      localLiteBoundKeyInputCount_ = keyIndex + 1;
+    localLiteBoundKeyInputTuppIndex_[keyIndex] = tuppIndex;
+    localLiteBoundKeyInputOffset_[keyIndex] = offset;
+    localLiteBoundKeyInputLength_[keyIndex] = length;
+  }
+  void setLocalLiteBoundUpdateInput(UInt16 columnIndex, UInt16 tuppIndex,
+                                    UInt32 offset, UInt32 length)
+  {
+    if (columnIndex >= MAX_LOCAL_LITE_BOUND_KEY_COLUMNS)
+      return;
+    if (columnIndex >= localLiteBoundUpdateInputCount_)
+      localLiteBoundUpdateInputCount_ = columnIndex + 1;
+    localLiteBoundUpdateInputTuppIndex_[columnIndex] = tuppIndex;
+    localLiteBoundUpdateInputOffset_[columnIndex] = offset;
+    localLiteBoundUpdateInputLength_[columnIndex] = length;
+  }
+#endif
+
   void setVsbbInsert(NABoolean v)
   {(v ? flags_ |= VSBB_INSERT : flags_ &= ~VSBB_INSERT); };
   NABoolean vsbbInsert() const { return (flags_ & VSBB_INSERT) != 0; };
@@ -1070,6 +1097,19 @@ public:
   // has value 0 for aligned format and native hbase access. This is the index
   // number of column in row being inserted, not of the column in table.
   Int16 colIndexOfPK1_ ;
+
+#ifdef TRAF_LOCAL_LITE
+  UInt16 localLiteBoundKeyInputCount_;
+  UInt16 localLiteBoundKeyInputReserved_;
+  UInt16 localLiteBoundKeyInputTuppIndex_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
+  UInt32 localLiteBoundKeyInputOffset_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
+  UInt32 localLiteBoundKeyInputLength_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
+  UInt16 localLiteBoundUpdateInputCount_;
+  UInt16 localLiteBoundUpdateInputReserved_;
+  UInt16 localLiteBoundUpdateInputTuppIndex_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
+  UInt32 localLiteBoundUpdateInputOffset_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
+  UInt32 localLiteBoundUpdateInputLength_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
+#endif
 
   char fillers[4];
 };

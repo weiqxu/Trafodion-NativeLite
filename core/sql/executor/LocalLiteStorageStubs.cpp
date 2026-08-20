@@ -118,6 +118,10 @@ static bool localLiteRuntimePrimaryRow(
     atp_struct *inputAtp,
     char *rowIdRow,
     char *rowIdAsciiRow,
+    UInt16 boundInputCount,
+    const UInt16 *boundInputTuppIndex,
+    const UInt32 *boundInputOffset,
+    const UInt32 *boundInputLength,
     const LocalLiteTableDef &table,
     LocalLiteTxn *txn,
     bool *handled,
@@ -141,6 +145,20 @@ static bool localLiteRuntimePrimaryRow(
     {
       *error = "local-lite runtime primary key evaluation failed";
       return false;
+    }
+  for (CollIndex i = 0; i < keyTd->numAttrs() && i < boundInputCount; i++)
+    {
+      Attributes *attr = keyTd->getAttr(i);
+      const UInt16 tuppIndex = boundInputTuppIndex[i];
+      if (!attr || boundInputLength[i] == 0 ||
+          tuppIndex >= inputAtp->numTuples())
+        continue;
+      char *source = inputAtp->getTupp(tuppIndex).getDataPointer();
+      if (!source)
+        continue;
+      const UInt32 copyLength = MINOF(attr->getLength(), boundInputLength[i]);
+      str_cpy_all(rowIdRow + attr->getOffset(),
+                  source + boundInputOffset[i], copyLength);
     }
   std::string storageKey;
   if (!LocalLiteBuildPrimaryKeyFromExecutorTuple(
@@ -607,6 +625,21 @@ private:
     bool handledIndexRange = false;
     bool handledIndexBounded = false;
     bool handledPrimaryRange = false;
+    // A reduced T4 positional predicate can leave a compile-time HBase range
+    // image that does not include its runtime key column. Prefer the exact
+    // generated primary-key tuple whenever direct input metadata is present;
+    // otherwise that incomplete range can return a neighboring row before
+    // the runtime GET is attempted.
+    if (scanTdb().boundKeyInputCount_ > 0)
+      {
+        if (loadRuntimePrimaryGet(&txn, error))
+          {
+            localLiteTraceScan("RUNTIME_GET_ROW", scanTdb().getTableName());
+            return true;
+          }
+        if (!error->empty())
+          return false;
+      }
     if (!loadGetRows(&txn, &handledGetRows, &handledIndexLookup,
                      &handledIndexRange, &handledIndexBounded,
                      &handledPrimaryRange, error))
@@ -621,7 +654,8 @@ private:
         return true;
       }
 
-    if (loadRuntimePrimaryGet(&txn, error))
+    if (scanTdb().boundKeyInputCount_ == 0 &&
+        loadRuntimePrimaryGet(&txn, error))
       {
         localLiteTraceScan("RUNTIME_GET_ROW", scanTdb().getTableName());
         return true;
@@ -1922,6 +1956,10 @@ private:
                 deleteTdb().rowIdAsciiTuppIndex_, deleteTdb().rowIdLen_,
                 deleteTdb().rowIdAsciiRowLen_, workAtp_,
                 downEntry()->getAtp(), rowIdRow_, rowIdAsciiRow_,
+                deleteTdb().localLiteBoundKeyInputCount_,
+                deleteTdb().localLiteBoundKeyInputTuppIndex_,
+                deleteTdb().localLiteBoundKeyInputOffset_,
+                deleteTdb().localLiteBoundKeyInputLength_,
                 table_, &txn, &handled, &sourceRow, &found, error))
           return false;
         if (handled && sourceRows.empty())
@@ -2460,6 +2498,10 @@ private:
                 updateTdb().rowIdAsciiTuppIndex_, updateTdb().rowIdLen_,
                 updateTdb().rowIdAsciiRowLen_, workAtp_,
                 downEntry()->getAtp(), rowIdRow_, rowIdAsciiRow_,
+                updateTdb().localLiteBoundKeyInputCount_,
+                updateTdb().localLiteBoundKeyInputTuppIndex_,
+                updateTdb().localLiteBoundKeyInputOffset_,
+                updateTdb().localLiteBoundKeyInputLength_,
                 table_, &txn, &handled, &sourceRow, &found, error))
           return false;
         if (handled && sourceRows.empty())
@@ -2600,6 +2642,53 @@ private:
           {
             *error = "local-lite update expression evaluation failed";
             return false;
+          }
+        if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+          fprintf(stderr, "LOCAL_LITE_UPDATE_BOUND count=%u attrs=%u\n",
+                  static_cast<unsigned>(
+                      updateTdb().localLiteBoundUpdateInputCount_),
+                  static_cast<unsigned>(updatedTd->numAttrs()));
+        for (CollIndex i = 0;
+             i < updatedTd->numAttrs() &&
+             i < updateTdb().localLiteBoundUpdateInputCount_; i++)
+          {
+            Attributes *attr = updatedTd->getAttr(i);
+            const UInt16 tuppIndex =
+              updateTdb().localLiteBoundUpdateInputTuppIndex_[i];
+            if (!attr || updateTdb().localLiteBoundUpdateInputLength_[i] == 0 ||
+                tuppIndex >= downEntry()->getAtp()->numTuples())
+              continue;
+            char *source = downEntry()->getAtp()
+              ->getTupp(tuppIndex).getDataPointer();
+            if (!source)
+              continue;
+            const UInt32 copyLength = MINOF(
+                attr->getLength(),
+                updateTdb().localLiteBoundUpdateInputLength_[i]);
+            str_cpy_all(
+                updateRow_ + attr->getOffset(),
+                source + updateTdb().localLiteBoundUpdateInputOffset_[i],
+                copyLength);
+            if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+              fprintf(stderr,
+                      "LOCAL_LITE_UPDATE_INPUT col=%u tupp=%u offset=%u "
+                      "length=%u first=%02x\n",
+                      static_cast<unsigned>(i),
+                      static_cast<unsigned>(tuppIndex),
+                      static_cast<unsigned>(
+                          updateTdb().localLiteBoundUpdateInputOffset_[i]),
+                      static_cast<unsigned>(copyLength),
+                      static_cast<unsigned char>(source[
+                          updateTdb().localLiteBoundUpdateInputOffset_[i]]));
+            if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+              fprintf(stderr,
+                      "LOCAL_LITE_UPDATE_TARGET col=%u table_col=%u "
+                      "offset=%u first=%02x\n",
+                      static_cast<unsigned>(i),
+                      static_cast<unsigned>(updatedIndexes[i]),
+                      static_cast<unsigned>(attr->getOffset()),
+                      static_cast<unsigned char>(
+                          updateRow_[attr->getOffset()]));
           }
         if (updateLen == 0)
           updateLen = updateTdb().updateRowLen_;

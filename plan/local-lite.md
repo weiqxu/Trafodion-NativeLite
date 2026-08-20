@@ -1505,7 +1505,7 @@ Detailed M21 design, controls, test commands, and limits:
 - [x] Pass fresh 10-warehouse/32-terminal qualification: 54.304 TPS, 2.1806%
   variance, every profile p95 gate, recovery, and consistency.
 - [x] Expose M18-M22 aggregate targets and checksum compact evidence.
-- [ ] Complete the final Debug/Release, M10-M22, T4, legacy allowlist, OCC,
+- [x] Complete the final Debug/Release, M10-M22, T4, legacy allowlist, OCC,
   recovery, full-qualification, and clean-tree release audit.
 
 The authoritative phase contract and current audit status are in

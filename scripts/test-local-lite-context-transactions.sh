@@ -124,8 +124,8 @@ error_count=$(grep -c '\*\*\* ERROR' <<<"$output" || true)
   fail "expected only the two-line same-key commit diagnostic"
 grep -q 'ERROR\[8001\]' <<<"$output" ||
   fail "same-key commit did not return the executor failure"
-grep -q 'duplicate local-lite primary key' <<<"$output" ||
-  fail "same-key commit did not return the deterministic storage diagnostic"
+grep -q 'SQLSTATE 40001, OCC read/write conflict, type=point' <<<"$output" ||
+  fail "same-key commit did not return the deterministic point-conflict diagnostic"
 [[ $(grep -c 'SQL operation failed with errors' <<<"$output" || true) -eq 1 ]] ||
   fail "an unexpected SQL operation failed"
 

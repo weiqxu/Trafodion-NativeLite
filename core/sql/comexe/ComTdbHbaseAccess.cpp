@@ -54,7 +54,23 @@ public:
 // Dummy constructor for "unpack" routines.
 ComTdbHbaseAccess::ComTdbHbaseAccess():
  ComTdb(ComTdb::ex_HBASE_ACCESS, eye_HBASE_ACCESS)
-{};
+{
+#ifdef TRAF_LOCAL_LITE
+  localLiteBoundKeyInputCount_ = 0;
+  localLiteBoundKeyInputReserved_ = 0;
+  localLiteBoundUpdateInputCount_ = 0;
+  localLiteBoundUpdateInputReserved_ = 0;
+  for (UInt16 i = 0; i < MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
+    {
+      localLiteBoundKeyInputTuppIndex_[i] = 0;
+      localLiteBoundKeyInputOffset_[i] = 0;
+      localLiteBoundKeyInputLength_[i] = 0;
+      localLiteBoundUpdateInputTuppIndex_[i] = 0;
+      localLiteBoundUpdateInputOffset_[i] = 0;
+      localLiteBoundUpdateInputLength_[i] = 0;
+    }
+#endif
+};
 
 #ifdef TRAF_LOCAL_LITE
 ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan()
@@ -379,7 +395,23 @@ ComTdbHbaseAccess::ComTdbHbaseAccess(
   hbaseAccessOptions_(hbaseAccessOptions),
 
   pkeyColName_(pkeyColName)
-{};
+{
+#ifdef TRAF_LOCAL_LITE
+  localLiteBoundKeyInputCount_ = 0;
+  localLiteBoundKeyInputReserved_ = 0;
+  localLiteBoundUpdateInputCount_ = 0;
+  localLiteBoundUpdateInputReserved_ = 0;
+  for (UInt16 i = 0; i < MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
+    {
+      localLiteBoundKeyInputTuppIndex_[i] = 0;
+      localLiteBoundKeyInputOffset_[i] = 0;
+      localLiteBoundKeyInputLength_[i] = 0;
+      localLiteBoundUpdateInputTuppIndex_[i] = 0;
+      localLiteBoundUpdateInputOffset_[i] = 0;
+      localLiteBoundUpdateInputLength_[i] = 0;
+    }
+#endif
+};
 
 ComTdbHbaseAccess::ComTdbHbaseAccess(
 				     ComTdbAccessType type,
@@ -494,6 +526,21 @@ ComTdbHbaseAccess::ComTdbHbaseAccess(
 
   pkeyColName_(NULL)
 {
+#ifdef TRAF_LOCAL_LITE
+  localLiteBoundKeyInputCount_ = 0;
+  localLiteBoundKeyInputReserved_ = 0;
+  localLiteBoundUpdateInputCount_ = 0;
+  localLiteBoundUpdateInputReserved_ = 0;
+  for (UInt16 i = 0; i < MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
+    {
+      localLiteBoundKeyInputTuppIndex_[i] = 0;
+      localLiteBoundKeyInputOffset_[i] = 0;
+      localLiteBoundKeyInputLength_[i] = 0;
+      localLiteBoundUpdateInputTuppIndex_[i] = 0;
+      localLiteBoundUpdateInputOffset_[i] = 0;
+      localLiteBoundUpdateInputLength_[i] = 0;
+    }
+#endif
 }
 
 ComTdbHbaseAccess::~ComTdbHbaseAccess()

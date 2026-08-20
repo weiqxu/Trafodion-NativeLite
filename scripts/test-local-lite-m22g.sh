@@ -25,7 +25,8 @@ grep -q 'M22 full-cardinality qualification is complete' "$readme" ||
   fail "README M22 status is stale"
 grep -q '## Milestone 22: Concurrent commit and full-scale qualification' \
   "$roadmap" || fail "transaction roadmap is missing M22"
-grep -q 'Status: M22A-M22G complete; M22H release audit active.' "$design" ||
+grep -Eq 'Status: (M22A-M22G complete; M22H release audit active\.|complete\.)' \
+  "$design" ||
   fail "M22 phase status is not synchronized"
 
 config_hash=$(sha256sum "$properties" | awk '{print $1}')

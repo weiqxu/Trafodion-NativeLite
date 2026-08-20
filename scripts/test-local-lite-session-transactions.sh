@@ -210,7 +210,8 @@ int main()
     }
   error.clear();
   if (LocalLiteTxnManager::commit(sessionB, &error) ||
-      error.find("duplicate local-lite primary key") == std::string::npos ||
+      error.find("SQLSTATE 40001, OCC read/write conflict, type=point") ==
+          std::string::npos ||
       !scanValues(&observerTxn, table, 1, "contended", NULL))
     {
       fprintf(stderr, "same-key commit conflict was not deterministic: %s\n",

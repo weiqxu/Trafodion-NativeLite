@@ -266,7 +266,7 @@ done
 printf '{"contract_version":1,"environment":{"architecture":"%s","kernel_release":"%s","java_version":"%s","source_revision":"%s"},"rss_kib":{"after_load":%s,"high_water":%s},"store_bytes":{"after_load":%s,"after_workload":%s,"delta":%s},"recovery_ms":{"clean":%s,"unclean":%s,"checkpoint":%s},"online_checkpoint":"pass","clean_restart":"pass","unclean_restart":"pass","checkpoint_restore":"pass","disk_watermark":"pass"}\n' \
   "$(uname -m)" "$(uname -r)" \
   "$(java -XshowSettings:properties -version 2>&1 | awk -F'= ' '/java.version =/ {print $2; exit}')" \
-  "$(git -C "$repo_root" rev-parse --short=12 HEAD)" "$rss_before" \
+  "$(git -C "$repo_root" rev-parse HEAD)" "$rss_before" \
   "$rss_after" "$store_bytes_before" "$store_bytes" "$store_delta_bytes" \
   "$clean_recovery_ms" "$unclean_recovery_ms" "$checkpoint_recovery_ms" \
   >"$operations_report"
