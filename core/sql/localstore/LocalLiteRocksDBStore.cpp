@@ -4818,6 +4818,7 @@ struct OccReadRangeLess
 typedef std::pair<uint64_t, std::string> OccWriteKey;
 typedef std::set<OccReadRange, OccReadRangeLess> OccReadSet;
 typedef std::set<OccWriteKey> OccWriteSet;
+typedef std::pair<uint64_t, std::string> OccConflictHotspotKey;
 
 struct LocalLiteOccMetrics
 {
@@ -4866,9 +4867,38 @@ struct LocalLiteOccMetrics
   uint64_t asynchronousPublications;
   uint64_t publicationFailures;
   uint64_t maximumPhysicalCommitOverlap;
+  std::map<OccConflictHotspotKey, uint64_t> conflictHotspots;
 };
 
 static LocalLiteOccMetrics localLiteOccMetrics;
+
+static void recordOccConflictHotspot(uint64_t objectUid,
+                                     const std::string &key)
+{
+  const OccConflictHotspotKey hotspot(objectUid, key);
+  std::map<OccConflictHotspotKey, uint64_t>::iterator existing =
+      localLiteOccMetrics.conflictHotspots.find(hotspot);
+  if (existing != localLiteOccMetrics.conflictHotspots.end())
+    {
+      existing->second++;
+      return;
+    }
+  // Bound memory while retaining enough candidates for a useful top-hotspot
+  // report on long-running stores.
+  if (localLiteOccMetrics.conflictHotspots.size() >= 256)
+    {
+      std::map<OccConflictHotspotKey, uint64_t>::iterator least =
+          localLiteOccMetrics.conflictHotspots.begin();
+      for (std::map<OccConflictHotspotKey, uint64_t>::iterator it =
+               localLiteOccMetrics.conflictHotspots.begin();
+           it != localLiteOccMetrics.conflictHotspots.end(); ++it)
+        if (it->second < least->second)
+          least = it;
+      localLiteOccMetrics.conflictHotspots.erase(least);
+    }
+  localLiteOccMetrics.conflictHotspots.insert(
+      std::make_pair(hotspot, static_cast<uint64_t>(1)));
+}
 
 static uint64_t monotonicMicros()
 {
@@ -5002,6 +5032,7 @@ public:
                              (read->end.empty() || write->key < read->end));
                 if (!intersects)
                   continue;
+                recordOccConflictHotspot(read->objectUid, write->key);
                 const char *conflictType = read->full ? "full_scan" :
                     (read->start == read->end ? "point" : "range");
                 if (getenv("TRAF_LOCAL_LITE_TRACE_OCC"))
@@ -10186,11 +10217,37 @@ std::string LocalLiteOccMetricsJson()
       << localLiteOccMetrics.asynchronousPublications
       << ",\"publication_failures\":"
       << localLiteOccMetrics.publicationFailures
+      << ",\"durable_writer_shards\":"
+      << LocalLiteUnifiedDurableShardCount()
       << ",\"maximum_physical_commit_overlap\":"
       << std::max(localLiteOccMetrics.maximumPhysicalCommitOverlap,
                   localLiteCommitCoordinator.maximumOverlap())
       << ",\"synchronous_commit\":"
-      << (localLiteSynchronousCommit() ? "true" : "false") << "}";
+      << (localLiteSynchronousCommit() ? "true" : "false")
+      << ",\"occ_conflict_hotspots\":[";
+  std::vector<std::pair<OccConflictHotspotKey, uint64_t> > hotspots;
+  for (std::map<OccConflictHotspotKey, uint64_t>::const_iterator it =
+           localLiteOccMetrics.conflictHotspots.begin();
+       it != localLiteOccMetrics.conflictHotspots.end(); ++it)
+    hotspots.push_back(*it);
+  std::sort(hotspots.begin(), hotspots.end(),
+      [](const std::pair<OccConflictHotspotKey, uint64_t> &left,
+         const std::pair<OccConflictHotspotKey, uint64_t> &right) {
+        if (left.second != right.second)
+          return left.second > right.second;
+        return left.first < right.first;
+      });
+  const size_t hotspotLimit = std::min<size_t>(hotspots.size(), 16);
+  for (size_t i = 0; i < hotspotLimit; i++)
+    {
+      if (i != 0)
+        out << ',';
+      out << "{\"object_uid\":" << hotspots[i].first.first
+          << ",\"key_hex\":\""
+          << localLiteHexKey(hotspots[i].first.second)
+          << "\",\"count\":" << hotspots[i].second << '}';
+    }
+  out << "]}";
   return out.str();
 }
 

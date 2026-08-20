@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <cstring>
+#include <algorithm>
 #include <pthread.h>
 #include <string>
 #include <vector>
@@ -92,6 +93,12 @@ struct UnifiedState
 
 UnifiedState unifiedState;
 
+// A transaction batch is never split across writers: its complete physical
+// WriteBatch is routed to exactly one queue, preserving atomicity. The queues
+// shard admission and durable-writer scheduling over the shared RocksDB WAL;
+// RocksDB still assigns one global sequence to each physical write.
+const uint32_t LOCAL_LITE_DURABLE_SHARDS = 8;
+
 struct GroupCommitRequest
 {
   GroupCommitRequest() : batch(NULL), done(false), passed(false) {}
@@ -119,8 +126,21 @@ struct GroupCommitState
   std::vector<GroupCommitRequest *> pending;
 };
 
-GroupCommitState syncGroupCommit;
-GroupCommitState asyncGroupCommit;
+GroupCommitState syncGroupCommit[LOCAL_LITE_DURABLE_SHARDS];
+GroupCommitState asyncGroupCommit[LOCAL_LITE_DURABLE_SHARDS];
+
+static uint32_t durableShardCount()
+{
+  const char *setting = getenv("TRAF_LOCAL_LITE_DURABLE_SHARDS");
+  if (!setting || !setting[0])
+    return LOCAL_LITE_DURABLE_SHARDS;
+  char *end = NULL;
+  unsigned long parsed = strtoul(setting, &end, 10);
+  if (!end || *end != '\0' || parsed == 0)
+    return LOCAL_LITE_DURABLE_SHARDS;
+  return static_cast<uint32_t>(std::min<unsigned long>(
+      parsed, LOCAL_LITE_DURABLE_SHARDS));
+}
 
 static uint64_t groupCommitWindowMicros()
 {
@@ -512,10 +532,32 @@ bool openUnifiedTarget(const std::string &root, std::string *error)
 
 struct LocalLiteUnifiedWriteBatch
 {
-  LocalLiteUnifiedWriteBatch() : physical(rocksdb_writebatch_create()) {}
+  LocalLiteUnifiedWriteBatch()
+    : physical(rocksdb_writebatch_create()), shardHash(1469598103934665603ULL)
+  {}
   ~LocalLiteUnifiedWriteBatch() { rocksdb_writebatch_destroy(physical); }
   rocksdb_writebatch_t *physical;
+  uint64_t shardHash;
 };
+
+static uint64_t batchKeyHash(const std::string &key)
+{
+  uint64_t hash = 1469598103934665603ULL;
+  for (size_t i = 0; i < key.size(); i++)
+    {
+      hash ^= static_cast<unsigned char>(key[i]);
+      hash *= 1099511628211ULL;
+    }
+  return hash;
+}
+
+static void mixBatchShard(LocalLiteUnifiedWriteBatch *batch,
+                          const std::string &key)
+{
+  const uint64_t hash = batchKeyHash(key);
+  batch->shardHash ^= hash + 0x9e3779b97f4a7c15ULL +
+      (batch->shardHash << 6) + (batch->shardHash >> 2);
+}
 
 struct GroupBatchCopy
 {
@@ -624,6 +666,11 @@ uint64_t LocalLiteUnifiedRocksDBSequence()
       ? rocksdb_get_latest_sequence_number(unifiedState.baseDb) : 0;
 }
 
+uint32_t LocalLiteUnifiedDurableShardCount()
+{
+  return durableShardCount();
+}
+
 LocalLiteUnifiedWriteBatch *LocalLiteUnifiedWriteBatchCreate()
 {
   return new LocalLiteUnifiedWriteBatch();
@@ -641,6 +688,7 @@ void LocalLiteUnifiedWriteBatchPut(LocalLiteUnifiedWriteBatch *batch,
 {
   LogicalDb *logical = reinterpret_cast<LogicalDb *>(logicalDb);
   const std::string storedKey = physicalKey(logical, key.data(), key.size());
+  mixBatchShard(batch, storedKey);
   rocksdb_writebatch_put(batch->physical, storedKey.data(), storedKey.size(),
                          value.data(), value.size());
 }
@@ -651,6 +699,7 @@ void LocalLiteUnifiedWriteBatchDelete(LocalLiteUnifiedWriteBatch *batch,
 {
   LogicalDb *logical = reinterpret_cast<LogicalDb *>(logicalDb);
   const std::string storedKey = physicalKey(logical, key.data(), key.size());
+  mixBatchShard(batch, storedKey);
   rocksdb_writebatch_delete(batch->physical, storedKey.data(),
                             storedKey.size());
 }
@@ -664,7 +713,10 @@ bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
       setStringError(error, "LocalLite unified write batch is unavailable");
       return false;
     }
-  GroupCommitState &group = sync ? syncGroupCommit : asyncGroupCommit;
+  const uint32_t shard = static_cast<uint32_t>(
+      batch->shardHash % durableShardCount());
+  GroupCommitState &group = sync ? syncGroupCommit[shard]
+                                 : asyncGroupCommit[shard];
   GroupCommitRequest request;
   request.batch = batch;
   pthread_mutex_lock(&group.mutex);
