@@ -17,12 +17,14 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ThreadLocalRandom;
 
 /** M15G concurrent multi-warehouse TPC-C-like workload and qualification. */
 public final class NativeLiteTpccWorkload {
   private static final String USER = "DB__ROOT";
   private static int retryLimit;
   private static int retryBackoffMillis;
+  private static int retryBackoffJitterMillis;
   private static final String[] MIX = {
       "new_order", "payment", "new_order", "payment", "new_order",
       "payment", "new_order", "payment", "new_order", "payment",
@@ -104,7 +106,8 @@ public final class NativeLiteTpccWorkload {
 
   private static void runLogical(
       NativeLiteTpccTransactions.Terminal terminal, String profile,
-      int district, int customer, ProfileStats stats) throws Exception {
+      int terminalId, int district, int customer, ProfileStats stats)
+      throws Exception {
     long started = System.nanoTime();
     long retryBackoffMicros = 0;
     for (int attempt = 0; ; attempt++) {
@@ -116,11 +119,24 @@ public final class NativeLiteTpccWorkload {
         return;
       } catch (SQLException failure) {
         if (!retryable(failure) || attempt >= retryLimit) throw failure;
-        retryBackoffMicros += (long) retryBackoffMillis *
-            (attempt + 1) * 1000L;
-        Thread.sleep((long) retryBackoffMillis * (attempt + 1));
+        long delayMillis = retryDelayMillis(terminalId, profile, attempt);
+        retryBackoffMicros += delayMillis * 1000L;
+        Thread.sleep(delayMillis);
       }
     }
+  }
+
+  private static long retryDelayMillis(int terminalId, String profile,
+      int attempt) {
+    int exponent = Math.min(attempt, 4);
+    long delay = (long) retryBackoffMillis * (1L << exponent);
+    if (retryBackoffJitterMillis > 0) {
+      int profileHash = profile.hashCode() & 0x7fffffff;
+      int seed = terminalId * 31 + attempt * 17 + profileHash;
+      delay += ThreadLocalRandom.current().nextInt(
+          retryBackoffJitterMillis + 1) + Math.floorMod(seed, 2);
+    }
+    return delay;
   }
 
   private static void runTerminal(String url, int terminalId, int warehouse,
@@ -145,7 +161,7 @@ public final class NativeLiteTpccWorkload {
             terminalId + terminalId / 10, districts);
         int customer = 1 + Math.floorMod(
             index * 7 + terminalId * 31, customers);
-        runLogical(terminal, profile, district, customer,
+        runLogical(terminal, profile, terminalId, district, customer,
             stats == null ? null : stats.profiles.get(profile));
       }
     }
@@ -414,6 +430,8 @@ public final class NativeLiteTpccWorkload {
         "performance.retry.limit"));
     retryBackoffMillis = Integer.parseInt(properties.getProperty(
         "performance.retry.backoff.millis"));
+    retryBackoffJitterMillis = Integer.parseInt(properties.getProperty(
+        "performance.retry.backoff.jitter.millis", "0"));
     double maxVariance = Double.parseDouble(properties.getProperty(
         "performance.max.throughput.variance.ratio"));
     double minThroughput = Double.parseDouble(properties.getProperty(
