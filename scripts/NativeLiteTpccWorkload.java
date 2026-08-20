@@ -224,6 +224,14 @@ public final class NativeLiteTpccWorkload {
     return sorted.get(Math.max(0, Math.min(index, sorted.size() - 1)));
   }
 
+  private static String planCacheHitRatio() {
+    long hits = NativeLiteTpccTransactions.planCacheHits();
+    long misses = NativeLiteTpccTransactions.planCacheMisses();
+    long total = hits + misses;
+    return String.format(Locale.ROOT, "%.6f",
+        total == 0 ? 0.0 : hits / (double) total);
+  }
+
   private static String json(RunStats stats, String occMetrics,
       int warehouses, int terminals,
       int warmup, int measured, int repetitions, double maxVariance,
@@ -321,6 +329,12 @@ public final class NativeLiteTpccWorkload {
         .append("\"retry_backoff_us\":")
         .append(stats.profiles.values().stream()
             .mapToLong(profile -> profile.retryBackoffMicros).sum()).append(',')
+        .append("\"plan_cache_hits\":")
+        .append(NativeLiteTpccTransactions.planCacheHits()).append(',')
+        .append("\"plan_cache_misses\":")
+        .append(NativeLiteTpccTransactions.planCacheMisses()).append(',')
+        .append("\"plan_cache_hit_ratio\":")
+        .append(planCacheHitRatio()).append(',')
         .append("\"queue_time\":\"unavailable_direct_dispatch\",")
         .append("\"compile_time\":\"unavailable_reduced_t4\",")
         .append("\"wal_fsync_latency\":\"unavailable_rocksdb_c_api\",")

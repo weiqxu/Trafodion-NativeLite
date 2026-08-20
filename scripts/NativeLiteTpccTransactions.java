@@ -33,6 +33,8 @@ public final class NativeLiteTpccTransactions {
       STOCK_LEVEL_ORDER_WINDOW * 15;
   private static final int RETRY_LIMIT = 3;
   private static final AtomicInteger RETRIES = new AtomicInteger();
+  private static final AtomicLong PLAN_CACHE_HITS = new AtomicLong();
+  private static final AtomicLong PLAN_CACHE_MISSES = new AtomicLong();
   private static final AtomicLong NEXT_HISTORY_ID =
       new AtomicLong(System.currentTimeMillis() * 1_000L);
   private static final AtomicInteger STOCK_LEVEL_RANGE_SCANS =
@@ -66,6 +68,16 @@ public final class NativeLiteTpccTransactions {
     LATEST_RUNTIME_ORDER.clear();
     RUNTIME_ORDER_ITEMS.clear();
     DELIVERY_CURSORS.clear();
+    PLAN_CACHE_HITS.set(0);
+    PLAN_CACHE_MISSES.set(0);
+  }
+
+  static long planCacheHits() {
+    return PLAN_CACHE_HITS.get();
+  }
+
+  static long planCacheMisses() {
+    return PLAN_CACHE_MISSES.get();
   }
 
   private static String districtKey(int warehouse, int district) {
@@ -167,9 +179,10 @@ public final class NativeLiteTpccTransactions {
     private PreparedStatement prepared(String sql) throws SQLException {
       PreparedStatement statement = statements.get(sql);
       if (statement == null) {
+        PLAN_CACHE_MISSES.incrementAndGet();
         statement = connection.prepareStatement(sql);
         statements.put(sql, statement);
-      }
+      } else PLAN_CACHE_HITS.incrementAndGet();
       statement.clearParameters();
       return statement;
     }
@@ -269,8 +282,8 @@ public final class NativeLiteTpccTransactions {
           itemSql.append(item);
         }
         itemSql.append(')');
-        try (Statement itemQuery = connection.createStatement();
-             ResultSet result = itemQuery.executeQuery(itemSql.toString())) {
+        PreparedStatement itemQuery = prepared(itemSql.toString());
+        try (ResultSet result = itemQuery.executeQuery()) {
           while (result.next())
             prices.put(result.getInt(1), result.getBigDecimal(2));
         }
@@ -285,8 +298,8 @@ public final class NativeLiteTpccTransactions {
         }
         stockSql.append(')');
         Map<Integer, String> districtInfoByItem = new HashMap<>();
-        try (Statement stockQuery = connection.createStatement();
-             ResultSet result = stockQuery.executeQuery(stockSql.toString())) {
+        PreparedStatement stockQuery = prepared(stockSql.toString());
+        try (ResultSet result = stockQuery.executeQuery()) {
           while (result.next()) {
             int item = result.getInt(1);
             districtInfoByItem.put(item, result.getString(2));
@@ -317,8 +330,9 @@ public final class NativeLiteTpccTransactions {
           stockUpdates.append(item);
         }
         stockUpdates.append(')');
-        try (Statement stockWrite = connection.createStatement()) {
-          require(stockWrite.executeUpdate(stockUpdates.toString()) ==
+        PreparedStatement stockWrite = prepared(stockUpdates.toString());
+        {
+          require(stockWrite.executeUpdate() ==
               uniqueItems.size(),
               "new-order stock update batch affected the wrong row count");
         }
