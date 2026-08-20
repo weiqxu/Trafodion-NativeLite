@@ -669,9 +669,14 @@ bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
   request.batch = batch;
   pthread_mutex_lock(&group.mutex);
   group.pending.push_back(&request);
-  const bool leader = group.pending.size() == 1 && !group.processing;
+  const bool leader = !group.processing;
+  if (leader)
+    group.processing = true;
+  pthread_cond_signal(&group.condition);
+  pthread_mutex_unlock(&group.mutex);
   if (!leader)
     {
+      pthread_mutex_lock(&group.mutex);
       while (!request.done)
         pthread_cond_wait(&group.condition, &group.mutex);
       if (!request.passed && error)
@@ -680,42 +685,58 @@ bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
       return request.passed;
     }
 
+  // The leader drains the queue, but does not hold the group mutex while the
+  // physical RocksDB write (including synchronous WAL) is in progress. This
+  // lets other callers enqueue the next batch instead of blocking on the
+  // global publication mutex. A non-zero window only coalesces requests that
+  // arrive before the first batch is detached.
   const uint64_t window = groupCommitWindowMicros();
-  if (window > 0)
+  for (;;)
     {
-      struct timespec deadline;
-      clock_gettime(CLOCK_REALTIME, &deadline);
-      deadline.tv_sec += static_cast<time_t>(window / 1000000ULL);
-      deadline.tv_nsec += static_cast<long>(window % 1000000ULL) * 1000L;
-      if (deadline.tv_nsec >= 1000000000L)
+      pthread_mutex_lock(&group.mutex);
+      if (window > 0)
         {
-          deadline.tv_sec++;
-          deadline.tv_nsec -= 1000000000L;
+          struct timespec deadline;
+          clock_gettime(CLOCK_REALTIME, &deadline);
+          deadline.tv_sec += static_cast<time_t>(window / 1000000ULL);
+          deadline.tv_nsec += static_cast<long>(window % 1000000ULL) * 1000L;
+          if (deadline.tv_nsec >= 1000000000L)
+            {
+              deadline.tv_sec++;
+              deadline.tv_nsec -= 1000000000L;
+            }
+          while (group.pending.size() == 1)
+            if (pthread_cond_timedwait(&group.condition, &group.mutex,
+                                       &deadline) == ETIMEDOUT)
+              break;
         }
-      while (group.pending.size() == 1)
-        if (pthread_cond_timedwait(&group.condition, &group.mutex,
-                                   &deadline) == ETIMEDOUT)
-          break;
-    }
+      std::vector<GroupCommitRequest *> requests;
+      requests.swap(group.pending);
+      pthread_mutex_unlock(&group.mutex);
 
-  group.processing = true;
-  std::vector<GroupCommitRequest *> requests;
-  requests.swap(group.pending);
-  std::string groupError;
-  const bool passed = writeGroup(requests, sync, &groupError);
-  for (std::vector<GroupCommitRequest *>::iterator current = requests.begin();
-       current != requests.end(); ++current)
-    {
-      (*current)->passed = passed;
-      (*current)->error = groupError;
-      (*current)->done = true;
+      std::string groupError;
+      const bool passed = writeGroup(requests, sync, &groupError);
+
+      pthread_mutex_lock(&group.mutex);
+      for (std::vector<GroupCommitRequest *>::iterator current =
+               requests.begin(); current != requests.end(); ++current)
+        {
+          (*current)->passed = passed;
+          (*current)->error = groupError;
+          (*current)->done = true;
+        }
+      pthread_cond_broadcast(&group.condition);
+      if (group.pending.empty())
+        {
+          group.processing = false;
+          pthread_cond_broadcast(&group.condition);
+          pthread_mutex_unlock(&group.mutex);
+          if (!passed && error)
+            *error = groupError;
+          return request.passed;
+        }
+      pthread_mutex_unlock(&group.mutex);
     }
-  group.processing = false;
-  pthread_cond_broadcast(&group.condition);
-  if (!passed && error)
-    *error = groupError;
-  pthread_mutex_unlock(&group.mutex);
-  return passed;
 }
 
 bool LocalLiteUnifiedRocksDBCheckpoint(const std::string &path,
