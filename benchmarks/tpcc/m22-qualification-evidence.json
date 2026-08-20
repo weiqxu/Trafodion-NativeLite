@@ -1,0 +1,42 @@
+{
+  "contract_version": 1,
+  "claim": "tpc-c-like",
+  "milestone": "M22F",
+  "observed_date": "2026-08-20",
+  "implementation_commit": "5dea9c60e8c57529dbf2b34147e9d13ea6e8400c",
+  "report_base_revision": "51906ce0a20d4baf6d6ff47156e31b2d09b9711c",
+  "report_source_scope": "implementation worktree immediately before M22F commit",
+  "configuration_sha256": "cdd665aeed65f3b360180d9b39179c1aaba81403e9f8bedf74c0899e7b99b810",
+  "scale": {
+    "warehouses": 10,
+    "terminals": 32,
+    "warmup_transactions_per_terminal": 40,
+    "measured_transactions_per_terminal": 200,
+    "repetitions": 3
+  },
+  "result": {
+    "loader_elapsed_ms": 100014,
+    "throughput_tps": 54.304,
+    "repetition_tps": [54.900, 54.298, 53.728],
+    "throughput_variance_ratio": 0.021806,
+    "p95_us": {
+      "new_order": 892390,
+      "payment": 467642,
+      "order_status": 355940,
+      "delivery": 1256184,
+      "stock_level": 475943
+    },
+    "synchronous_commit": true,
+    "unclassified_errors": 0,
+    "consistency": "pass",
+    "recovery": "pass"
+  },
+  "artifact_sha256": {
+    "bulk-load.json": "7efd071d64da7301cb183d7196b76314878e83fbf3e704491c707346c2396261",
+    "bulk-load.manifest": "5d1eb8b2bf318c61e05bd62966414120699257fca9a8b7427c4c37aeec402aa8",
+    "load.json": "8a9d9e94dba5ca284025008a105ccae57e017619642af1fc8fae6f027b17223d",
+    "operations-report.json": "d4ca2669bbf1d9eb76432cb92cb6051512f7865ac965946c784b19fc294fd254",
+    "qualification.properties": "cdd665aeed65f3b360180d9b39179c1aaba81403e9f8bedf74c0899e7b99b810",
+    "workload-report.json": "15801a1317a02050a2ee014561090d3cde3464de5389af6a76f338ee5893d3a4"
+  }
+}

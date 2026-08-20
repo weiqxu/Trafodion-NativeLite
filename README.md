@@ -34,7 +34,7 @@ The original Apache Trafodion project overview is preserved in:
 plan/README.trafodion.md
 ```
 
-## Current Status (verified 2026-08-16)
+## Current Status (verified 2026-08-20)
 
 The bounded M1-M15 scope is complete for its declared boundaries. Each
 `ContextCli` owns an `ExTransaction`,
@@ -163,14 +163,33 @@ engineering measurements, not official `tpmC` or production-readiness claims.
 M19 implements the next five execution-path optimizations: prepared T4
 parameter-template reuse, transaction ReadOptions reuse, secondary-index
 MultiGet, a bounded unified-RocksDB block cache/Bloom policy, and prepared
-rowset INSERT batching. The cache is controlled by
-sized by `TRAF_LOCAL_LITE_BLOCK_CACHE_BYTES` (`0` default; a positive value
-enables it), while
-synchronous commit remains the production default. The reduced T4 protocol
+rowset INSERT batching. The cache is sized by
+`TRAF_LOCAL_LITE_BLOCK_CACHE_BYTES` (`0` default; a positive value enables
+it), while synchronous commit remains the production default. The reduced T4
+protocol
 still batches homogeneous INSERT rows; heterogeneous New-Order statements
 remain separate because no portable multi-statement request frame exists.
 M19 design and validation commands are recorded in
 [`plan/local-lite-tpcc-m19-design.md`](plan/local-lite-tpcc-m19-design.md).
+
+M20 retains server-side prepared plans and typed input buffers, supports
+quoted-string-aware statement batches, and keeps keyed parameter fallback
+explicit. M21 moves each connection onto its owning thread with bounded
+session capacity and a narrow legacy compiler boundary; its native loader
+established the complete 10-warehouse input path.
+
+M22 full-cardinality qualification is complete for phases A-G. Exact-key OCC
+validation, deterministic commit intents, concurrent atomic TransactionDB
+publication, resumable parallel loading, bound primary-key plans, static
+primary multi-get/update plans, and compatible SELECT batching remove the six
+recorded concurrency bottlenecks. The fresh Release run loaded 8,990,118 keys
+in 100.014 seconds and measured 54.304 TPS over three 32-terminal repetitions
+(54.900/54.298/53.728 TPS, 2.1806% variance). New-Order, Payment,
+Order-Status, Delivery, and Stock-Level p95 were 892.390, 467.642, 355.940,
+1256.184, and 475.943 ms. Synchronous commit, consistency, checkpoint,
+clean/unclean restart, restore, and disk-watermark gates passed. This remains
+TPC-C-like engineering evidence, not official tpmC. Run `make local-lite-m22`;
+the M22H release audit is the final active phase.
 
 ### Functional boundary
 

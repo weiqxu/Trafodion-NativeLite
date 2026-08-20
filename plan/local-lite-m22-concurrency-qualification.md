@@ -1,7 +1,8 @@
 # LocalLite M22: concurrent commit and full-scale qualification
 
-Status: active. M22 is complete only when every M22A-M22H gate passes without
-relaxing durability, cardinality, latency, throughput, or recovery thresholds.
+Status: M22A-M22G complete; M22H release audit active. M22 is complete only
+when every M22A-M22H gate passes without relaxing durability, cardinality,
+latency, throughput, or recovery thresholds.
 
 ## Completion contract
 
@@ -71,6 +72,10 @@ is mandatory.
 Expose M18-M22 aggregate Make targets, retain compact qualification evidence
 with checksums, and keep README, transaction roadmap, milestone design, and
 Makefile status synchronized by an automated contract check.
+
+Completed by `scripts/test-local-lite-m22g.sh`. The compact evidence record is
+`benchmarks/tpcc/m22-qualification-evidence.json`; it binds the exact
+qualification configuration and retained full reports by SHA-256.
 
 ## M22H: release audit
 

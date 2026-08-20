@@ -584,3 +584,41 @@ throughput bottleneck. Both runs pass consistency and restart/checkpoint gates,
 and the T4 JDBC lifecycle gate passes. M18 remains below the 50 TPS and
 per-profile production targets; RocksDB cache/write-stall and per-stage T4
 timing instrumentation are the next actions.
+
+## Milestone 19: Execution-path and rowset optimization
+
+M19 adds prepared parameter-template reuse, snapshot ReadOptions reuse,
+secondary-index MultiGet, an opt-in bounded block cache/Bloom policy, and
+prepared rowset INSERT batching. Its aggregate gate is `make local-lite-m19`;
+the design and rollback boundaries remain in
+`plan/local-lite-tpcc-m19-design.md`.
+
+## Milestone 20: Retained plans and server batches
+
+M20 owns T4 prepared CLI plans and input descriptors in the session, executes
+safe statements without re-prepare, and supports quoted-string-aware server
+batches. Keyed predicates retained a documented specialization boundary until
+M22E supplied executor-bound primary keys. Run `make local-lite-m20`.
+
+## Milestone 21: Thread-affine multi-worker execution
+
+M21 gives every accepted T4 connection a thread-affine CLI/compiler/
+transaction context and bounds capacity with reusable session slots. The
+native loader established complete-cardinality generation, while serialized
+publication and compiler construction became the explicit M22 bottlenecks.
+Run `make local-lite-m21` or `make local-lite-m21-tpcc`.
+
+## Milestone 22: Concurrent commit and full-scale qualification
+
+M22A-M22G are complete and M22H is the active release audit. M22 records
+commit-stage telemetry, validates exact OCC conflicts, publishes disjoint
+atomic batches concurrently, resumes checksum-verified parallel loads, binds
+prepared primary keys, compiles DML plans concurrently, and retains compact
+qualification evidence with artifact checksums.
+
+The fresh 2026-08-20 Release qualification loaded 8,990,118 keys in 100.014
+seconds. Three 32-terminal repetitions measured 54.900, 54.298, and 53.728 TPS
+(54.304 aggregate, 2.1806% variance). All five p95 thresholds, synchronous
+commit, consistency, online checkpoint, clean/unclean restart, checkpoint
+restore, and disk-watermark rejection passed. This is TPC-C-like engineering
+evidence, not official tpmC. The aggregate command is `make local-lite-m22`.

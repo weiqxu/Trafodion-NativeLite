@@ -1486,12 +1486,30 @@ Detailed design and current validation limits: `plan/local-lite-tpcc-m20-design.
   restore checks. Observed 1.907 TPS, 0.038462 throughput variance, 582 OCC
   server conflicts, and p95 new-order latency 63.904 seconds; this is a
   functional/concurrency result, not a claim against the former latency target.
-- [ ] Complete qualification-scale 10-warehouse cardinality run in the local
-  WSL2 environment; the full 100000-item/300000-customer path was stopped after
-  synchronous RocksDB loading exceeded the practical test window.
+- [x] Complete qualification-scale 10-warehouse cardinality through the M22
+  resumable parallel loader and full qualification gate.
 
 Detailed M21 design, controls, test commands, and limits:
 `plan/local-lite-tpcc-m21-design.md`.
+
+## M22 Concurrent Commit and Full-Scale Qualification
+
+- [x] Record phase latency and exact conflict-shape telemetry.
+- [x] Validate OCC by normalized point/range/full-scan read sets.
+- [x] Publish disjoint atomic TransactionDB batches concurrently through
+  deterministic key intents while retaining synchronous commit.
+- [x] Load and resume warehouse partitions concurrently with manifest
+  checksums and exact row verification.
+- [x] Bind prepared primary keys and compile at least four DML plans
+  concurrently without keyed literal specialization.
+- [x] Pass fresh 10-warehouse/32-terminal qualification: 54.304 TPS, 2.1806%
+  variance, every profile p95 gate, recovery, and consistency.
+- [x] Expose M18-M22 aggregate targets and checksum compact evidence.
+- [ ] Complete the final Debug/Release, M10-M22, T4, legacy allowlist, OCC,
+  recovery, full-qualification, and clean-tree release audit.
+
+The authoritative phase contract and current audit status are in
+`plan/local-lite-m22-concurrency-qualification.md`.
 
 - Keep the full Trafodion build unchanged unless `TRAF_LOCAL_LITE=1` is set.
 - Keep all local-lite behavior compile-time gated by `TRAF_LOCAL_LITE`.
