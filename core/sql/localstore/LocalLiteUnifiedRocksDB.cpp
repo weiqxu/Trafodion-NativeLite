@@ -23,12 +23,15 @@
 #include "LocalLiteUnifiedRocksDB.h"
 
 #include "LocalLiteStorage.h"
+#include <errno.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <cstdlib>
 #include <cctype>
 #include <cstring>
+#include <pthread.h>
 #include <string>
 #include <vector>
 
@@ -88,6 +91,46 @@ struct UnifiedState
 };
 
 UnifiedState unifiedState;
+
+struct GroupCommitRequest
+{
+  GroupCommitRequest() : batch(NULL), done(false), passed(false) {}
+  LocalLiteUnifiedWriteBatch *batch;
+  bool done;
+  bool passed;
+  std::string error;
+};
+
+struct GroupCommitState
+{
+  GroupCommitState() : processing(false)
+  {
+    pthread_mutex_init(&mutex, NULL);
+    pthread_cond_init(&condition, NULL);
+  }
+  ~GroupCommitState()
+  {
+    pthread_cond_destroy(&condition);
+    pthread_mutex_destroy(&mutex);
+  }
+  pthread_mutex_t mutex;
+  pthread_cond_t condition;
+  bool processing;
+  std::vector<GroupCommitRequest *> pending;
+};
+
+GroupCommitState syncGroupCommit;
+GroupCommitState asyncGroupCommit;
+
+static uint64_t groupCommitWindowMicros()
+{
+  const char *setting = getenv("TRAF_LOCAL_LITE_GROUP_COMMIT_WINDOW_US");
+  if (!setting || !setting[0])
+    return 500;
+  char *end = NULL;
+  unsigned long long parsed = strtoull(setting, &end, 10);
+  return end && *end == '\0' ? static_cast<uint64_t>(parsed) : 500;
+}
 
 void setStringError(std::string *error, const std::string &message)
 {
@@ -474,6 +517,55 @@ struct LocalLiteUnifiedWriteBatch
   rocksdb_writebatch_t *physical;
 };
 
+struct GroupBatchCopy
+{
+  rocksdb_writebatch_t *target;
+};
+
+static void copyGroupPut(void *state, const char *key, size_t keyLength,
+                         const char *value, size_t valueLength)
+{
+  GroupBatchCopy *copy = static_cast<GroupBatchCopy *>(state);
+  rocksdb_writebatch_put(copy->target, key, keyLength, value, valueLength);
+}
+
+static void copyGroupDelete(void *state, const char *key, size_t keyLength)
+{
+  GroupBatchCopy *copy = static_cast<GroupBatchCopy *>(state);
+  rocksdb_writebatch_delete(copy->target, key, keyLength);
+}
+
+static bool writeGroup(const std::vector<GroupCommitRequest *> &requests,
+                       bool sync, std::string *error)
+{
+  rocksdb_writebatch_t *combined = rocksdb_writebatch_create();
+  GroupBatchCopy copy;
+  copy.target = combined;
+  for (std::vector<GroupCommitRequest *>::const_iterator request =
+           requests.begin(); request != requests.end(); ++request)
+    rocksdb_writebatch_iterate((*request)->batch->physical, &copy,
+                               copyGroupPut, copyGroupDelete);
+  rocksdb_writeoptions_t *options = sync
+      ? unifiedState.syncWriteOptions : unifiedState.asyncWriteOptions;
+  char *rocksError = NULL;
+  if (!options)
+    {
+      setStringError(error, "LocalLite unified write options are unavailable");
+      rocksdb_writebatch_destroy(combined);
+      return false;
+    }
+  rocksdb_write(unifiedState.baseDb, options, combined, &rocksError);
+  rocksdb_writebatch_destroy(combined);
+  if (rocksError)
+    {
+      setStringError(error, std::string("commit LocalLite unified batch: ") +
+                            rocksError);
+      rocksdb_free(rocksError);
+      return false;
+    }
+  return true;
+}
+
 std::string LocalLiteUnifiedRocksDBPath(const std::string &root)
 {
   return root + "/transactiondb";
@@ -572,23 +664,58 @@ bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
       setStringError(error, "LocalLite unified write batch is unavailable");
       return false;
     }
-  rocksdb_writeoptions_t *options = sync
-      ? unifiedState.syncWriteOptions : unifiedState.asyncWriteOptions;
-  if (!options)
+  GroupCommitState &group = sync ? syncGroupCommit : asyncGroupCommit;
+  GroupCommitRequest request;
+  request.batch = batch;
+  pthread_mutex_lock(&group.mutex);
+  group.pending.push_back(&request);
+  const bool leader = group.pending.size() == 1 && !group.processing;
+  if (!leader)
     {
-      setStringError(error, "LocalLite unified write options are unavailable");
-      return false;
+      while (!request.done)
+        pthread_cond_wait(&group.condition, &group.mutex);
+      if (!request.passed && error)
+        *error = request.error;
+      pthread_mutex_unlock(&group.mutex);
+      return request.passed;
     }
-  char *rocksError = NULL;
-  rocksdb_write(unifiedState.baseDb, options, batch->physical, &rocksError);
-  if (rocksError)
+
+  const uint64_t window = groupCommitWindowMicros();
+  if (window > 0)
     {
-      setStringError(error, std::string("commit LocalLite unified batch: ") +
-                            rocksError);
-      rocksdb_free(rocksError);
-      return false;
+      struct timespec deadline;
+      clock_gettime(CLOCK_REALTIME, &deadline);
+      deadline.tv_sec += static_cast<time_t>(window / 1000000ULL);
+      deadline.tv_nsec += static_cast<long>(window % 1000000ULL) * 1000L;
+      if (deadline.tv_nsec >= 1000000000L)
+        {
+          deadline.tv_sec++;
+          deadline.tv_nsec -= 1000000000L;
+        }
+      while (group.pending.size() == 1)
+        if (pthread_cond_timedwait(&group.condition, &group.mutex,
+                                   &deadline) == ETIMEDOUT)
+          break;
     }
-  return true;
+
+  group.processing = true;
+  std::vector<GroupCommitRequest *> requests;
+  requests.swap(group.pending);
+  std::string groupError;
+  const bool passed = writeGroup(requests, sync, &groupError);
+  for (std::vector<GroupCommitRequest *>::iterator current = requests.begin();
+       current != requests.end(); ++current)
+    {
+      (*current)->passed = passed;
+      (*current)->error = groupError;
+      (*current)->done = true;
+    }
+  group.processing = false;
+  pthread_cond_broadcast(&group.condition);
+  if (!passed && error)
+    *error = groupError;
+  pthread_mutex_unlock(&group.mutex);
+  return passed;
 }
 
 bool LocalLiteUnifiedRocksDBCheckpoint(const std::string &path,

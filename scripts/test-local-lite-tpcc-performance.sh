@@ -104,12 +104,14 @@ start_server() {
       TRAF_LOCAL_STORE_DIR="$active_store" \
       TRAF_LOCAL_LITE_MINIMUM_FREE_BYTES="$minimum_free" \
       TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \
+      TRAF_LOCAL_LITE_GROUP_COMMIT_WINDOW_US="${TRAF_LOCAL_LITE_GROUP_COMMIT_WINDOW_US:-500}" \
       LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
       "$server" --listen 127.0.0.1 --port "$port" --workers "$workers" >"$server_log" 2>&1 &
   else
     env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
       TRAF_LOCAL_STORE_DIR="$active_store" \
       TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \
+      TRAF_LOCAL_LITE_GROUP_COMMIT_WINDOW_US="${TRAF_LOCAL_LITE_GROUP_COMMIT_WINDOW_US:-500}" \
       LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
       "$server" --listen 127.0.0.1 --port "$port" --workers "$workers" >"$server_log" 2>&1 &
   fi
