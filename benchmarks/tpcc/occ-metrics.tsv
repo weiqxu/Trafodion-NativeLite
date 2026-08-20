@@ -15,3 +15,6 @@ validation_conflicts	count	yes
 history_overflow_aborts	count	yes
 validation_latency_us	microseconds	yes
 publication_latency_us	microseconds	yes
+synchronous_publications	count	yes
+asynchronous_publications	count	yes
+publication_failures	count	yes

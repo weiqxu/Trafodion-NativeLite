@@ -4833,6 +4833,8 @@ struct LocalLiteOccMetrics
       referentialValidationLatencyUs(0), batchBuildLatencyUs(0),
       publicationLatencyUs(0), visibilityPublicationLatencyUs(0),
       commitIntentWaitUs(0), physicalCommits(0),
+      synchronousPublications(0), asynchronousPublications(0),
+      publicationFailures(0),
       maximumPhysicalCommitOverlap(0) {}
 
   uint64_t transactionsStarted;
@@ -4860,6 +4862,9 @@ struct LocalLiteOccMetrics
   uint64_t visibilityPublicationLatencyUs;
   uint64_t commitIntentWaitUs;
   uint64_t physicalCommits;
+  uint64_t synchronousPublications;
+  uint64_t asynchronousPublications;
+  uint64_t publicationFailures;
   uint64_t maximumPhysicalCommitOverlap;
 };
 
@@ -5587,9 +5592,9 @@ public:
     const char *commitHold = getenv("TRAF_LOCAL_LITE_COMMIT_HOLD_MS");
     if (commitHold && commitHold[0])
       usleep(static_cast<useconds_t>(strtoul(commitHold, NULL, 10)) * 1000U);
+    const bool synchronousCommit = localLiteSynchronousCommit();
     const bool publicationPassed =
-        LocalLiteUnifiedWriteBatchCommit(
-            batch, localLiteSynchronousCommit(), error);
+        LocalLiteUnifiedWriteBatchCommit(batch, synchronousCommit, error);
     localLiteCommitCoordinator.leavePhysicalCommit();
     const uint64_t publicationFinished = monotonicMicros();
     atomicPublication.lock();
@@ -5597,6 +5602,12 @@ public:
       localLiteOccMetrics.publicationLatencyUs +=
           publicationFinished - publicationStarted;
     localLiteOccMetrics.physicalCommits++;
+    if (synchronousCommit)
+      localLiteOccMetrics.synchronousPublications++;
+    else
+      localLiteOccMetrics.asynchronousPublications++;
+    if (!publicationPassed)
+      localLiteOccMetrics.publicationFailures++;
     localLiteOccMetrics.maximumPhysicalCommitOverlap = std::max(
         localLiteOccMetrics.maximumPhysicalCommitOverlap,
         localLiteCommitCoordinator.maximumOverlap());
@@ -10169,6 +10180,12 @@ std::string LocalLiteOccMetricsJson()
       << localLiteOccMetrics.commitIntentWaitUs
       << ",\"physical_commits\":"
       << localLiteOccMetrics.physicalCommits
+      << ",\"synchronous_publications\":"
+      << localLiteOccMetrics.synchronousPublications
+      << ",\"asynchronous_publications\":"
+      << localLiteOccMetrics.asynchronousPublications
+      << ",\"publication_failures\":"
+      << localLiteOccMetrics.publicationFailures
       << ",\"maximum_physical_commit_overlap\":"
       << std::max(localLiteOccMetrics.maximumPhysicalCommitOverlap,
                   localLiteCommitCoordinator.maximumOverlap())

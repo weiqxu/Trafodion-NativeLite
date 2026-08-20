@@ -34,12 +34,14 @@ public final class NativeLiteTpccWorkload {
     long committed;
     long aborted;
     long retried;
+    long retryBackoffMicros;
     final List<Long> latencyMicros = new ArrayList<>();
 
-    synchronized void commit(long micros, int retries) {
+    synchronized void commit(long micros, int retries, long backoffMicros) {
       committed++;
       aborted += retries;
       retried += retries;
+      retryBackoffMicros += backoffMicros;
       latencyMicros.add(micros);
     }
   }
@@ -104,14 +106,18 @@ public final class NativeLiteTpccWorkload {
       NativeLiteTpccTransactions.Terminal terminal, String profile,
       int district, int customer, ProfileStats stats) throws Exception {
     long started = System.nanoTime();
+    long retryBackoffMicros = 0;
     for (int attempt = 0; ; attempt++) {
       try {
         executeProfile(terminal, profile, district, customer);
         if (stats != null)
-          stats.commit((System.nanoTime() - started) / 1000L, attempt);
+          stats.commit((System.nanoTime() - started) / 1000L, attempt,
+              retryBackoffMicros);
         return;
       } catch (SQLException failure) {
         if (!retryable(failure) || attempt >= retryLimit) throw failure;
+        retryBackoffMicros += (long) retryBackoffMillis *
+            (attempt + 1) * 1000L;
         Thread.sleep((long) retryBackoffMillis * (attempt + 1));
       }
     }
@@ -274,6 +280,8 @@ public final class NativeLiteTpccWorkload {
           .append("\"committed\":").append(value.committed)
           .append(",\"aborted\":").append(value.aborted)
           .append(",\"retried\":").append(value.retried)
+          .append(",\"retry_backoff_us\":")
+          .append(value.retryBackoffMicros)
           .append(",\"latency_us\":{")
           .append("\"p50\":").append(percentile(value.latencyMicros, 0.50))
           .append(",\"p95\":").append(percentile(value.latencyMicros, 0.95))
@@ -294,6 +302,9 @@ public final class NativeLiteTpccWorkload {
         .append("\"occ_conflicts_client_observed\":")
         .append(stats.profiles.values().stream()
             .mapToLong(profile -> profile.aborted).sum()).append(',')
+        .append("\"retry_backoff_us\":")
+        .append(stats.profiles.values().stream()
+            .mapToLong(profile -> profile.retryBackoffMicros).sum()).append(',')
         .append("\"queue_time\":\"unavailable_direct_dispatch\",")
         .append("\"compile_time\":\"unavailable_reduced_t4\",")
         .append("\"wal_fsync_latency\":\"unavailable_rocksdb_c_api\",")
