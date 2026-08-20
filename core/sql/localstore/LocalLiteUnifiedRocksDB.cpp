@@ -126,10 +126,10 @@ static uint64_t groupCommitWindowMicros()
 {
   const char *setting = getenv("TRAF_LOCAL_LITE_GROUP_COMMIT_WINDOW_US");
   if (!setting || !setting[0])
-    return 500;
+    return 0;
   char *end = NULL;
   unsigned long long parsed = strtoull(setting, &end, 10);
-  return end && *end == '\0' ? static_cast<uint64_t>(parsed) : 500;
+  return end && *end == '\0' ? static_cast<uint64_t>(parsed) : 0;
 }
 
 void setStringError(std::string *error, const std::string &message)
