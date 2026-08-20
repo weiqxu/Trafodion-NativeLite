@@ -37,13 +37,15 @@ void LocalLiteUnifiedRocksDBShutdown();
 bool LocalLiteUnifiedRocksDBActive();
 uint64_t LocalLiteUnifiedRocksDBSequence();
 uint32_t LocalLiteUnifiedDurableShardCount();
+uint32_t LocalLiteUnifiedPhysicalWalShardCount();
 bool LocalLiteUnifiedRocksDBCheckpoint(const std::string &path,
                                        std::string *error);
 std::string LocalLiteUnifiedRocksDBPath(const std::string &root);
 
 // A physical write batch may contain records from any logical catalog/table
-// handle.  Commit writes the translated keys to the single unified
-// TransactionDB in one RocksDB sequence-number transition.
+// handle. Commit durably records the batch in one shard WAL intent lane and
+// then writes the translated keys to the unified TransactionDB in one
+// RocksDB sequence-number transition.
 struct LocalLiteUnifiedWriteBatch;
 LocalLiteUnifiedWriteBatch *LocalLiteUnifiedWriteBatchCreate();
 void LocalLiteUnifiedWriteBatchDestroy(LocalLiteUnifiedWriteBatch *batch);

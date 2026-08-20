@@ -10219,6 +10219,8 @@ std::string LocalLiteOccMetricsJson()
       << localLiteOccMetrics.publicationFailures
       << ",\"durable_writer_shards\":"
       << LocalLiteUnifiedDurableShardCount()
+      << ",\"physical_wal_shards\":"
+      << LocalLiteUnifiedPhysicalWalShardCount()
       << ",\"maximum_physical_commit_overlap\":"
       << std::max(localLiteOccMetrics.maximumPhysicalCommitOverlap,
                   localLiteCommitCoordinator.maximumOverlap())

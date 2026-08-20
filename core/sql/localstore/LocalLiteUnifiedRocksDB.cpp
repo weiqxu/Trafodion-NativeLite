@@ -44,6 +44,10 @@ const char *FORMAT_VALUE = "LocalLiteTxnStore/2";
 const char *ACTIVE_KEY = "m13/active";
 const char *LAYOUT_KEY = "m13/layout";
 const char *LAYOUT_VALUE = "unified-hex-v1";
+const char *PHYSICAL_WAL_ROOT = "transactiondb-wal";
+const char *PHYSICAL_WAL_PENDING_PREFIX = "pending/";
+const char *PHYSICAL_COMMIT_MARKER_PREFIX = "m23/commit/";
+const uint32_t LOCAL_LITE_DURABLE_SHARDS = 8;
 
 struct LogicalDb
 {
@@ -77,8 +81,11 @@ struct UnifiedState
 {
   UnifiedState()
     : prepared(false), active(false), transactionDb(NULL), baseDb(NULL),
-      blockCache(NULL), syncWriteOptions(NULL), asyncWriteOptions(NULL)
+      blockCache(NULL), syncWriteOptions(NULL), asyncWriteOptions(NULL),
+      nextWalId(1)
   {
+    for (uint32_t i = 0; i < LOCAL_LITE_DURABLE_SHARDS; i++)
+      walDb[i] = NULL;
   }
 
   bool prepared;
@@ -89,16 +96,16 @@ struct UnifiedState
   rocksdb_cache_t *blockCache;
   rocksdb_writeoptions_t *syncWriteOptions;
   rocksdb_writeoptions_t *asyncWriteOptions;
+  rocksdb_t *walDb[LOCAL_LITE_DURABLE_SHARDS];
+  uint64_t nextWalId;
 };
 
 UnifiedState unifiedState;
 
 // A transaction batch is never split across writers: its complete physical
-// WriteBatch is routed to exactly one queue, preserving atomicity. The queues
-// shard admission and durable-writer scheduling over the shared RocksDB WAL;
-// RocksDB still assigns one global sequence to each physical write.
-const uint32_t LOCAL_LITE_DURABLE_SHARDS = 8;
-
+// WriteBatch is routed to exactly one queue, preserving atomicity. Each queue
+// also owns a physical WAL intent lane; the unified TransactionDB remains the
+// data commit point until cross-shard data transactions have a 2PC protocol.
 struct GroupCommitRequest
 {
   GroupCommitRequest() : batch(NULL), done(false), passed(false) {}
@@ -140,6 +147,60 @@ static uint32_t durableShardCount()
     return LOCAL_LITE_DURABLE_SHARDS;
   return static_cast<uint32_t>(std::min<unsigned long>(
       parsed, LOCAL_LITE_DURABLE_SHARDS));
+}
+
+pthread_mutex_t walIdMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static uint64_t allocateWalId()
+{
+  pthread_mutex_lock(&walIdMutex);
+  if (unifiedState.nextWalId == 1)
+    {
+      struct timespec now;
+      clock_gettime(CLOCK_REALTIME, &now);
+      unifiedState.nextWalId = static_cast<uint64_t>(now.tv_sec) * 1000000ULL +
+          static_cast<uint64_t>(now.tv_nsec) / 1000ULL;
+    }
+  const uint64_t id = unifiedState.nextWalId++;
+  pthread_mutex_unlock(&walIdMutex);
+  return id;
+}
+
+static std::string walPendingKey(uint64_t id)
+{
+  char encoded[32];
+  snprintf(encoded, sizeof(encoded), "%s%020llu",
+           PHYSICAL_WAL_PENDING_PREFIX,
+           static_cast<unsigned long long>(id));
+  return std::string(encoded);
+}
+
+static std::string physicalCommitMarker(uint64_t id)
+{
+  char encoded[32];
+  snprintf(encoded, sizeof(encoded), "%s%020llu",
+           PHYSICAL_COMMIT_MARKER_PREFIX,
+           static_cast<unsigned long long>(id));
+  return std::string(encoded);
+}
+
+static bool isPhysicalWalPendingKey(const std::string &key)
+{
+  return key.compare(0, strlen(PHYSICAL_WAL_PENDING_PREFIX),
+                     PHYSICAL_WAL_PENDING_PREFIX) == 0;
+}
+
+static bool parsePhysicalWalId(const std::string &key, uint64_t *id)
+{
+  if (!id || !isPhysicalWalPendingKey(key))
+    return false;
+  const char *text = key.c_str() + strlen(PHYSICAL_WAL_PENDING_PREFIX);
+  char *end = NULL;
+  const unsigned long long parsed = strtoull(text, &end, 10);
+  if (!end || *end != '\0')
+    return false;
+  *id = static_cast<uint64_t>(parsed);
+  return true;
 }
 
 static uint64_t groupCommitWindowMicros()
@@ -196,6 +257,14 @@ bool pathExists(const std::string &path)
 {
   struct stat info;
   return stat(path.c_str(), &info) == 0;
+}
+
+bool ensureDirectory(const std::string &path, std::string *error)
+{
+  if (mkdir(path.c_str(), 0755) == 0 || errno == EEXIST)
+    return true;
+  setStringError(error, "mkdir " + path + ": " + strerror(errno));
+  return false;
 }
 
 std::string hexEncode(const std::string &value)
@@ -443,6 +512,159 @@ bool prepareTarget(const std::string &root, std::string *error)
   return true;
 }
 
+static void closePhysicalWals()
+{
+  for (uint32_t i = 0; i < LOCAL_LITE_DURABLE_SHARDS; i++)
+    if (unifiedState.walDb[i])
+      {
+        rocksdb_close(unifiedState.walDb[i]);
+        unifiedState.walDb[i] = NULL;
+      }
+}
+
+static bool openPhysicalWals(const std::string &root, std::string *error)
+{
+  if (!ensureDirectory(root + "/" + PHYSICAL_WAL_ROOT, error))
+    return false;
+  rocksdb_options_t *options = rocksdb_options_create();
+  rocksdb_options_set_create_if_missing(options, 1);
+  rocksdb_options_set_paranoid_checks(options, 1);
+  for (uint32_t i = 0; i < LOCAL_LITE_DURABLE_SHARDS; i++)
+    {
+      char suffix[32];
+      snprintf(suffix, sizeof(suffix), "/shard-%u", i);
+      const std::string path = root + "/" + PHYSICAL_WAL_ROOT + suffix;
+      char *rocksError = NULL;
+      unifiedState.walDb[i] = rocksdb_open(options, path.c_str(), &rocksError);
+      if (rocksError)
+        {
+          const std::string message(rocksError);
+          rocksdb_free(rocksError);
+          rocksdb_options_destroy(options);
+          closePhysicalWals();
+          setUnifiedOpenError(error, "open LocalLite physical WAL shard",
+                              message);
+          return false;
+        }
+    }
+  rocksdb_options_destroy(options);
+  return true;
+}
+
+static bool recoverPhysicalWals(std::string *error)
+{
+  if (!unifiedState.baseDb || !unifiedState.syncWriteOptions)
+    {
+      setStringError(error, "LocalLite physical WAL recovery is unavailable");
+      return false;
+    }
+  rocksdb_readoptions_t *readOptions = rocksdb_readoptions_create();
+  for (uint32_t shard = 0; shard < LOCAL_LITE_DURABLE_SHARDS; shard++)
+    {
+      rocksdb_iterator_t *iterator =
+          rocksdb_create_iterator(unifiedState.walDb[shard], readOptions);
+      rocksdb_iter_seek_to_first(iterator);
+      std::vector<std::pair<std::string, std::string> > pending;
+      while (rocksdb_iter_valid(iterator))
+        {
+          size_t keyLength = 0;
+          size_t valueLength = 0;
+          const char *key = rocksdb_iter_key(iterator, &keyLength);
+          const char *value = rocksdb_iter_value(iterator, &valueLength);
+          const std::string pendingKey(key, keyLength);
+          if (isPhysicalWalPendingKey(pendingKey))
+            pending.push_back(std::make_pair(
+                pendingKey, std::string(value, valueLength)));
+          rocksdb_iter_next(iterator);
+        }
+      char *rocksError = NULL;
+      rocksdb_iter_get_error(iterator, &rocksError);
+      rocksdb_iter_destroy(iterator);
+      if (rocksError)
+        {
+          setStringError(error, std::string("scan LocalLite physical WAL: ") +
+                                rocksError);
+          rocksdb_free(rocksError);
+          rocksdb_readoptions_destroy(readOptions);
+          return false;
+        }
+
+      for (std::vector<std::pair<std::string, std::string> >::const_iterator it =
+               pending.begin(); it != pending.end(); ++it)
+        {
+          uint64_t id = 0;
+          if (!parsePhysicalWalId(it->first, &id))
+            {
+              setStringError(error, "invalid LocalLite physical WAL intent key");
+              rocksdb_readoptions_destroy(readOptions);
+              return false;
+            }
+          rocksdb_writebatch_t *batch = rocksdb_writebatch_create_from(
+              it->second.data(), it->second.size());
+          if (!batch)
+            {
+              setStringError(error,
+                             "invalid LocalLite physical WAL intent batch");
+              rocksdb_readoptions_destroy(readOptions);
+              return false;
+            }
+          const std::string marker = physicalCommitMarker(id);
+          size_t markerLength = 0;
+          char *markerError = NULL;
+          char *markerValue = rocksdb_get(unifiedState.baseDb, readOptions,
+                                          marker.data(), marker.size(),
+                                          &markerLength, &markerError);
+          if (markerError)
+            {
+              setStringError(error,
+                             std::string("check LocalLite physical WAL "
+                                         "commit marker: ") + markerError);
+              rocksdb_free(markerError);
+              rocksdb_writebatch_destroy(batch);
+              rocksdb_readoptions_destroy(readOptions);
+              return false;
+            }
+          if (!markerValue)
+            {
+              char *writeError = NULL;
+              rocksdb_write(unifiedState.baseDb,
+                            unifiedState.syncWriteOptions, batch, &writeError);
+              if (writeError)
+                {
+                  setStringError(error,
+                                 std::string("replay LocalLite physical WAL: ") +
+                                     writeError);
+                  rocksdb_free(writeError);
+                  rocksdb_writebatch_destroy(batch);
+                  rocksdb_readoptions_destroy(readOptions);
+                  return false;
+                }
+            }
+          else
+            rocksdb_free(markerValue);
+          rocksdb_writebatch_destroy(batch);
+
+          rocksdb_writebatch_t *remove = rocksdb_writebatch_create();
+          rocksdb_writebatch_delete(remove, it->first.data(), it->first.size());
+          char *removeError = NULL;
+          rocksdb_write(unifiedState.walDb[shard],
+                        unifiedState.syncWriteOptions, remove, &removeError);
+          rocksdb_writebatch_destroy(remove);
+          if (removeError)
+            {
+              setStringError(error,
+                             std::string("remove LocalLite physical WAL "
+                                         "intent: ") + removeError);
+              rocksdb_free(removeError);
+              rocksdb_readoptions_destroy(readOptions);
+              return false;
+            }
+        }
+    }
+  rocksdb_readoptions_destroy(readOptions);
+  return true;
+}
+
 bool openUnifiedTarget(const std::string &root, std::string *error)
 {
   rocksdb_options_t *options = rocksdb_options_create();
@@ -524,6 +746,24 @@ bool openUnifiedTarget(const std::string &root, std::string *error)
         }
       return false;
     }
+  if (!openPhysicalWals(root, error) || !recoverPhysicalWals(error))
+    {
+      closePhysicalWals();
+      rocksdb_transactiondb_close_base_db(unifiedState.baseDb);
+      unifiedState.baseDb = NULL;
+      rocksdb_transactiondb_close(unifiedState.transactionDb);
+      unifiedState.transactionDb = NULL;
+      rocksdb_writeoptions_destroy(unifiedState.syncWriteOptions);
+      rocksdb_writeoptions_destroy(unifiedState.asyncWriteOptions);
+      unifiedState.syncWriteOptions = NULL;
+      unifiedState.asyncWriteOptions = NULL;
+      if (unifiedState.blockCache)
+        {
+          rocksdb_cache_destroy(unifiedState.blockCache);
+          unifiedState.blockCache = NULL;
+        }
+      return false;
+    }
   unifiedState.active = true;
   return true;
 }
@@ -533,11 +773,13 @@ bool openUnifiedTarget(const std::string &root, std::string *error)
 struct LocalLiteUnifiedWriteBatch
 {
   LocalLiteUnifiedWriteBatch()
-    : physical(rocksdb_writebatch_create()), shardHash(1469598103934665603ULL)
+    : physical(rocksdb_writebatch_create()),
+      shardHash(1469598103934665603ULL), walId(0)
   {}
   ~LocalLiteUnifiedWriteBatch() { rocksdb_writebatch_destroy(physical); }
   rocksdb_writebatch_t *physical;
   uint64_t shardHash;
+  uint64_t walId;
 };
 
 static uint64_t batchKeyHash(const std::string &key)
@@ -578,29 +820,95 @@ static void copyGroupDelete(void *state, const char *key, size_t keyLength)
 }
 
 static bool writeGroup(const std::vector<GroupCommitRequest *> &requests,
-                       bool sync, std::string *error)
+                       uint32_t shard, bool sync, std::string *error)
 {
   rocksdb_writebatch_t *combined = rocksdb_writebatch_create();
+  rocksdb_writebatch_t *intents = rocksdb_writebatch_create();
   GroupBatchCopy copy;
   copy.target = combined;
   for (std::vector<GroupCommitRequest *>::const_iterator request =
            requests.begin(); request != requests.end(); ++request)
-    rocksdb_writebatch_iterate((*request)->batch->physical, &copy,
-                               copyGroupPut, copyGroupDelete);
+    {
+      LocalLiteUnifiedWriteBatch *batch = (*request)->batch;
+      if (batch->walId == 0)
+        batch->walId = allocateWalId();
+      size_t serializedSize = 0;
+      const char *serialized = rocksdb_writebatch_data(batch->physical,
+                                                       &serializedSize);
+      rocksdb_writebatch_t *withMarker = rocksdb_writebatch_create_from(
+          serialized, serializedSize);
+      if (!withMarker)
+        {
+          setStringError(error,
+                         "create LocalLite physical WAL intent batch failed");
+          rocksdb_writebatch_destroy(intents);
+          rocksdb_writebatch_destroy(combined);
+          return false;
+        }
+      const std::string marker = physicalCommitMarker(batch->walId);
+      rocksdb_writebatch_put(withMarker, marker.data(), marker.size(), "", 0);
+      size_t intentSize = 0;
+      const char *intentData = rocksdb_writebatch_data(withMarker, &intentSize);
+      const std::string intentKey = walPendingKey(batch->walId);
+      rocksdb_writebatch_put(intents, intentKey.data(), intentKey.size(),
+                             intentData, intentSize);
+      rocksdb_writebatch_iterate(withMarker, &copy, copyGroupPut,
+                                 copyGroupDelete);
+      rocksdb_writebatch_destroy(withMarker);
+    }
+
   rocksdb_writeoptions_t *options = sync
       ? unifiedState.syncWriteOptions : unifiedState.asyncWriteOptions;
-  char *rocksError = NULL;
-  if (!options)
+  if (!options || shard >= LOCAL_LITE_DURABLE_SHARDS ||
+      !unifiedState.walDb[shard])
     {
-      setStringError(error, "LocalLite unified write options are unavailable");
+      setStringError(error, "LocalLite physical WAL writer is unavailable");
+      rocksdb_writebatch_destroy(intents);
       rocksdb_writebatch_destroy(combined);
       return false;
     }
+  char *rocksError = NULL;
+  rocksdb_write(unifiedState.walDb[shard], options, intents, &rocksError);
+  rocksdb_writebatch_destroy(intents);
+  if (rocksError)
+    {
+      setStringError(error, std::string("write LocalLite physical WAL: ") +
+                            rocksError);
+      rocksdb_free(rocksError);
+      rocksdb_writebatch_destroy(combined);
+      return false;
+    }
+  const char *walFault = getenv("TRAF_LOCAL_LITE_PHYSICAL_WAL_FAULT");
+  if (walFault && strcmp(walFault, "after-intent") == 0)
+    _exit(94);
+
+  rocksError = NULL;
   rocksdb_write(unifiedState.baseDb, options, combined, &rocksError);
   rocksdb_writebatch_destroy(combined);
   if (rocksError)
     {
       setStringError(error, std::string("commit LocalLite unified batch: ") +
+                            rocksError);
+      rocksdb_free(rocksError);
+      return false;
+    }
+  if (walFault && strcmp(walFault, "after-canonical") == 0)
+    _exit(95);
+
+  rocksdb_writebatch_t *removals = rocksdb_writebatch_create();
+  for (std::vector<GroupCommitRequest *>::const_iterator request =
+           requests.begin(); request != requests.end(); ++request)
+    {
+      const std::string intentKey = walPendingKey((*request)->batch->walId);
+      rocksdb_writebatch_delete(removals, intentKey.data(), intentKey.size());
+    }
+  rocksError = NULL;
+  rocksdb_write(unifiedState.walDb[shard], options, removals, &rocksError);
+  rocksdb_writebatch_destroy(removals);
+  if (rocksError)
+    {
+      // The commit marker makes cleanup/replay idempotent on the next open.
+      setStringError(error, std::string("remove LocalLite physical WAL: ") +
                             rocksError);
       rocksdb_free(rocksError);
       return false;
@@ -635,6 +943,7 @@ bool LocalLiteUnifiedRocksDBPrepare(const std::string &root,
 
 void LocalLiteUnifiedRocksDBShutdown()
 {
+  closePhysicalWals();
   if (unifiedState.baseDb)
     rocksdb_transactiondb_close_base_db(unifiedState.baseDb);
   unifiedState.baseDb = NULL;
@@ -669,6 +978,14 @@ uint64_t LocalLiteUnifiedRocksDBSequence()
 uint32_t LocalLiteUnifiedDurableShardCount()
 {
   return durableShardCount();
+}
+
+uint32_t LocalLiteUnifiedPhysicalWalShardCount()
+{
+  for (uint32_t i = 0; i < LOCAL_LITE_DURABLE_SHARDS; i++)
+    if (!unifiedState.walDb[i])
+      return i;
+  return LOCAL_LITE_DURABLE_SHARDS;
 }
 
 LocalLiteUnifiedWriteBatch *LocalLiteUnifiedWriteBatchCreate()
@@ -767,7 +1084,7 @@ bool LocalLiteUnifiedWriteBatchCommit(LocalLiteUnifiedWriteBatch *batch,
       pthread_mutex_unlock(&group.mutex);
 
       std::string groupError;
-      const bool passed = writeGroup(requests, sync, &groupError);
+      const bool passed = writeGroup(requests, shard, sync, &groupError);
 
       pthread_mutex_lock(&group.mutex);
       for (std::vector<GroupCommitRequest *>::iterator current =
