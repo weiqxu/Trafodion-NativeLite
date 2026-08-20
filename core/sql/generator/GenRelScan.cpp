@@ -3634,7 +3634,8 @@ short HbaseAccess::codeGen(Generator * generator)
   // but the local executor can still evaluate the generated bound-key
   // expression.  Mark only the primary access path as eligible so ranges and
   // secondary indexes retain their scan behavior.
-  if (rowIdExpr && getIndexDesc() && getIndexDesc()->getNAFileSet() &&
+  if (rowIdExpr && localLiteBoundInputComplete &&
+      getIndexDesc() && getIndexDesc()->getNAFileSet() &&
       getIndexDesc()->getNAFileSet()->getKeytag() == 0)
     hbasescan_tdb->setUniqueKeyInfo(TRUE);
 #endif

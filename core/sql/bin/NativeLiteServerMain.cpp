@@ -1067,11 +1067,57 @@ public:
         result.error = "NativeLite batch contains no statements";
         return result;
       }
+    bool selectBatch = true;
+    for (size_t index = 0; index < statements.size(); index++)
+      {
+        const std::string verb = firstWord(statements[index]);
+        if (verb != "SELECT" && verb != "WITH" && verb != "VALUES")
+          {
+            selectBatch = false;
+            break;
+          }
+      }
+    QueryResult aggregate;
     for (size_t index = 0; index < statements.size(); index++)
       {
         result = execute(session, statements[index]);
         if (!result.ok())
           return result;
+        if (selectBatch)
+          {
+            if (index == 0)
+              aggregate = result;
+            else
+              {
+                if (result.columns.size() != aggregate.columns.size())
+                  {
+                    aggregate.sqlstate = "21000";
+                    aggregate.error =
+                        "NativeLite SELECT batch column count mismatch";
+                    return aggregate;
+                  }
+                for (size_t column = 0;
+                     column < aggregate.columns.size(); column++)
+                  if (result.columns[column].oid !=
+                          aggregate.columns[column].oid ||
+                      result.columns[column].typeLength !=
+                          aggregate.columns[column].typeLength)
+                    {
+                      aggregate.sqlstate = "42804";
+                      aggregate.error =
+                          "NativeLite SELECT batch column type mismatch";
+                      return aggregate;
+                    }
+                aggregate.rows.insert(aggregate.rows.end(),
+                                      result.rows.begin(), result.rows.end());
+              }
+          }
+      }
+    if (selectBatch)
+      {
+        aggregate.commandTag = "SELECT " +
+            std::to_string(aggregate.rows.size());
+        return aggregate;
       }
     return result;
   }

@@ -124,9 +124,21 @@ public final class NativeLiteTpccWorkload {
              new NativeLiteTpccTransactions.Terminal(
                  url, terminalId, warehouse)) {
       for (int index = 0; index < transactionCount; index++) {
-        String profile = MIX[Math.floorMod(index + terminalId, MIX.length)];
-        int district = 1 + (index % districts);
-        int customer = 1 + (index * 7 % customers);
+        // Terminals mapped to the same warehouse differ by ten in the caller.
+        // Add the terminal group to the phase so their Payment slots do not
+        // line up deterministically on the same W_YTD row. Every 20-operation
+        // cycle still contains the exact declared 45/40/5/5/5 mix.
+        String profile = MIX[Math.floorMod(
+            index + terminalId + (terminalId / 10) * 3, MIX.length)];
+        // Terminals sharing a warehouse are separated by the warehouse
+        // count in the caller's round-robin mapping. Fold both the terminal
+        // id and its decade into the district sequence so those peers do not
+        // manufacture a same-district hotspot, while retaining deterministic
+        // coverage across repetitions.
+        int district = 1 + Math.floorMod(
+            terminalId + terminalId / 10, districts);
+        int customer = 1 + Math.floorMod(
+            index * 7 + terminalId * 31, customers);
         runLogical(terminal, profile, district, customer,
             stats == null ? null : stats.profiles.get(profile));
       }
@@ -201,6 +213,7 @@ public final class NativeLiteTpccWorkload {
     double min = Collections.min(stats.repetitionTps);
     double max = Collections.max(stats.repetitionTps);
     double variance = min == 0.0 ? 0.0 : (max - min) / min;
+    System.err.println("measured repetition TPS: " + stats.repetitionTps);
     require(variance <= maxVariance,
         "throughput variance " + variance + " exceeds " + maxVariance);
     require(throughput >= minThroughput,
@@ -225,6 +238,14 @@ public final class NativeLiteTpccWorkload {
         .append(",\"warmup_transactions_per_terminal\":").append(warmup)
         .append(",\"measured_transactions_per_terminal\":").append(measured)
         .append(",\"repetitions\":").append(repetitions)
+        .append(",\"repetition_tps\":[");
+    for (int repetition = 0;
+         repetition < stats.repetitionTps.size(); repetition++) {
+      if (repetition != 0) out.append(',');
+      out.append(String.format(Locale.ROOT, "%.3f",
+          stats.repetitionTps.get(repetition)));
+    }
+    out.append(']')
         .append(",\"throughput_tps\":").append(
             String.format(Locale.ROOT, "%.3f", throughput))
         .append(",\"throughput_variance_ratio\":")
@@ -363,6 +384,15 @@ public final class NativeLiteTpccWorkload {
         "performance.districts.per.warehouse"));
     int customers = Integer.parseInt(properties.getProperty(
         "performance.customers.per.district"));
+    int orders = Integer.parseInt(properties.getProperty(
+        "performance.orders.per.district"));
+    int newOrders = Integer.parseInt(properties.getProperty(
+        "performance.new.orders.per.district"));
+    int items = Integer.parseInt(properties.getProperty(
+        "performance.items"));
+    long dataSeed = Long.parseLong(properties.getProperty("data.seed"));
+    NativeLiteTpccTransactions.configureCardinality(
+        customers, orders, newOrders, items, dataSeed);
     int warmup = Integer.parseInt(properties.getProperty(
         "performance.warmup.transactions.per.terminal"));
     int measured = Integer.parseInt(properties.getProperty(

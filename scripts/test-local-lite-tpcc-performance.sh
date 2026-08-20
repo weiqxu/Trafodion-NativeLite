@@ -44,7 +44,12 @@ if [[ -z "$slf4j_jar" ]]; then
   slf4j_jar=${candidates[${#candidates[@]}-1]}
 fi
 
-test_root=$(mktemp -d /tmp/traf-local-lite-tpcc-performance.XXXXXX)
+if [[ -n "${TPCC_TEST_ROOT:-}" ]]; then
+  test_root=$TPCC_TEST_ROOT
+  mkdir -p "$test_root"
+else
+  test_root=$(mktemp -d /tmp/traf-local-lite-tpcc-performance.XXXXXX)
+fi
 primary_store="$test_root/primary-store"
 checkpoint_store="$test_root/checkpoint-store"
 classes_dir="$test_root/classes"
@@ -71,15 +76,19 @@ cleanup() {
   if [[ "$rc" -ne 0 ]]; then
     echo "M14F artifacts retained at $test_root" >&2
     [[ ! -s "$server_log" ]] || sed -n '1,360p' "$server_log" >&2
+  elif [[ "${TPCC_KEEP_TEST_ROOT:-0}" == "1" ]]; then
+    echo "TPCC artifacts retained at $test_root"
   elif [[ -n "${TPCC_ARTIFACT_DIR:-${TPCC_M14F_ARTIFACT_DIR:-}}" ]]; then
     artifact_dir=${TPCC_ARTIFACT_DIR:-$TPCC_M14F_ARTIFACT_DIR}
     mkdir -p "$artifact_dir"
-    cp -a "$workload_report" "$operations_report" \
-      "$artifact_dir/"
-    [[ ! -s "$test_root/bulk-load.json" ]] ||
-      cp -a "$test_root/bulk-load.json" "$artifact_dir/"
-    [[ ! -s "$test_root/bulk-load.manifest" ]] ||
-      cp -a "$test_root/bulk-load.manifest" "$artifact_dir/"
+    for evidence in workload-report.json operations-report.json bulk-load.json \
+      bulk-load.manifest load.json checkpoint.json live-verify.json \
+      clean-restart.json unclean-restart.json checkpoint-restore.json \
+      watermark.json workload.stdout server.log; do
+      [[ ! -s "$test_root/$evidence" ]] ||
+        cp -a "$test_root/$evidence" "$artifact_dir/"
+    done
+    cp -a "$properties" "$artifact_dir/qualification.properties"
     rm -rf "$test_root"
   else
     rm -rf "$test_root"
@@ -124,7 +133,20 @@ find "$driver_source" -name '*.java' -print0 | \
 javac -Xlint:all -cp "$classes_dir:$slf4j_jar" -d "$classes_dir" \
   "$loader_source" "$transaction_source" "$workload_source"
 
-if [[ "$native_bulk_load" == "1" ]]; then
+if [[ "${TPCC_REUSE_LOADED_STORE:-0}" == "diagnostic" ]]; then
+  [[ -s "$test_root/bulk-load.json" &&
+      -s "$primary_store/transactiondb/CURRENT" ]] ||
+    fail "requested diagnostic store reuse has no completed native load"
+  start_server
+elif [[ "${TPCC_REUSE_LOADED_STORE:-0}" == "1" ]]; then
+  [[ -s "$test_root/bulk-load.json" &&
+      -s "$primary_store/transactiondb/CURRENT" ]] ||
+    fail "requested loaded-store reuse has no completed native load"
+  start_server
+  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+    "$jdbc_url" verify "$tpcc_scale" "$properties" "$schema" \
+    "$test_root/load.json"
+elif [[ "$native_bulk_load" == "1" ]]; then
   # Create the catalog through the supported SQL path, then close the server
   # before the native loader opens the same unified RocksDB store.
   start_server
@@ -138,6 +160,7 @@ if [[ "$native_bulk_load" == "1" ]]; then
   fi
   bulk_loader_args+=(--manifest "$test_root/bulk-load.manifest")
   env TRAF_HOME="$traf_home" TRAF_LOCAL_LITE=1 \
+    TRAF_LOCAL_LITE_BULK_LOAD=1 \
     TRAF_LOCAL_STORE_DIR="$active_store" \
     TRAF_LOCAL_LITE_CHECKPOINT_DIR="$checkpoint_store/transactiondb" \
     LD_LIBRARY_PATH="$sql_libs:$sqf_libs:${LD_LIBRARY_PATH:-}" \
@@ -152,6 +175,12 @@ else
   java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
     "$jdbc_url" load "$tpcc_scale" "$properties" "$schema" "$test_root/load.json"
 fi
+# Full relationship verification materializes the largest tables in the
+# reduced executor. Start the measured phase from a clean process so those
+# transient rows cannot consume the workload's memory budget; the persisted
+# TransactionDB and synchronous-commit state remain unchanged.
+stop_server
+start_server
 rss_before=$(awk '/VmRSS:/ {print $2}' "/proc/$server_pid/status")
 store_bytes_before=$(du -sb "$primary_store" | awk '{print $1}')
 java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \

@@ -4183,6 +4183,9 @@ public:
     std::set<std::string> selectedRows;
     std::vector<std::string> updateKeys(updates.size());
     const bool keyless = loaded.primaryKeyColumns.empty();
+    const char *bulkLoadSetting = getenv("TRAF_LOCAL_LITE_BULK_LOAD");
+    const bool trustedBulkLoad = bulkLoadSetting &&
+        strcmp(bulkLoadSetting, "1") == 0 && updates.empty() && deletes.empty();
 
     for (size_t phase = 0; phase < 2; phase++)
       {
@@ -4303,6 +4306,13 @@ public:
                     return false;
                   }
                 if (removed.find(record->first) != removed.end())
+                  continue;
+                // The repository-owned native loader generates disjoint key
+                // partitions and verifies manifest entries before replay.
+                // Preserve in-batch PK/UNIQUE/index checks above, but avoid a
+                // point lookup for every generated record in an empty or
+                // manifest-verified partition.
+                if (trustedBulkLoad && group == 1)
                   continue;
                 bool exists = false;
                 if (!keyExistsLocked(db, record->first,
@@ -4945,58 +4955,79 @@ public:
     for (OccReadSet::const_iterator read = reads.begin();
          read != reads.end(); ++read)
       {
-        std::map<uint64_t, std::vector<OccCommittedWriteRef> >::const_iterator
+        std::map<uint64_t,
+                 std::map<std::string,
+                          std::vector<OccCommittedWriteRef> > >::const_iterator
             indexed = indexedHistory_.find(read->objectUid);
         if (indexed == indexedHistory_.end())
           continue;
-        for (std::vector<OccCommittedWriteRef>::const_iterator write =
-               indexed->second.begin(); write != indexed->second.end(); ++write)
+        const std::map<std::string, std::vector<OccCommittedWriteRef> > &keys =
+            indexed->second;
+        std::map<std::string, std::vector<OccCommittedWriteRef> >::const_iterator
+            key = read->full ? keys.begin() : keys.lower_bound(read->start);
+        // An empty committed key is the object-wide DDL/catalog invalidation
+        // marker and intersects every read on that object.
+        if (!read->full && keys.find(std::string()) != keys.end())
+          key = keys.begin();
+        for (; key != keys.end(); ++key)
           {
-            if (write->sequence <= startSequence || write->owner == owner)
-              continue;
-            validationCandidates_++;
-            localLiteOccMetrics.validationCandidates++;
-            {
-              const bool intersects = write->key.empty() || read->full ||
-                  (read->start == read->end
-                       ? read->start == write->key
-                       : write->key >= read->start &&
-                           (read->end.empty() || write->key < read->end));
-              if (intersects)
-                {
-                  const char *conflictType = read->full ? "full_scan" :
-                      (read->start == read->end ? "point" : "range");
-                  if (getenv("TRAF_LOCAL_LITE_TRACE_OCC"))
-                    fprintf(stderr,
-                            "LOCAL_LITE_OCC_CONFLICT type=%s owner=%p "
-                            "object_uid=%llu start_sequence=%llu "
-                            "write_sequence=%llu write=%s read_start=%s "
-                            "read_end=%s full=%d\n",
-                            conflictType, owner,
-                            static_cast<unsigned long long>(read->objectUid),
-                            static_cast<unsigned long long>(startSequence),
-                            static_cast<unsigned long long>(write->sequence),
-                            localLiteHexKey(write->key).c_str(),
-                            localLiteHexKey(read->start).c_str(),
-                            localLiteHexKey(read->end).c_str(),
-                            read->full ? 1 : 0);
-                  validationConflicts_++;
-                  localLiteOccMetrics.validationConflicts++;
-                  if (read->full)
-                    localLiteOccMetrics.fullScanValidationConflicts++;
-                  else if (read->start == read->end)
-                    localLiteOccMetrics.pointValidationConflicts++;
-                  else
-                    localLiteOccMetrics.rangeValidationConflicts++;
-                  localLiteOccMetrics.transactionsAbortedConflict++;
-                  setError(error,
-                           "local-lite serializable validation failed "
-                           "(SQLSTATE 40001, OCC read/write conflict, type=" +
-                           std::string(conflictType) + "); "
-                           "restart transaction");
-                  return false;
-                }
-            }
+            if (!read->full && !key->first.empty())
+              {
+                if (key->first < read->start)
+                  continue;
+                if (read->start == read->end)
+                  {
+                    if (key->first != read->start)
+                      break;
+                  }
+                else if (!read->end.empty() && key->first >= read->end)
+                  break;
+              }
+            for (std::vector<OccCommittedWriteRef>::const_iterator write =
+                   key->second.begin(); write != key->second.end(); ++write)
+              {
+                if (write->sequence <= startSequence || write->owner == owner)
+                  continue;
+                validationCandidates_++;
+                localLiteOccMetrics.validationCandidates++;
+                const bool intersects = write->key.empty() || read->full ||
+                    (read->start == read->end
+                         ? read->start == write->key
+                         : write->key >= read->start &&
+                             (read->end.empty() || write->key < read->end));
+                if (!intersects)
+                  continue;
+                const char *conflictType = read->full ? "full_scan" :
+                    (read->start == read->end ? "point" : "range");
+                if (getenv("TRAF_LOCAL_LITE_TRACE_OCC"))
+                  fprintf(stderr,
+                          "LOCAL_LITE_OCC_CONFLICT type=%s owner=%p "
+                          "object_uid=%llu start_sequence=%llu "
+                          "write_sequence=%llu write=%s read_start=%s "
+                          "read_end=%s full=%d\n",
+                          conflictType, owner,
+                          static_cast<unsigned long long>(read->objectUid),
+                          static_cast<unsigned long long>(startSequence),
+                          static_cast<unsigned long long>(write->sequence),
+                          localLiteHexKey(write->key).c_str(),
+                          localLiteHexKey(read->start).c_str(),
+                          localLiteHexKey(read->end).c_str(),
+                          read->full ? 1 : 0);
+                validationConflicts_++;
+                localLiteOccMetrics.validationConflicts++;
+                if (read->full)
+                  localLiteOccMetrics.fullScanValidationConflicts++;
+                else if (read->start == read->end)
+                  localLiteOccMetrics.pointValidationConflicts++;
+                else
+                  localLiteOccMetrics.rangeValidationConflicts++;
+                localLiteOccMetrics.transactionsAbortedConflict++;
+                setError(error,
+                         "local-lite serializable validation failed "
+                         "(SQLSTATE 40001, OCC read/write conflict, type=" +
+                         std::string(conflictType) + "); restart transaction");
+                return false;
+              }
           }
       }
     return true;
@@ -5020,7 +5051,7 @@ public:
         ref.owner = owner;
         ref.sequence = sequence;
         ref.key = write->second;
-        indexedHistory_[write->first].push_back(ref);
+        indexedHistory_[write->first][write->second].push_back(ref);
       }
     collect();
   }
@@ -5028,20 +5059,31 @@ public:
 private:
   void removeIndexedSequence(uint64_t sequence)
   {
-    for (std::map<uint64_t, std::vector<OccCommittedWriteRef> >::iterator
+    for (std::map<uint64_t,
+                  std::map<std::string,
+                           std::vector<OccCommittedWriteRef> > >::iterator
              indexed = indexedHistory_.begin();
          indexed != indexedHistory_.end();)
       {
-        std::vector<OccCommittedWriteRef> &writes = indexed->second;
-        for (std::vector<OccCommittedWriteRef>::iterator write = writes.begin();
-             write != writes.end();)
+        std::map<std::string, std::vector<OccCommittedWriteRef> > &keys =
+            indexed->second;
+        for (std::map<std::string,
+                      std::vector<OccCommittedWriteRef> >::iterator
+                 key = keys.begin(); key != keys.end();)
           {
-            if (write->sequence == sequence)
-              write = writes.erase(write);
+            std::vector<OccCommittedWriteRef> &writes = key->second;
+            for (std::vector<OccCommittedWriteRef>::iterator write =
+                   writes.begin(); write != writes.end();)
+              if (write->sequence == sequence)
+                write = writes.erase(write);
+              else
+                ++write;
+            if (writes.empty())
+              key = keys.erase(key);
             else
-              ++write;
+              ++key;
           }
-        if (writes.empty())
+        if (keys.empty())
           indexed = indexedHistory_.erase(indexed);
         else
           ++indexed;
@@ -5081,7 +5123,9 @@ private:
 
   std::map<const void *, uint64_t> active_;
   std::vector<OccCommittedWriteSet> history_;
-  std::map<uint64_t, std::vector<OccCommittedWriteRef> > indexedHistory_;
+  std::map<uint64_t,
+           std::map<std::string,
+                    std::vector<OccCommittedWriteRef> > > indexedHistory_;
   uint64_t overflowSequence_;
   uint64_t validationCandidates_;
   uint64_t validationConflicts_;
@@ -5173,37 +5217,57 @@ public:
   }
 
 private:
-  static bool keyIntersectsRead(const OccWriteKey &write,
-                                const OccReadRange &read)
-  {
-    return write.first == read.objectUid &&
-        (write.second.empty() || read.full ||
-         (read.start == read.end
-              ? read.start == write.second
-              : write.second >= read.start &&
-                  (read.end.empty() || write.second < read.end)));
-  }
-
   static bool readWriteConflict(const OccReadSet &reads,
                                 const OccWriteSet &writes)
   {
     for (OccReadSet::const_iterator read = reads.begin();
          read != reads.end(); ++read)
-      for (OccWriteSet::const_iterator write = writes.begin();
-           write != writes.end(); ++write)
-        if (keyIntersectsRead(*write, *read))
+      {
+        if (writes.find(std::make_pair(read->objectUid, std::string())) !=
+            writes.end())
           return true;
+        OccWriteSet::const_iterator write = writes.lower_bound(
+            std::make_pair(read->objectUid,
+                           read->full ? std::string() : read->start));
+        if (write == writes.end() || write->first != read->objectUid)
+          continue;
+        if (read->full ||
+            (read->start == read->end
+                 ? write->second == read->start
+                 : read->end.empty() || write->second < read->end))
+          return true;
+      }
     return false;
   }
 
   static bool writeWriteConflict(const OccWriteSet &left,
                                  const OccWriteSet &right)
   {
-    for (OccWriteSet::const_iterator a = left.begin(); a != left.end(); ++a)
-      for (OccWriteSet::const_iterator b = right.begin(); b != right.end(); ++b)
-        if (a->first == b->first &&
-            (a->second.empty() || b->second.empty() || a->second == b->second))
+    // OccWriteSet is ordered by (object UID, encoded key).  Merge the two
+    // ordered streams instead of comparing their Cartesian product: loader
+    // commits legitimately carry hundreds of thousands of disjoint keys.
+    OccWriteSet::const_iterator a = left.begin();
+    OccWriteSet::const_iterator b = right.begin();
+    while (a != left.end() && b != right.end())
+      {
+        if (a->first < b->first)
+          {
+            ++a;
+            continue;
+          }
+        if (b->first < a->first)
+          {
+            ++b;
+            continue;
+          }
+        if (a->second.empty() || b->second.empty() ||
+            a->second == b->second)
           return true;
+        if (a->second < b->second)
+          ++a;
+        else
+          ++b;
+      }
     return false;
   }
 
@@ -6416,6 +6480,7 @@ private:
     if (!transactionStore_.listTables("", "", &tables, error))
       return false;
     std::map<std::string, size_t> tableIndexes;
+    std::map<std::string, bool> referencedKeyCache;
     for (size_t t = 0; t < tables.size(); t++)
       tableIndexes[tableKey(tables[t])] = t;
 
@@ -6447,14 +6512,16 @@ private:
               for (size_t row = 0; row < childChanges->second.rows.size(); row++)
                 if (!validateChangedChildReference(
                         tables[child], childChanges->second.rows[row].value,
-                        parentTable, ri, parentChanges, pending.end(), error))
+                        parentTable, ri, parentChanges, pending.end(),
+                        &referencedKeyCache, error))
                   return false;
               for (size_t row = 0;
                    row < childChanges->second.updates.size(); row++)
                 if (!validateChangedChildReference(
                         tables[child],
                         childChanges->second.updates[row].after,
-                        parentTable, ri, parentChanges, pending.end(), error))
+                        parentTable, ri, parentChanges, pending.end(),
+                        &referencedKeyCache, error))
                   return false;
             }
 
@@ -6587,7 +6654,9 @@ private:
       const LocalLiteTableDef &child, const std::string &row,
       const LocalLiteTableDef &parent, const LocalLiteRIDef &ri,
       PendingMap::const_iterator parentChanges,
-      PendingMap::const_iterator pendingEnd, std::string *error)
+      PendingMap::const_iterator pendingEnd,
+      std::map<std::string, bool> *referencedKeyCache,
+      std::string *error)
   {
     std::string key;
     bool hasKey = false;
@@ -6597,9 +6666,21 @@ private:
     if (!hasKey)
       return true;
     bool exists = false;
-    if (!referencedKeyExists(parent, ri, key, parentChanges, pendingEnd,
-                             &exists, error))
-      return false;
+    std::ostringstream cacheKey;
+    cacheKey << parent.objectUid << '|' << ri.name << '|';
+    const std::string prefix = cacheKey.str();
+    const std::string lookupKey = prefix + key;
+    std::map<std::string, bool>::const_iterator cached =
+        referencedKeyCache->find(lookupKey);
+    if (cached != referencedKeyCache->end())
+      exists = cached->second;
+    else
+      {
+        if (!referencedKeyExists(parent, ri, key, parentChanges, pendingEnd,
+                                 &exists, error))
+          return false;
+        (*referencedKeyCache)[lookupKey] = exists;
+      }
     if (!exists)
       {
         setError(error, "referential integrity constraint " + ri.name +

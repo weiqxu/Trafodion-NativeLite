@@ -151,50 +151,66 @@ static bool localLiteRuntimePrimaryRow(
   return true;
 }
 
-static bool localLiteStaticPrimaryRow(
+static bool localLiteStaticPrimaryRows(
     Queue *getRows,
     const LocalLiteTableDef &table,
     LocalLiteTxn *txn,
     bool *handled,
-    LocalLiteRow *row,
-    bool *found,
+    std::vector<LocalLiteRow> *rows,
     std::string *error)
 {
   *handled = false;
-  *found = false;
-  if (!getRows || getRows->numEntries() != 1)
+  if (!rows || !getRows || getRows->numEntries() != 1)
     return true;
   ComTdbHbaseAccess::HbaseGetRows *hgr =
       static_cast<ComTdbHbaseAccess::HbaseGetRows *>(getRows->get(0));
-  if (!hgr || !hgr->rowIds() || hgr->rowIds()->numEntries() != 1)
+  if (!hgr || !hgr->rowIds() || hgr->rowIds()->numEntries() == 0)
     return true;
-  const char *raw = static_cast<const char *>(hgr->rowIds()->get(0));
-  if (!raw || strncmp(raw, "LLPK1:", 6) != 0)
-    return true;
-  const char *hex = raw + 6;
-  const size_t hexLen = strlen(hex);
-  if ((hexLen % 2) != 0)
+
+  std::vector<std::string> storageKeys;
+  Queue *rowIds = hgr->rowIds();
+  rowIds->position();
+  for (Lng32 index = 0; index < rowIds->numEntries(); index++)
     {
-      *error = "invalid local-lite static primary key length";
-      return false;
-    }
-  std::string storageKey;
-  storageKey.reserve(hexLen / 2);
-  for (size_t i = 0; i < hexLen; i += 2)
-    {
-      const char hiChar = static_cast<char>(tolower(hex[i]));
-      const char loChar = static_cast<char>(tolower(hex[i + 1]));
-      const int hi = isdigit(hiChar) ? hiChar - '0' : hiChar - 'a' + 10;
-      const int lo = isdigit(loChar) ? loChar - '0' : loChar - 'a' + 10;
-      if (hi < 0 || hi > 15 || lo < 0 || lo > 15)
+      const char *raw = static_cast<const char *>(rowIds->getNext());
+      if (!raw || strncmp(raw, "LLPK1:", 6) != 0)
+        return true;
+      const char *hex = raw + 6;
+      const size_t hexLen = strlen(hex);
+      if ((hexLen % 2) != 0)
         {
-          *error = "invalid local-lite static primary key";
+          *error = "invalid local-lite static primary key length";
           return false;
         }
-      storageKey.push_back(static_cast<char>((hi << 4) | lo));
+      std::string storageKey;
+      storageKey.reserve(hexLen / 2);
+      for (size_t offset = 0; offset < hexLen; offset += 2)
+        {
+          const char hiChar = static_cast<char>(tolower(hex[offset]));
+          const char loChar = static_cast<char>(tolower(hex[offset + 1]));
+          const int hi = isdigit(hiChar) ? hiChar - '0' : hiChar - 'a' + 10;
+          const int lo = isdigit(loChar) ? loChar - '0' : loChar - 'a' + 10;
+          if (hi < 0 || hi > 15 || lo < 0 || lo > 15)
+            {
+              *error = "invalid local-lite static primary key";
+              return false;
+            }
+          storageKey.push_back(static_cast<char>((hi << 4) | lo));
+        }
+      storageKeys.push_back(storageKey);
     }
-  if (!txn->getRowByKey(table, storageKey, row, found, error))
-    return false;
+
+  std::vector<LocalLiteRow> resolvedRows;
+  for (size_t key = 0; key < storageKeys.size(); key++)
+    {
+      LocalLiteRow row;
+      bool found = false;
+      if (!txn->getRowByKey(table, storageKeys[key], &row, &found, error))
+        return false;
+      if (found)
+        resolvedRows.push_back(row);
+    }
+  rows->insert(rows->end(), resolvedRows.begin(), resolvedRows.end());
   *handled = true;
   return true;
 }
@@ -634,33 +650,6 @@ private:
         workAtp_->getTupp(scanTdb().rowIdAsciiTuppIndex_)
           .setDataPointer(rowIdAsciiRow_);
       }
-    // The root input tuple is the authoritative prepared-parameter buffer.
-    // Materialize its fixed-width key bytes into the dedicated key tuple
-    // before evaluating the generated expression.  This also covers the
-    // aligned input layout where the expression VM intentionally does not
-    // dereference a missing child descriptor.
-    if (scanTdb().boundKeyInputCount_ > 0)
-      {
-        for (CollIndex i = 0; i < keyTd->numAttrs() &&
-                              i < scanTdb().boundKeyInputCount_; i++)
-          {
-            Attributes *attr = keyTd->getAttr(i);
-            if (!attr)
-              continue;
-            UInt16 tuppIndex = scanTdb().boundKeyInputTuppIndex_[i];
-            if (tuppIndex >= downEntry()->getAtp()->numTuples())
-              continue;
-            char *source = downEntry()->getAtp()
-              ->getTupp(tuppIndex).getDataPointer();
-            if (!source)
-              continue;
-            UInt32 copyLength = MINOF(attr->getLength(),
-                                      scanTdb().boundKeyInputLength_[i]);
-            str_cpy_all(rowIdRow_ + attr->getOffset(),
-                        source + scanTdb().boundKeyInputOffset_[i],
-                        copyLength);
-          }
-      }
     if (scanTdb().rowIdExpr_->eval(downEntry()->getAtp(), workAtp_) ==
         ex_expr::EXPR_ERROR)
       {
@@ -668,34 +657,59 @@ private:
         return false;
       }
     if (scanTdb().boundKeyInputCount_ > 0)
-      {
-        for (CollIndex i = 0; i < keyTd->numAttrs() &&
-                              i < scanTdb().boundKeyInputCount_; i++)
-          {
-            Attributes *attr = keyTd->getAttr(i);
-            if (!attr)
-              continue;
-            UInt16 tuppIndex = scanTdb().boundKeyInputTuppIndex_[i];
-            if (tuppIndex >= downEntry()->getAtp()->numTuples())
-              continue;
-            char *source = downEntry()->getAtp()
-              ->getTupp(tuppIndex).getDataPointer();
-            if (source)
-              str_cpy_all(rowIdRow_ + attr->getOffset(),
-                          source + scanTdb().boundKeyInputOffset_[i],
-                          MINOF(attr->getLength(),
-                                scanTdb().boundKeyInputLength_[i]));
-          }
-      }
+      for (CollIndex i = 0; i < keyTd->numAttrs() &&
+                            i < scanTdb().boundKeyInputCount_; i++)
+        {
+          Attributes *attr = keyTd->getAttr(i);
+          UInt16 tuppIndex = scanTdb().boundKeyInputTuppIndex_[i];
+          if (!attr || tuppIndex >= downEntry()->getAtp()->numTuples())
+            continue;
+          char *source = downEntry()->getAtp()
+            ->getTupp(tuppIndex).getDataPointer();
+          if (!source)
+            continue;
+          const UInt32 copyLength = MINOF(
+              attr->getLength(), scanTdb().boundKeyInputLength_[i]);
+          str_cpy_all(rowIdRow_ + attr->getOffset(),
+                      source + scanTdb().boundKeyInputOffset_[i], copyLength);
+          if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+            fprintf(stderr,
+                    "LOCAL_LITE_BOUND_INPUT key_col=%u tupp=%u offset=%u "
+                    "length=%u target_offset=%u first=%02x\n",
+                    static_cast<unsigned>(i),
+                    static_cast<unsigned>(tuppIndex),
+                    static_cast<unsigned>(scanTdb().boundKeyInputOffset_[i]),
+                    static_cast<unsigned>(copyLength),
+                    static_cast<unsigned>(attr->getOffset()),
+                    static_cast<unsigned char>(
+                        source[scanTdb().boundKeyInputOffset_[i]]));
+        }
+    // The generated expression establishes the physical tuple shape, but the
+    // reduced T4 root can leave parameter targets zero-filled. The descriptor
+    // metadata above identifies fixed-width values already coerced to the
+    // target key type, so overwrite those key fields after expression
+    // evaluation before encoding the storage key.
     std::string storageKey;
     if (!LocalLiteBuildPrimaryKeyFromExecutorTuple(
             table_, keyTd, rowIdRow_, scanTdb().rowIdLen_,
             &storageKey, error))
       return false;
+    if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+      {
+        fprintf(stderr, "LOCAL_LITE_BOUND_KEY table=%s key=",
+                scanTdb().getTableName());
+        for (size_t i = 0; i < storageKey.size(); i++)
+          fprintf(stderr, "%02x",
+                  static_cast<unsigned char>(storageKey[i]));
+        fprintf(stderr, "\n");
+      }
     LocalLiteRow row;
     bool found = false;
     if (!txn->getRowByKey(table_, storageKey, &row, &found, error))
       return false;
+    if (getenv("TRAF_LOCAL_LITE_TRACE_SCAN"))
+      fprintf(stderr, "LOCAL_LITE_BOUND_RESULT table=%s found=%d\n",
+              scanTdb().getTableName(), found ? 1 : 0);
     if (found)
       rows_.push_back(row);
     return true;
@@ -1895,21 +1909,22 @@ private:
                   deleteTdb().rowIdExpr_.getPointer() != NULL,
                   deleteTdb().listOfGetRows()
                       ? deleteTdb().listOfGetRows()->numEntries() : 0);
-        if (!localLiteStaticPrimaryRow(
+        if (!localLiteStaticPrimaryRows(
                 deleteTdb().listOfGetRows(), table_, &txn, &handled,
-                &sourceRow, &found, error))
+                &sourceRows, error))
           return false;
         ExpTupleDesc *keyTd = deleteTdb().workCriDesc_->getTupleDescriptor(
             deleteTdb().rowIdTuppIndex_);
         if (!handled && !localLiteRuntimePrimaryRow(
-                deleteTdb().uniqueKeyInfo(), deleteTdb().rowIdExpr_, keyTd,
+                deleteTdb().uniqueKeyInfo(),
+                deleteTdb().rowIdExpr_, keyTd,
                 deleteTdb().rowIdTuppIndex_,
                 deleteTdb().rowIdAsciiTuppIndex_, deleteTdb().rowIdLen_,
                 deleteTdb().rowIdAsciiRowLen_, workAtp_,
                 downEntry()->getAtp(), rowIdRow_, rowIdAsciiRow_,
                 table_, &txn, &handled, &sourceRow, &found, error))
           return false;
-        if (handled)
+        if (handled && sourceRows.empty())
           {
             if (found)
               {
@@ -1932,24 +1947,14 @@ private:
                     *error = "local-lite delete source conversion failed";
                     return false;
                   }
-                if (deleteTdb().scanExpr_)
-                  {
-                    rc = deleteTdb().scanExpr_->eval(downEntry()->getAtp(),
-                                                     workAtp_);
-                    if (rc == ex_expr::EXPR_ERROR)
-                      {
-                        *error =
-                          "local-lite delete predicate evaluation failed";
-                        return false;
-                      }
-                    if (rc != ex_expr::EXPR_FALSE)
-                      sourceRows.push_back(sourceRow);
-                  }
-                else
-                  sourceRows.push_back(sourceRow);
+                // The exact primary-key lookup has already satisfied every
+                // predicate column. Re-evaluating the original prepared
+                // expression against the DML work ATP would read the obsolete
+                // parameter layout and incorrectly discard the matched row.
+                sourceRows.push_back(sourceRow);
               }
           }
-        else
+        if (!handled)
           {
         std::vector<LocalLiteRow> rows;
         if (!txn.scanRows(table_, &rows, error))
@@ -2441,22 +2446,23 @@ private:
                   updateTdb().rowIdExpr_.getPointer() != NULL,
                   updateTdb().listOfGetRows()
                       ? updateTdb().listOfGetRows()->numEntries() : 0);
-        if (!isMerge && !localLiteStaticPrimaryRow(
+        if (!isMerge && !localLiteStaticPrimaryRows(
                 updateTdb().listOfGetRows(), table_, &txn, &handled,
-                &sourceRow, &found, error))
+                &sourceRows, error))
           return false;
         ExpTupleDesc *keyTd = updateTdb().workCriDesc_->getTupleDescriptor(
             updateTdb().rowIdTuppIndex_);
         if (!isMerge && !handled &&
             !localLiteRuntimePrimaryRow(
-                updateTdb().uniqueKeyInfo(), updateTdb().rowIdExpr_, keyTd,
+                updateTdb().uniqueKeyInfo(),
+                updateTdb().rowIdExpr_, keyTd,
                 updateTdb().rowIdTuppIndex_,
                 updateTdb().rowIdAsciiTuppIndex_, updateTdb().rowIdLen_,
                 updateTdb().rowIdAsciiRowLen_, workAtp_,
                 downEntry()->getAtp(), rowIdRow_, rowIdAsciiRow_,
                 table_, &txn, &handled, &sourceRow, &found, error))
           return false;
-        if (handled)
+        if (handled && sourceRows.empty())
           {
             if (found)
               {
@@ -2479,24 +2485,13 @@ private:
                     *error = "local-lite update source conversion failed";
                     return false;
                   }
-                if (updateTdb().scanExpr_)
-                  {
-                    rc = updateTdb().scanExpr_->eval(downEntry()->getAtp(),
-                                                     workAtp_);
-                    if (rc == ex_expr::EXPR_ERROR)
-                      {
-                        *error =
-                          "local-lite update predicate evaluation failed";
-                        return false;
-                      }
-                    if (rc != ex_expr::EXPR_FALSE)
-                      sourceRows.push_back(sourceRow);
-                  }
-                else
-                  sourceRows.push_back(sourceRow);
+                // Runtime/static primary-key lookup is authoritative for the
+                // exact prepared predicate; do not evaluate it a second time
+                // with the scan-oriented ATP layout.
+                sourceRows.push_back(sourceRow);
               }
           }
-        else
+        if (!handled)
           {
         std::vector<LocalLiteRow> rows;
         if (!txn.scanRows(table_, &rows, error))

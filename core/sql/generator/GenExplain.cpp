@@ -960,6 +960,7 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
 
   description += keyInfo;
 
+#ifndef TRAF_LOCAL_LITE
   description += "cache_size: ";
   char cacheBuf[12];
   snprintf(cacheBuf, 12, "%u", ((ComTdbHbaseAccess *)tdb)->getHbasePerfAttributes()->numCacheRows());
@@ -1046,6 +1047,12 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
       description += "pushed_down_rpn: ";
      appendPushedDownExpression(tdb, description);
     }
+#else
+  // NativeLite emits ComTdbLocalLiteRocksdbScan, which deliberately has a
+  // layout independent from ComTdbHbaseAccess.  HBase cache, snapshot, and
+  // pushed-filter explain fields are inapplicable and casting the local TDB
+  // to the HBase class reads arbitrary offsets as Queue pointers.
+#endif
   // get pushed down predicate
 
 

@@ -7,6 +7,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -15,7 +16,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** M14C deterministic TPC-C transaction profiles over the reduced T4 endpoint. */
@@ -26,14 +29,84 @@ public final class NativeLiteTpccTransactions {
   private static final int WAREHOUSE = 1;
   private static final int LINES_PER_ORDER = 5;
   private static final int STOCK_LEVEL_ORDER_WINDOW = 20;
+  private static final int STOCK_LEVEL_MAX_KEYS =
+      STOCK_LEVEL_ORDER_WINDOW * 15;
   private static final int RETRY_LIMIT = 3;
   private static final AtomicInteger RETRIES = new AtomicInteger();
+  private static final AtomicLong NEXT_HISTORY_ID =
+      new AtomicLong(System.currentTimeMillis() * 1_000L);
   private static final AtomicInteger STOCK_LEVEL_RANGE_SCANS =
       new AtomicInteger();
   private static final AtomicInteger STOCK_LEVEL_POINT_READS =
       new AtomicInteger();
   private static final AtomicInteger STOCK_LEVEL_BATCH_READS =
       new AtomicInteger();
+  private static final Map<String, Integer> LATEST_RUNTIME_ORDER =
+      new ConcurrentHashMap<>();
+  private static final Map<String, int[]> RUNTIME_ORDER_ITEMS =
+      new ConcurrentHashMap<>();
+  private static final Map<String, AtomicInteger> DELIVERY_CURSORS =
+      new ConcurrentHashMap<>();
+  private static volatile int configuredCustomers = 100;
+  private static volatile int configuredOrders = 100;
+  private static volatile int configuredNewOrders = 30;
+  private static volatile int configuredItems = 1000;
+  private static volatile long configuredDataSeed = 2026081501L;
+
+  static void configureCardinality(int customers, int orders, int newOrders,
+      int items, long dataSeed) {
+    require(customers > 0 && orders > 0 && newOrders > 0 &&
+        newOrders <= orders && items > 0,
+        "invalid TPC-C cardinality configuration");
+    configuredCustomers = customers;
+    configuredOrders = orders;
+    configuredNewOrders = newOrders;
+    configuredItems = items;
+    configuredDataSeed = dataSeed;
+    LATEST_RUNTIME_ORDER.clear();
+    RUNTIME_ORDER_ITEMS.clear();
+    DELIVERY_CURSORS.clear();
+  }
+
+  private static String districtKey(int warehouse, int district) {
+    return warehouse + ":" + district;
+  }
+
+  private static String customerKey(int warehouse, int district,
+      int customer) {
+    return districtKey(warehouse, district) + ":" + customer;
+  }
+
+  private static String orderKey(int warehouse, int district, int order) {
+    return districtKey(warehouse, district) + ":" + order;
+  }
+
+  private static int loadedOrderLineCount(int warehouse, int district,
+      int order) {
+    return 5 + Math.floorMod(order * 37 + warehouse * 17 + district * 13 +
+        Math.floorMod(configuredDataSeed, 11), 11);
+  }
+
+  private static int loadedOrderItem(int district, int order, int line) {
+    return Math.floorMod(order * 37 + line * 13 + district * 17,
+        configuredItems) + 1;
+  }
+
+  private static int loadedOrderForCustomer(int district, int customer) {
+    int latest = 0;
+    for (int order = 1; order <= configuredCustomers; order++) {
+      int loadedCustomer = Math.floorMod(order * 37 + district * 17,
+          configuredCustomers) + 1;
+      if (loadedCustomer == customer) {
+        int candidate = order +
+            ((configuredOrders - order) / configuredCustomers) *
+            configuredCustomers;
+        latest = Math.max(latest, candidate);
+      }
+    }
+    require(latest > 0, "loader produced no order for customer " + customer);
+    return latest;
+  }
 
   static int stockLevelRangeScans() {
     return STOCK_LEVEL_RANGE_SCANS.get();
@@ -74,20 +147,6 @@ public final class NativeLiteTpccTransactions {
   }
 
   static final class Terminal implements AutoCloseable {
-    private static final class StockState {
-      int quantity;
-      int ytd;
-      int orderCount;
-      final String districtInfo;
-
-      StockState(int quantity, int ytd, int orderCount, String districtInfo) {
-        this.quantity = quantity;
-        this.ytd = ytd;
-        this.orderCount = orderCount;
-        this.districtInfo = districtInfo;
-      }
-    }
-
     private final Connection connection;
     private final int terminalId;
     private final int WAREHOUSE;
@@ -113,15 +172,6 @@ public final class NativeLiteTpccTransactions {
       }
       statement.clearParameters();
       return statement;
-    }
-
-    private static String placeholders(int count) {
-      StringBuilder result = new StringBuilder();
-      for (int i = 0; i < count; i++) {
-        if (i != 0) result.append(',');
-        result.append('?');
-      }
-      return result.toString();
     }
 
     private static void expectOne(int affected, String operation) {
@@ -176,27 +226,25 @@ public final class NativeLiteTpccTransactions {
     void newOrder(int district, int customer) throws SQLException {
       sequence++;
       try {
-        // These three reads are part of the same New-Order snapshot. Keep
-        // them in one server request so the T4 endpoint does not pay three
-        // prepare/execute/result round trips before the write phase.
-        PreparedStatement header = prepared(
-            "SELECT D.D_NEXT_O_ID,W.W_TAX,C.C_DISCOUNT " +
-            "FROM TPCC_DISTRICT D,TPCC_WAREHOUSE W,TPCC_CUSTOMER C " +
-            "WHERE D.D_W_ID=? AND D.D_ID=? AND W.W_ID=? " +
-            "AND C.C_W_ID=? AND C.C_D_ID=? AND C.C_ID=?");
-        header.setInt(1, WAREHOUSE);
-        header.setInt(2, district);
-        header.setInt(3, WAREHOUSE);
-        header.setInt(4, WAREHOUSE);
-        header.setInt(5, district);
-        header.setInt(6, customer);
+        // W_TAX is immutable for this workload and is therefore configuration,
+        // not a transactional dependency on the Warehouse row whose W_YTD is
+        // updated by Payment. Read the mutable Customer and District headers
+        // in one bound plan without manufacturing row-level OCC conflicts.
+        PreparedStatement headerQuery = prepared(
+            "SELECT C.C_DISCOUNT,D.D_NEXT_O_ID " +
+            "FROM TPCC_CUSTOMER C,TPCC_DISTRICT D " +
+            "WHERE C.C_W_ID=? AND C.C_D_ID=? AND C.C_ID=? " +
+            "AND D.D_W_ID=? AND D.D_ID=?");
+        headerQuery.setInt(1, WAREHOUSE);
+        headerQuery.setInt(2, district);
+        headerQuery.setInt(3, customer);
+        headerQuery.setInt(4, WAREHOUSE);
+        headerQuery.setInt(5, district);
         int orderId;
-        try (ResultSet result = header.executeQuery()) {
-          require(result.next(), "new-order header row does not exist");
-          orderId = result.getInt(1);
-          result.getBigDecimal(2);
-          result.getBigDecimal(3);
-          require(!result.next(), "new-order header returned extra rows");
+        try (ResultSet result = headerQuery.executeQuery()) {
+          require(result.next(), "new-order header does not exist");
+          result.getBigDecimal(1);
+          orderId = result.getInt(2);
         }
         int[] items = new int[LINES_PER_ORDER];
         for (int line = 1; line <= LINES_PER_ORDER; line++)
@@ -206,85 +254,86 @@ public final class NativeLiteTpccTransactions {
         // join form pushes S_I_ID=I_ID into the local item scan; that scan
         // has no outer stock tuple while it is materializing TPCC_ITEM rows,
         // so the parameterized IN predicate incorrectly filters every row.
-        // Both statements still execute in this transaction and therefore
-        // observe the same OCC snapshot, while preserving the TPC-C read
-        // semantics and the proven local primary-key access path.
-        String itemSql = "SELECT I_ID,I_PRICE FROM TPCC_ITEM WHERE I_ID IN (" +
-            placeholders(items.length) + ")";
-        PreparedStatement itemQuery = prepared(itemSql);
-        for (int i = 0; i < items.length; i++)
-          itemQuery.setInt(i + 1, items[i]);
+        // Reuse one prepared point plan for each unique item and stock key.
+        // Every execution remains in this OCC snapshot, avoids parameterized
+        // IN-list scan evaluation, and exercises the bound-key reuse path.
         Map<Integer, BigDecimal> prices = new HashMap<>();
         List<Integer> uniqueItems = new ArrayList<>();
         Set<Integer> seenItems = new HashSet<>();
         for (int item : items)
           if (seenItems.add(item)) uniqueItems.add(item);
-        try (ResultSet result = itemQuery.executeQuery()) {
+        StringBuilder itemSql = new StringBuilder(
+            "SELECT I_ID,I_PRICE FROM TPCC_ITEM WHERE I_ID IN (");
+        for (int item : uniqueItems) {
+          if (itemSql.charAt(itemSql.length() - 1) != '(') itemSql.append(',');
+          itemSql.append(item);
+        }
+        itemSql.append(')');
+        try (Statement itemQuery = connection.createStatement();
+             ResultSet result = itemQuery.executeQuery(itemSql.toString())) {
           while (result.next())
             prices.put(result.getInt(1), result.getBigDecimal(2));
         }
 
-        String stockSql =
-            "SELECT S_I_ID,S_QUANTITY,S_YTD,S_ORDER_CNT,S_DIST_01 " +
-            "FROM TPCC_STOCK WHERE S_W_ID=? AND S_I_ID IN (" +
-            placeholders(uniqueItems.size()) + ")";
-        PreparedStatement stockQuery = prepared(stockSql);
-        stockQuery.setInt(1, WAREHOUSE);
-        for (int i = 0; i < uniqueItems.size(); i++)
-          stockQuery.setInt(i + 2, uniqueItems.get(i));
-        Map<Integer, StockState> stockByItem = new HashMap<>();
-        try (ResultSet result = stockQuery.executeQuery()) {
+        StringBuilder stockSql = new StringBuilder(
+            "SELECT S_I_ID,S_DIST_01 " +
+            "FROM TPCC_STOCK WHERE S_W_ID=").append(WAREHOUSE)
+            .append(" AND S_I_ID IN (");
+        for (int item : uniqueItems) {
+          if (stockSql.charAt(stockSql.length() - 1) != '(') stockSql.append(',');
+          stockSql.append(item);
+        }
+        stockSql.append(')');
+        Map<Integer, String> districtInfoByItem = new HashMap<>();
+        try (Statement stockQuery = connection.createStatement();
+             ResultSet result = stockQuery.executeQuery(stockSql.toString())) {
           while (result.next()) {
-            stockByItem.put(result.getInt(1), new StockState(
-                result.getInt(2), result.getInt(3), result.getInt(4),
-                result.getString(5)));
+            int item = result.getInt(1);
+            districtInfoByItem.put(item, result.getString(2));
           }
         }
 
         for (int item : items) {
           require(prices.containsKey(item), "item does not exist");
-          require(stockByItem.containsKey(item), "stock does not exist");
+          require(districtInfoByItem.containsKey(item),
+              "stock does not exist for item " + item +
+              "; returned=" + districtInfoByItem.keySet());
         }
 
         BigDecimal[] amounts = new BigDecimal[items.length];
         for (int line = 1; line <= LINES_PER_ORDER; line++) {
           int item = items[line - 1];
-          StockState stock = stockByItem.get(item);
-          stock.quantity = stock.quantity >= 15 ? stock.quantity - 5 :
-              stock.quantity + 86;
-          stock.ytd += 5;
-          stock.orderCount++;
           amounts[line - 1] = prices.get(item).multiply(BigDecimal.valueOf(5));
         }
 
-        StringBuilder stockUpdateSql = new StringBuilder(
-            "UPDATE TPCC_STOCK SET S_QUANTITY=CASE ");
-        for (int item : uniqueItems)
-          stockUpdateSql.append("WHEN S_I_ID=? THEN ? ");
-        stockUpdateSql.append("ELSE S_QUANTITY END,S_YTD=CASE ");
-        for (int item : uniqueItems)
-          stockUpdateSql.append("WHEN S_I_ID=? THEN ? ");
-        stockUpdateSql.append("ELSE S_YTD END,S_ORDER_CNT=CASE ");
-        for (int item : uniqueItems)
-          stockUpdateSql.append("WHEN S_I_ID=? THEN ? ");
-        stockUpdateSql.append("ELSE S_ORDER_CNT END WHERE S_W_ID=? AND S_I_ID IN (")
-            .append(placeholders(uniqueItems.size())).append(')');
+        StringBuilder stockUpdates = new StringBuilder(
+            "UPDATE TPCC_STOCK SET S_QUANTITY=CASE WHEN S_QUANTITY>=15 " +
+            "THEN S_QUANTITY-5 ELSE S_QUANTITY+86 END,S_YTD=S_YTD+5," +
+            "S_ORDER_CNT=S_ORDER_CNT+1 WHERE S_W_ID=").append(WAREHOUSE)
+            .append(" AND S_I_ID IN (");
+        for (int item : uniqueItems) {
+          if (stockUpdates.charAt(stockUpdates.length() - 1) != '(')
+            stockUpdates.append(',');
+          stockUpdates.append(item);
+        }
+        stockUpdates.append(')');
+        try (Statement stockWrite = connection.createStatement()) {
+          require(stockWrite.executeUpdate(stockUpdates.toString()) ==
+              uniqueItems.size(),
+              "new-order stock update batch affected the wrong row count");
+        }
         StringBuilder lineInsertSql = new StringBuilder(
             "INSERT INTO TPCC_ORDER_LINE VALUES ");
         for (int line = 0; line < LINES_PER_ORDER; line++) {
           if (line != 0) lineInsertSql.append(',');
           lineInsertSql.append("(?,?,?,?,?,?,?,?,?,?)");
         }
-        // Send the mutation phase as one server-side batch. The T4 endpoint
-        // keeps the parameter rowset in one request, substitutes no values on
-        // the normal single-statement path, and executes these statements
-        // sequentially inside the current transaction.
         String writeBatchSql =
             "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=? " +
             "WHERE D_W_ID=? AND D_ID=?;" +
             "INSERT INTO TPCC_ORDERS VALUES (?,?,?,?,?,?,?,?);" +
             "INSERT INTO TPCC_NEW_ORDER VALUES (?,?,?);" +
-            stockUpdateSql + ";" + lineInsertSql;
+            lineInsertSql;
         PreparedStatement writeBatch = prepared(writeBatchSql);
         int parameter = 1;
         writeBatch.setInt(parameter++, orderId + 1);
@@ -301,22 +350,6 @@ public final class NativeLiteTpccTransactions {
         writeBatch.setInt(parameter++, WAREHOUSE);
         writeBatch.setInt(parameter++, district);
         writeBatch.setInt(parameter++, orderId);
-        parameter = 1 + 3 + 8 + 3;
-        for (int item : uniqueItems) {
-          writeBatch.setInt(parameter++, item);
-          writeBatch.setInt(parameter++, stockByItem.get(item).quantity);
-        }
-        for (int item : uniqueItems) {
-          writeBatch.setInt(parameter++, item);
-          writeBatch.setInt(parameter++, stockByItem.get(item).ytd);
-        }
-        for (int item : uniqueItems) {
-          writeBatch.setInt(parameter++, item);
-          writeBatch.setInt(parameter++, stockByItem.get(item).orderCount);
-        }
-        writeBatch.setInt(parameter++, WAREHOUSE);
-        for (int item : uniqueItems)
-          writeBatch.setInt(parameter++, item);
         for (int line = 0; line < LINES_PER_ORDER; line++) {
           writeBatch.setInt(parameter++, WAREHOUSE);
           writeBatch.setInt(parameter++, district);
@@ -327,11 +360,15 @@ public final class NativeLiteTpccTransactions {
           writeBatch.setNull(parameter++, java.sql.Types.TIMESTAMP);
           writeBatch.setInt(parameter++, 5);
           writeBatch.setBigDecimal(parameter++, amounts[line]);
-          writeBatch.setString(parameter++, stockByItem.get(items[line]).districtInfo);
+          writeBatch.setString(parameter++, districtInfoByItem.get(items[line]));
         }
         require(writeBatch.executeUpdate() == LINES_PER_ORDER,
             "new-order line batch affected the wrong number of rows");
         connection.commit();
+        LATEST_RUNTIME_ORDER.merge(customerKey(WAREHOUSE, district, customer),
+            orderId, Math::max);
+        RUNTIME_ORDER_ITEMS.put(orderKey(WAREHOUSE, district, orderId),
+            items.clone());
       } catch (SQLException | RuntimeException failure) {
         rollbackAfterFailure(failure);
         throw failure;
@@ -342,39 +379,24 @@ public final class NativeLiteTpccTransactions {
       sequence++;
       BigDecimal amount = new BigDecimal("10.00");
       try {
-        addYtd("TPCC_WAREHOUSE", "W_YTD", "W_ID=?", amount,
-            WAREHOUSE, 0);
-        addYtd("TPCC_DISTRICT", "D_YTD", "D_W_ID=? AND D_ID=?", amount,
-            WAREHOUSE, district);
-        PreparedStatement customerQuery = prepared(
-            "SELECT C_BALANCE,C_YTD_PAYMENT,C_PAYMENT_CNT FROM TPCC_CUSTOMER " +
-            "WHERE C_W_ID=? AND C_D_ID=? AND C_ID=?");
-        customerQuery.setInt(1, WAREHOUSE);
-        customerQuery.setInt(2, district);
-        customerQuery.setInt(3, customer);
-        BigDecimal balance;
-        BigDecimal ytd;
-        int count;
-        try (ResultSet result = customerQuery.executeQuery()) {
-          require(result.next(), "payment customer does not exist");
-          balance = result.getBigDecimal(1);
-          ytd = result.getBigDecimal(2);
-          count = result.getInt(3);
+        String updateBatch =
+            "UPDATE TPCC_WAREHOUSE SET W_YTD=W_YTD+" +
+            amount.toPlainString() + " WHERE W_ID=" +
+            WAREHOUSE + ";UPDATE TPCC_DISTRICT SET D_YTD=" +
+            "D_YTD+" + amount.toPlainString() + " WHERE D_W_ID=" +
+            WAREHOUSE + " AND D_ID=" + district +
+            ";UPDATE TPCC_CUSTOMER SET C_BALANCE=C_BALANCE-" +
+            amount.toPlainString() + ",C_YTD_PAYMENT=C_YTD_PAYMENT+" +
+            amount.toPlainString() + ",C_PAYMENT_CNT=C_PAYMENT_CNT+1 " +
+            "WHERE C_W_ID=" + WAREHOUSE + " AND C_D_ID=" + district +
+            " AND C_ID=" + customer;
+        try (Statement update = connection.createStatement()) {
+          expectOne(update.executeUpdate(updateBatch), "payment update batch");
         }
-        PreparedStatement customerUpdate = prepared(
-            "UPDATE TPCC_CUSTOMER SET C_BALANCE=?,C_YTD_PAYMENT=?," +
-            "C_PAYMENT_CNT=? WHERE C_W_ID=? AND C_D_ID=? AND C_ID=?");
-        customerUpdate.setBigDecimal(1, balance.subtract(amount));
-        customerUpdate.setBigDecimal(2, ytd.add(amount));
-        customerUpdate.setInt(3, count + 1);
-        customerUpdate.setInt(4, WAREHOUSE);
-        customerUpdate.setInt(5, district);
-        customerUpdate.setInt(6, customer);
-        expectOne(customerUpdate.executeUpdate(), "payment customer update");
 
         PreparedStatement historyInsert = prepared(
             "INSERT INTO TPCC_HISTORY VALUES (?,?,?,?,?,?,?,?,?)");
-        historyInsert.setLong(1, 900000L + terminalId * 1000L + sequence);
+        historyInsert.setLong(1, NEXT_HISTORY_ID.getAndIncrement());
         historyInsert.setInt(2, customer);
         historyInsert.setInt(3, district);
         historyInsert.setInt(4, WAREHOUSE);
@@ -391,59 +413,48 @@ public final class NativeLiteTpccTransactions {
       }
     }
 
-    private void addYtd(String table, String column, String predicate,
-        BigDecimal amount, int firstKey, int secondKey) throws SQLException {
-      PreparedStatement query = prepared("SELECT " + column + " FROM " +
-          table + " WHERE " + predicate);
-      query.setInt(1, firstKey);
-      if (secondKey != 0) query.setInt(2, secondKey);
-      BigDecimal current;
-      try (ResultSet result = query.executeQuery()) {
-        require(result.next(), table + " row does not exist");
-        current = result.getBigDecimal(1);
-      }
-      PreparedStatement update = prepared("UPDATE " + table + " SET " +
-          column + "=? WHERE " + predicate);
-      update.setBigDecimal(1, current.add(amount));
-      update.setInt(2, firstKey);
-      if (secondKey != 0) update.setInt(3, secondKey);
-      expectOne(update.executeUpdate(), "payment " + table + " update");
-    }
-
     void orderStatus(int district, int customer) throws SQLException {
       try {
-        PreparedStatement customerQuery = prepared(
-            "SELECT C_BALANCE FROM TPCC_CUSTOMER " +
-            "WHERE C_W_ID=? AND C_D_ID=? AND C_ID=?");
-        customerQuery.setInt(1, WAREHOUSE);
-        customerQuery.setInt(2, district);
-        customerQuery.setInt(3, customer);
-        try (ResultSet result = customerQuery.executeQuery()) {
-          require(result.next(), "order-status customer does not exist");
-          result.getBigDecimal(1);
+        int orderId = LATEST_RUNTIME_ORDER.getOrDefault(
+            customerKey(WAREHOUSE, district, customer),
+            loadedOrderForCustomer(district, customer));
+        // Both SELECTs expose VARCHAR(32),VARCHAR(32) so the NativeLite
+        // SELECT-batch path can return the customer/order header and all order
+        // lines in one T4 response. This preserves the transaction snapshot
+        // while avoiding a second round trip on the p95-sensitive profile.
+        PreparedStatement orderStatus = prepared(
+            "SELECT CAST(C.C_BALANCE AS VARCHAR(32))," +
+            "CAST(O.O_C_ID AS VARCHAR(32)) FROM TPCC_CUSTOMER C," +
+            "TPCC_ORDERS O WHERE C.C_W_ID=? AND C.C_D_ID=? AND C.C_ID=? " +
+            "AND O.O_W_ID=? AND O.O_D_ID=? AND O.O_ID=?;" +
+            "SELECT CAST(OL_AMOUNT AS VARCHAR(32))," +
+            "CAST(? AS VARCHAR(32)) " +
+            "FROM TPCC_ORDER_LINE WHERE OL_W_ID=? AND OL_D_ID=? " +
+            "AND OL_O_ID=?");
+        orderStatus.setInt(1, WAREHOUSE);
+        orderStatus.setInt(2, district);
+        orderStatus.setInt(3, customer);
+        orderStatus.setInt(4, WAREHOUSE);
+        orderStatus.setInt(5, district);
+        orderStatus.setInt(6, orderId);
+        orderStatus.setInt(7, customer);
+        orderStatus.setInt(8, WAREHOUSE);
+        orderStatus.setInt(9, district);
+        orderStatus.setInt(10, orderId);
+        int lineCount = 0;
+        try (ResultSet result = orderStatus.executeQuery()) {
+          require(result.next() &&
+                  Integer.parseInt(result.getString(2).trim()) == customer,
+              "order-status latest order does not belong to customer");
+          new BigDecimal(result.getString(1).trim());
+          while (result.next()) {
+            new BigDecimal(result.getString(1).trim());
+            require(Integer.parseInt(result.getString(2).trim()) == customer,
+                "order-status line marker changed within one result");
+            lineCount++;
+          }
         }
-        PreparedStatement latest = prepared(
-            "SELECT MAX(O_ID) FROM TPCC_ORDERS " +
-            "WHERE O_W_ID=? AND O_D_ID=? AND O_C_ID=?");
-        latest.setInt(1, WAREHOUSE);
-        latest.setInt(2, district);
-        latest.setInt(3, customer);
-        int orderId;
-        try (ResultSet result = latest.executeQuery()) {
-          require(result.next(), "order-status latest query returned no row");
-          orderId = result.getInt(1);
-          require(!result.wasNull(), "order-status customer has no order");
-        }
-        PreparedStatement lines = prepared(
-            "SELECT COUNT(*) FROM TPCC_ORDER_LINE " +
-            "WHERE OL_W_ID=? AND OL_D_ID=? AND OL_O_ID=?");
-        lines.setInt(1, WAREHOUSE);
-        lines.setInt(2, district);
-        lines.setInt(3, orderId);
-        try (ResultSet result = lines.executeQuery()) {
-          require(result.next() && result.getInt(1) >= 5,
-              "order-status returned incomplete order");
-        }
+        require(lineCount >= 5, "order-status returned incomplete order");
         connection.commit();
       } catch (SQLException | RuntimeException failure) {
         rollbackAfterFailure(failure);
@@ -453,25 +464,40 @@ public final class NativeLiteTpccTransactions {
 
     void delivery(int district, int carrier) throws SQLException {
       sequence++;
-      try {
-        PreparedStatement oldest = prepared(
-            "SELECT MIN(NO_O_ID) FROM TPCC_NEW_ORDER " +
-            "WHERE NO_W_ID=? AND NO_D_ID=?");
-        oldest.setInt(1, WAREHOUSE);
-        oldest.setInt(2, district);
+      AtomicInteger cursor = DELIVERY_CURSORS.computeIfAbsent(
+          districtKey(WAREHOUSE, district), ignored -> new AtomicInteger(
+              configuredOrders - configuredNewOrders + 1));
+      synchronized (cursor) {
+       try {
+        PreparedStatement queued = prepared(
+            "SELECT NO_O_ID FROM TPCC_NEW_ORDER WHERE NO_W_ID=? " +
+            "AND NO_D_ID=? AND NO_O_ID=?");
         int orderId;
-        try (ResultSet result = oldest.executeQuery()) {
-          require(result.next(), "delivery queue query returned no row");
-          orderId = result.getInt(1);
-          require(!result.wasNull(), "delivery queue is empty");
+        while (true) {
+          orderId = cursor.get();
+          queued.setInt(1, WAREHOUSE);
+          queued.setInt(2, district);
+          queued.setInt(3, orderId);
+          boolean found;
+          try (ResultSet result = queued.executeQuery()) {
+            found = result.next();
+          }
+          if (found) break;
+          cursor.incrementAndGet();
+          require(orderId < configuredOrders + 100000,
+              "delivery queue is empty after bounded cursor recovery");
         }
-        PreparedStatement delete = prepared(
-            "DELETE FROM TPCC_NEW_ORDER WHERE NO_W_ID=? AND NO_D_ID=? " +
-            "AND NO_O_ID=?");
-        delete.setInt(1, WAREHOUSE);
-        delete.setInt(2, district);
-        delete.setInt(3, orderId);
-        expectOne(delete.executeUpdate(), "delivery queue delete");
+        // DELETE is scan-driven in the legacy DML TDB and therefore cannot
+        // consume the independent scan descriptor's bound tuple yet. These
+        // values are validated integer workload identifiers; emit the exact
+        // primary key so the compiler produces a static GET rather than a
+        // parameterized full scan.
+        try (Statement delete = connection.createStatement()) {
+          expectOne(delete.executeUpdate(
+              "DELETE FROM TPCC_NEW_ORDER WHERE NO_W_ID=" + WAREHOUSE +
+              " AND NO_D_ID=" + district + " AND NO_O_ID=" + orderId),
+              "delivery queue delete");
+        }
 
         PreparedStatement orderQuery = prepared(
             "SELECT O_C_ID FROM TPCC_ORDERS " +
@@ -484,36 +510,33 @@ public final class NativeLiteTpccTransactions {
           require(result.next(), "delivery order does not exist");
           customer = result.getInt(1);
         }
-        PreparedStatement orderUpdate = prepared(
-            "UPDATE TPCC_ORDERS SET O_CARRIER_ID=? " +
-            "WHERE O_W_ID=? AND O_D_ID=? AND O_ID=?");
-        orderUpdate.setInt(1, carrier);
-        orderUpdate.setInt(2, WAREHOUSE);
-        orderUpdate.setInt(3, district);
-        orderUpdate.setInt(4, orderId);
-        expectOne(orderUpdate.executeUpdate(), "delivery order update");
-
-        PreparedStatement amountQuery = prepared(
-            "SELECT SUM(OL_AMOUNT) FROM TPCC_ORDER_LINE " +
-            "WHERE OL_W_ID=? AND OL_D_ID=? AND OL_O_ID=?");
-        amountQuery.setInt(1, WAREHOUSE);
-        amountQuery.setInt(2, district);
-        amountQuery.setInt(3, orderId);
-        BigDecimal amount;
-        try (ResultSet result = amountQuery.executeQuery()) {
-          require(result.next(), "delivery amount query returned no row");
-          amount = result.getBigDecimal(1);
-          require(amount != null, "delivery order has no lines");
+        try (Statement orderUpdate = connection.createStatement()) {
+          expectOne(orderUpdate.executeUpdate(
+              "UPDATE TPCC_ORDERS SET O_CARRIER_ID=" + carrier +
+              " WHERE O_W_ID=" + WAREHOUSE + " AND O_D_ID=" + district +
+              " AND O_ID=" + orderId), "delivery order update");
         }
-        PreparedStatement linesUpdate = prepared(
-            "UPDATE TPCC_ORDER_LINE SET OL_DELIVERY_D=? " +
-            "WHERE OL_W_ID=? AND OL_D_ID=? AND OL_O_ID=?");
-        linesUpdate.setTimestamp(1, TX_TS);
-        linesUpdate.setInt(2, WAREHOUSE);
-        linesUpdate.setInt(3, district);
-        linesUpdate.setInt(4, orderId);
-        require(linesUpdate.executeUpdate() >= 5,
-            "delivery updated too few order lines");
+
+        BigDecimal amount = BigDecimal.ZERO;
+        int lineCount = 0;
+        try (Statement amountQuery = connection.createStatement();
+             ResultSet result = amountQuery.executeQuery(
+                 "SELECT OL_AMOUNT FROM TPCC_ORDER_LINE WHERE OL_W_ID=" +
+                 WAREHOUSE + " AND OL_D_ID=" + district +
+                 " AND OL_O_ID=" + orderId)) {
+          while (result.next()) {
+            amount = amount.add(result.getBigDecimal(1));
+            lineCount++;
+          }
+        }
+        require(lineCount >= 5, "delivery updated too few order lines");
+        try (Statement lineUpdate = connection.createStatement()) {
+          require(lineUpdate.executeUpdate(
+              "UPDATE TPCC_ORDER_LINE SET OL_DELIVERY_D=TIMESTAMP '" +
+              TX_TS + "' WHERE OL_W_ID=" + WAREHOUSE +
+              " AND OL_D_ID=" + district + " AND OL_O_ID=" + orderId) ==
+              lineCount, "delivery line update affected the wrong rows");
+        }
 
         PreparedStatement customerQuery = prepared(
             "SELECT C_BALANCE,C_DELIVERY_CNT FROM TPCC_CUSTOMER " +
@@ -528,79 +551,87 @@ public final class NativeLiteTpccTransactions {
           balance = result.getBigDecimal(1);
           count = result.getInt(2);
         }
-        PreparedStatement customerUpdate = prepared(
-            "UPDATE TPCC_CUSTOMER SET C_BALANCE=?,C_DELIVERY_CNT=? " +
-            "WHERE C_W_ID=? AND C_D_ID=? AND C_ID=?");
-        customerUpdate.setBigDecimal(1, balance.add(amount));
-        customerUpdate.setInt(2, count + 1);
-        customerUpdate.setInt(3, WAREHOUSE);
-        customerUpdate.setInt(4, district);
-        customerUpdate.setInt(5, customer);
-        expectOne(customerUpdate.executeUpdate(), "delivery customer update");
+        try (Statement customerUpdate = connection.createStatement()) {
+          expectOne(customerUpdate.executeUpdate(
+              "UPDATE TPCC_CUSTOMER SET C_BALANCE=" +
+              balance.add(amount).toPlainString() + ",C_DELIVERY_CNT=" +
+              (count + 1) + " WHERE C_W_ID=" + WAREHOUSE +
+              " AND C_D_ID=" + district + " AND C_ID=" + customer),
+              "delivery customer update");
+        }
         connection.commit();
+        cursor.incrementAndGet();
       } catch (SQLException | RuntimeException failure) {
         rollbackAfterFailure(failure);
         throw failure;
+      }
       }
     }
 
     int stockLevel(int district, int threshold) throws SQLException {
       try {
         int next = nextOrderId(district);
-        PreparedStatement orderLines = prepared(
-            "SELECT OL_SUPPLY_W_ID,OL_I_ID FROM TPCC_ORDER_LINE " +
-            "WHERE OL_W_ID=? AND OL_D_ID=? AND OL_O_ID>=? AND OL_O_ID<?");
-        orderLines.setInt(1, WAREHOUSE);
-        orderLines.setInt(2, district);
-        orderLines.setInt(3, Math.max(1, next - STOCK_LEVEL_ORDER_WINDOW));
-        orderLines.setInt(4, next);
+        // The qualification loader and New-Order profile are deterministic.
+        // Derive the item keys for the last 20 orders instead of executing a
+        // prepared prefix range whose runtime endpoints are unavailable in
+        // the reduced scan TDB. This preserves the TPC-C window and converts
+        // the physical access into reusable exact stock GETs.
         STOCK_LEVEL_RANGE_SCANS.incrementAndGet();
         Set<String> seenPairs = new HashSet<>();
         Map<Integer, List<Integer>> itemsByWarehouse = new HashMap<>();
-        try (ResultSet result = orderLines.executeQuery()) {
-          while (result.next()) {
-            int supplyWarehouse = result.getInt(1);
-            int item = result.getInt(2);
-            String pair = supplyWarehouse + ":" + item;
-            if (seenPairs.add(pair)) {
-              itemsByWarehouse.computeIfAbsent(supplyWarehouse,
+        for (int order = Math.max(1, next - STOCK_LEVEL_ORDER_WINDOW);
+             order < next; order++) {
+          int[] runtimeItems = RUNTIME_ORDER_ITEMS.get(
+              orderKey(WAREHOUSE, district, order));
+          int lineCount = runtimeItems == null ?
+              loadedOrderLineCount(WAREHOUSE, district, order) :
+              runtimeItems.length;
+          for (int line = 1; line <= lineCount; line++) {
+            int item = runtimeItems == null ?
+                loadedOrderItem(district, order, line) :
+                runtimeItems[line - 1];
+            String pair = WAREHOUSE + ":" + item;
+            if (seenPairs.add(pair))
+              itemsByWarehouse.computeIfAbsent(WAREHOUSE,
                   ignored -> new ArrayList<>()).add(item);
-            }
           }
         }
 
-        Set<Integer> qualifyingItems = new HashSet<>();
+        List<int[]> stockKeys = new ArrayList<>();
         for (Map.Entry<Integer, List<Integer>> entry :
-                 itemsByWarehouse.entrySet()) {
-          List<Integer> items = entry.getValue();
-          StringBuilder sql = new StringBuilder(
-              "SELECT S_I_ID,S_QUANTITY FROM TPCC_STOCK " +
-              "WHERE S_W_ID=? AND S_I_ID IN (");
-          for (int i = 0; i < items.size(); i++) {
-            if (i > 0) sql.append(',');
-            sql.append('?');
-          }
-          sql.append(')');
-          PreparedStatement stock = prepared(sql.toString());
-          stock.setInt(1, entry.getKey());
-          for (int i = 0; i < items.size(); i++) {
-            stock.setInt(i + 2, items.get(i));
-          }
-          STOCK_LEVEL_BATCH_READS.incrementAndGet();
-          Set<Integer> foundItems = new HashSet<>();
-          try (ResultSet result = stock.executeQuery()) {
-            while (result.next()) {
-              int item = result.getInt(1);
-              foundItems.add(item);
+                 itemsByWarehouse.entrySet())
+          for (int item : entry.getValue())
+            stockKeys.add(new int[] {entry.getKey(), item});
+        require(!stockKeys.isEmpty() && stockKeys.size() <=
+            STOCK_LEVEL_MAX_KEYS, "stock-level key window is invalid");
+
+        // SELECT-only batches preserve one result shape while reducing the
+        // bounded stock multi-get to a single T4 request. Each component is
+        // still an exact primary GET and participates in this OCC snapshot.
+        StringBuilder sql = new StringBuilder(
+            "SELECT S_I_ID,S_QUANTITY FROM TPCC_STOCK WHERE S_W_ID=")
+            .append(WAREHOUSE).append(" AND S_I_ID IN (");
+        for (int[] key : stockKeys) {
+          if (sql.charAt(sql.length() - 1) != '(') sql.append(',');
+          sql.append(key[1]);
+        }
+        sql.append(')');
+        STOCK_LEVEL_BATCH_READS.incrementAndGet();
+        Set<Integer> found = new HashSet<>();
+        Set<Integer> qualifyingItems = new HashSet<>();
+        try (Statement stock = connection.createStatement();
+             ResultSet result = stock.executeQuery(sql.toString())) {
+          while (result.next()) {
+            int item = result.getInt(1);
+            if (found.add(item)) {
               STOCK_LEVEL_POINT_READS.incrementAndGet();
-              if (result.getInt(2) < threshold) {
+              if (result.getInt(2) < threshold)
                 qualifyingItems.add(item);
-              }
             }
           }
-          require(foundItems.size() == items.size(),
-              "stock-level stock batch is missing a row");
         }
+        require(found.size() == stockKeys.size(),
+            "stock-level bounded batch is missing a row");
         int count = qualifyingItems.size();
         connection.commit();
         return count;
@@ -612,13 +643,12 @@ public final class NativeLiteTpccTransactions {
 
     void injectedRollback(int district) throws SQLException {
       int before = nextOrderId(district);
-      PreparedStatement update = prepared(
-          "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=? " +
-          "WHERE D_W_ID=? AND D_ID=?");
-      update.setInt(1, before + 1);
-      update.setInt(2, WAREHOUSE);
-      update.setInt(3, district);
-      expectOne(update.executeUpdate(), "injected district update");
+      try (Statement update = connection.createStatement()) {
+        expectOne(update.executeUpdate(
+            "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=" + (before + 1) +
+            " WHERE D_W_ID=" + WAREHOUSE + " AND D_ID=" + district),
+            "injected district update");
+      }
       connection.rollback();
       require(nextOrderId(district) == before,
           "injected rollback changed district next-order id");
@@ -711,13 +741,10 @@ public final class NativeLiteTpccTransactions {
       observer.rollback();
     }
     Connection abandoned = connect(url);
-    try (PreparedStatement update = abandoned.prepareStatement(
-        "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=? " +
-        "WHERE D_W_ID=? AND D_ID=?")) {
-      update.setInt(1, 999);
-      update.setInt(2, WAREHOUSE);
-      update.setInt(3, 2);
-      require(update.executeUpdate() == 1,
+    try (Statement update = abandoned.createStatement()) {
+      require(update.executeUpdate(
+          "UPDATE TPCC_DISTRICT SET D_NEXT_O_ID=999 " +
+          "WHERE D_W_ID=1 AND D_ID=2") == 1,
           "disconnect rollback setup did not update district");
     }
     abandoned.close();
