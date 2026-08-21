@@ -213,6 +213,41 @@ static uint64_t groupCommitWindowMicros()
   return end && *end == '\0' ? static_cast<uint64_t>(parsed) : 0;
 }
 
+static bool nativeWalFastPathEnabled()
+{
+  const char *mode = getenv("TRAF_LOCAL_LITE_PHYSICAL_WAL_MODE");
+  if (mode && mode[0])
+    return strcmp(mode, "legacy") != 0 && strcmp(mode, "intent") != 0;
+
+  // Keep the Phase 8 fault names meaningful for existing recovery tests. A
+  // native commit has no separate intent point, so those tests explicitly use
+  // the legacy protocol unless the caller selects native mode.
+  const char *fault = getenv("TRAF_LOCAL_LITE_PHYSICAL_WAL_FAULT");
+  if (fault && (strcmp(fault, "after-intent") == 0 ||
+                strcmp(fault, "after-canonical") == 0))
+    return false;
+  return true;
+}
+
+static std::string nativeWalEnvelope(uint32_t shard,
+                                     const std::vector<uint64_t> &ids)
+{
+  std::string envelope("m23/native-wal/v1|");
+  char encoded[64];
+  snprintf(encoded, sizeof(encoded), "shard=%u|count=%u|", shard,
+           static_cast<unsigned int>(ids.size()));
+  envelope.append(encoded);
+  for (size_t i = 0; i < ids.size(); i++)
+    {
+      if (i > 0)
+        envelope.push_back(',');
+      snprintf(encoded, sizeof(encoded), "%llu",
+               static_cast<unsigned long long>(ids[i]));
+      envelope.append(encoded);
+    }
+  return envelope;
+}
+
 void setStringError(std::string *error, const std::string &message)
 {
   if (error)
@@ -822,16 +857,29 @@ static void copyGroupDelete(void *state, const char *key, size_t keyLength)
 static bool writeGroup(const std::vector<GroupCommitRequest *> &requests,
                        uint32_t shard, bool sync, std::string *error)
 {
+  const bool native = nativeWalFastPathEnabled();
   rocksdb_writebatch_t *combined = rocksdb_writebatch_create();
-  rocksdb_writebatch_t *intents = rocksdb_writebatch_create();
+  rocksdb_writebatch_t *intents = native ? NULL : rocksdb_writebatch_create();
   GroupBatchCopy copy;
   copy.target = combined;
+  std::vector<uint64_t> walIds;
   for (std::vector<GroupCommitRequest *>::const_iterator request =
            requests.begin(); request != requests.end(); ++request)
     {
       LocalLiteUnifiedWriteBatch *batch = (*request)->batch;
       if (batch->walId == 0)
         batch->walId = allocateWalId();
+      walIds.push_back(batch->walId);
+
+      if (native)
+        {
+          // The native path deliberately copies only business operations. A
+          // single group-level PutLogData record is appended below so the
+          // metadata and all data share one unified WAL write.
+          rocksdb_writebatch_iterate(batch->physical, &copy, copyGroupPut,
+                                     copyGroupDelete);
+          continue;
+        }
       size_t serializedSize = 0;
       const char *serialized = rocksdb_writebatch_data(batch->physical,
                                                        &serializedSize);
@@ -841,7 +889,8 @@ static bool writeGroup(const std::vector<GroupCommitRequest *> &requests,
         {
           setStringError(error,
                          "create LocalLite physical WAL intent batch failed");
-          rocksdb_writebatch_destroy(intents);
+          if (intents)
+            rocksdb_writebatch_destroy(intents);
           rocksdb_writebatch_destroy(combined);
           return false;
         }
@@ -850,6 +899,8 @@ static bool writeGroup(const std::vector<GroupCommitRequest *> &requests,
       size_t intentSize = 0;
       const char *intentData = rocksdb_writebatch_data(withMarker, &intentSize);
       const std::string intentKey = walPendingKey(batch->walId);
+      // The legacy intent database stores the serialized batch under a
+      // pending key. The native path never reaches this branch.
       rocksdb_writebatch_put(intents, intentKey.data(), intentKey.size(),
                              intentData, intentSize);
       rocksdb_writebatch_iterate(withMarker, &copy, copyGroupPut,
@@ -859,28 +910,49 @@ static bool writeGroup(const std::vector<GroupCommitRequest *> &requests,
 
   rocksdb_writeoptions_t *options = sync
       ? unifiedState.syncWriteOptions : unifiedState.asyncWriteOptions;
-  if (!options || shard >= LOCAL_LITE_DURABLE_SHARDS ||
-      !unifiedState.walDb[shard])
+  if (!options || shard >= LOCAL_LITE_DURABLE_SHARDS || !unifiedState.baseDb ||
+      (!native && !unifiedState.walDb[shard]))
     {
       setStringError(error, "LocalLite physical WAL writer is unavailable");
-      rocksdb_writebatch_destroy(intents);
+      if (intents)
+        rocksdb_writebatch_destroy(intents);
       rocksdb_writebatch_destroy(combined);
       return false;
     }
+
   char *rocksError = NULL;
-  rocksdb_write(unifiedState.walDb[shard], options, intents, &rocksError);
-  rocksdb_writebatch_destroy(intents);
-  if (rocksError)
-    {
-      setStringError(error, std::string("write LocalLite physical WAL: ") +
-                            rocksError);
-      rocksdb_free(rocksError);
-      rocksdb_writebatch_destroy(combined);
-      return false;
-    }
-  const char *walFault = getenv("TRAF_LOCAL_LITE_PHYSICAL_WAL_FAULT");
-  if (walFault && strcmp(walFault, "after-intent") == 0)
+  const char *nativeFault = getenv("TRAF_LOCAL_LITE_NATIVE_WAL_FAULT");
+  if (native && nativeFault && strcmp(nativeFault, "before-wal") == 0)
     _exit(94);
+  if (!native)
+    {
+      rocksdb_write(unifiedState.walDb[shard], options, intents, &rocksError);
+      rocksdb_writebatch_destroy(intents);
+      intents = NULL;
+      if (rocksError)
+        {
+          setStringError(error, std::string("write LocalLite physical WAL: ") +
+                                rocksError);
+          rocksdb_free(rocksError);
+          rocksdb_writebatch_destroy(combined);
+          return false;
+        }
+    }
+  if (native)
+    {
+      const std::string envelope = nativeWalEnvelope(shard, walIds);
+      rocksdb_writebatch_put_log_data(combined, envelope.data(),
+                                      envelope.size());
+    }
+
+  if (!native)
+    {
+      // Legacy intent writes happen while batches are assembled above. The
+      // canonical write below is still the atomic data commit point.
+      const char *walFault = getenv("TRAF_LOCAL_LITE_PHYSICAL_WAL_FAULT");
+      if (walFault && strcmp(walFault, "after-intent") == 0)
+        _exit(94);
+    }
 
   rocksError = NULL;
   rocksdb_write(unifiedState.baseDb, options, combined, &rocksError);
@@ -892,8 +964,13 @@ static bool writeGroup(const std::vector<GroupCommitRequest *> &requests,
       rocksdb_free(rocksError);
       return false;
     }
-  if (walFault && strcmp(walFault, "after-canonical") == 0)
+  const char *walFault = getenv("TRAF_LOCAL_LITE_PHYSICAL_WAL_FAULT");
+  if ((walFault && strcmp(walFault, "after-canonical") == 0) ||
+      (nativeFault && strcmp(nativeFault, "after-canonical") == 0))
     _exit(95);
+
+  if (native)
+    return true;
 
   rocksdb_writebatch_t *removals = rocksdb_writebatch_create();
   for (std::vector<GroupCommitRequest *>::const_iterator request =
@@ -986,6 +1063,11 @@ uint32_t LocalLiteUnifiedPhysicalWalShardCount()
     if (!unifiedState.walDb[i])
       return i;
   return LOCAL_LITE_DURABLE_SHARDS;
+}
+
+bool LocalLiteUnifiedNativeWalFastPathEnabled()
+{
+  return nativeWalFastPathEnabled();
 }
 
 LocalLiteUnifiedWriteBatch *LocalLiteUnifiedWriteBatchCreate()

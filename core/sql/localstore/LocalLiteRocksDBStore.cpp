@@ -10221,6 +10221,8 @@ std::string LocalLiteOccMetricsJson()
       << LocalLiteUnifiedDurableShardCount()
       << ",\"physical_wal_shards\":"
       << LocalLiteUnifiedPhysicalWalShardCount()
+      << ",\"native_wal_fast_path\":"
+      << (LocalLiteUnifiedNativeWalFastPathEnabled() ? "true" : "false")
       << ",\"maximum_physical_commit_overlap\":"
       << std::max(localLiteOccMetrics.maximumPhysicalCommitOverlap,
                   localLiteCommitCoordinator.maximumOverlap())
