@@ -57,3 +57,24 @@ native envelope、legacy fallback 及其恢复边界。
   装载，但在 Stock 大表装载阶段未继续产生进度，未将该次运行计入吞吐证据；
 - 默认 reduced TPCC 在沙箱内无法启动 TCP，未把失败的 reduced 结果作为 native
   性能结论。正式性能结论需要使用 release + `m22-full.properties` 的完整报告。
+
+## Release TPCC bulk-load 验证
+
+使用 release 构建、`TPCC_NATIVE_BULK_LOAD=1`、`m22-full.properties`、10 warehouse、
+32 terminal、40 warmup/200 measured per terminal、3 repetitions 运行。source
+revision 为 `3084dc0c8e3100f11f5bdd36292a2149664cc9f6`，报告保留在
+`/tmp/traf-local-lite-tpcc-performance.LSi2A3/`。
+
+- 吞吐 `55.326 TPS`；三次 repetition 为 `54.333/55.425/56.253 TPS`，方差
+  `3.5338%`；50 TPS 和 10% variance gates 通过；
+- New-Order/Payment/Order-Status/Delivery/Stock-Level p95 为
+  `823739/499742/412985/1302639/480033 us`，全部通过；
+- server committed `20480`，OCC conflicts `1513`，client retries `1427`，
+  `publication_latency_us=184860789`，`publication_failures=0`；
+- workload metrics 确认 `physical_wal_shards=8`、`native_wal_fast_path=true`、
+  `synchronous_publications=20480`、最大物理提交重叠为 `7`；
+- online checkpoint、clean restart、unclean restart、checkpoint restore 和
+  disk watermark 全部通过；bulk-load consistency 通过；
+- 相比 Phase 8 的 `57.703 TPS` 下降约 `4.1%`。因此本阶段已消除 intent
+  Put/Delete 的正常路径，但统一 TransactionDB、OCC 冲突和执行路径仍是主要
+  瓶颈，不能宣称 native WAL 已带来整体吞吐提升。
