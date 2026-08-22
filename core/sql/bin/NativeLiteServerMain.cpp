@@ -1475,6 +1475,53 @@ private:
     while (!normalized.empty() && normalized[normalized.size() - 1] == ';')
       normalized = trim(normalized.substr(0, normalized.size() - 1));
 
+    // SQLCI GET metadata commands are implemented by the local catalog
+    // utility layer.  That layer historically rendered them only to the
+    // SQLCI logfile, so a network client received an empty command result.
+    // Return the same object list as a one-column result set for T4 clients.
+    if (normalized.find("GET ") == 0)
+      {
+        std::string title;
+        std::vector<std::string> objects;
+        std::string metadataError;
+        if (LocalLiteSqlTable_getMetadata(sql.c_str(), session->env, &title,
+                                          &objects, &metadataError))
+          {
+            *handled = true;
+            if (!metadataError.empty())
+              {
+                result.sqlstate = "HY000";
+                result.error = metadataError;
+                return result;
+              }
+
+            Column column;
+            column.name = "OBJECT_NAME";
+            if (title.find("Tables") == 0)
+              column.name = "TABLE_NAME";
+            else if (title.find("Schemas") == 0)
+              column.name = "SCHEMA_NAME";
+            else if (title.find("Catalogs") == 0 ||
+                     title.find("Databases") == 0)
+              column.name = "CATALOG_NAME";
+            else if (title.find("Views") == 0)
+              column.name = "VIEW_NAME";
+            else if (title.find("Indexes") == 0)
+              column.name = "INDEX_NAME";
+            else if (title.find("Sequences") == 0)
+              column.name = "SEQUENCE_NAME";
+            column.length = 256;
+            result.columns.push_back(column);
+            if (!describeOnly)
+              for (size_t i = 0; i < objects.size(); i++)
+                result.rows.push_back(
+                    std::vector<Cell>(1, Cell(objects[i])));
+            result.commandTag = "SELECT " +
+                std::to_string(static_cast<unsigned long long>(objects.size()));
+            return result;
+          }
+      }
+
     if (normalized == "SELECT NATIVE_LITE_HEALTH()" ||
         normalized == "SELECT NATIVELITE_HEALTH()" ||
         normalized == "SHOW NATIVE_LITE HEALTH")

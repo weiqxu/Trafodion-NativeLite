@@ -9,9 +9,20 @@
 
 #ifdef TRAF_LOCAL_LITE
 
+#include <string>
+#include <vector>
+
 class SqlciEnv;
 
 bool LocalLiteSqlTable_process(const char *sql, SqlciEnv *sqlciEnv, short *retcode);
+
+// Return the object names produced by a SQLCI GET metadata command.  The
+// server uses this structured form to expose GET TABLES/SCHEMAS through T4;
+// SQLCI itself continues to use LocalLiteSqlTable_process for text output.
+bool LocalLiteSqlTable_getMetadata(const char *sql, SqlciEnv *sqlciEnv,
+                                   std::string *title,
+                                   std::vector<std::string> *objects,
+                                   std::string *error);
 
 // Return true for SQLCI-local statements whose PostgreSQL extended-query
 // Describe response is NoData. This classifier must not execute or mutate the

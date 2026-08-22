@@ -176,7 +176,7 @@ endif
 # builds.  Any flavor-specific targets can be added later in this makefile.
 EXECUTABLES= arkcmp sqlci arkesp tdm_udrserv mxlobsrvr sscp ssmp clitestdriver
 ifeq ($(TRAF_LOCAL_LITE),1)
-EXECUTABLES := arkcmp sqlci nativelite_server nativelite_bulk_loader
+EXECUTABLES := arkcmp sqlci nativelite_server nativelite_bulk_loader nativelite_client
 endif
 	# mxCompileUserModule mxsqlcfe mxsqlcofe sqlfe
 
@@ -403,7 +403,8 @@ LOCAL_LITE_EARLY_DLLS = $(EARLY_DLLS)
 # link_exe defines how to link an executable for OSS
 link_exe = $(CXX) $(ALL_EXE_LDFLAGS) $(LOCAL_LITE_EARLY_DLLS) $(OBJ_PATHS) \
 	$(LOC_LIBS) $(EXTRA_LIBS) $(DEP_DLL_NAMES:%=-l%) \
-	$(DEP_LIB_NAMES:%=-l%) $(EXTERN_OBJS) $(SYS_LIBS) $(GLOBAL_SYS_LIBS) $(LINK_EXTERN_LIB) \
+	$(DEP_LIB_NAMES:%=-l%) $(EXTERN_OBJS) $(SYS_LIBS) \
+	$(if $(NO_GLOBAL_SYS_LIBS),,$(GLOBAL_SYS_LIBS)) $(LINK_EXTERN_LIB) \
 	-Wl,--rpath -Wl,$(RESULTDIR) \
 	-o $@
 

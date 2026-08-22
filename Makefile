@@ -21,7 +21,7 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-release local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a local-lite-m15b local-lite-m15c local-lite-m15d local-lite-m15e local-lite-m15f local-lite-m15g local-lite-m15 local-lite-m16a local-lite-m16b local-lite-m16c local-lite-m16d local-lite-m16e local-lite-m16f local-lite-m16g local-lite-m16 local-lite-m17a local-lite-m17b local-lite-m17c local-lite-m17 local-lite-m18 local-lite-m19 local-lite-m20 local-lite-m21 local-lite-m21-tpcc local-lite-m22a local-lite-m22b local-lite-m22c local-lite-m22d local-lite-m22e local-lite-m22f local-lite-m22g local-lite-m22h local-lite-m22
+.PHONY: all local-lite local-lite-release local-lite-client local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a local-lite-m15b local-lite-m15c local-lite-m15d local-lite-m15e local-lite-m15f local-lite-m15g local-lite-m15 local-lite-m16a local-lite-m16b local-lite-m16c local-lite-m16d local-lite-m16e local-lite-m16f local-lite-m16g local-lite-m16 local-lite-m17a local-lite-m17b local-lite-m17c local-lite-m17 local-lite-m18 local-lite-m19 local-lite-m20 local-lite-m21 local-lite-m21-tpcc local-lite-m22a local-lite-m22b local-lite-m22c local-lite-m22d local-lite-m22e local-lite-m22f local-lite-m22g local-lite-m22h local-lite-m22
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
 M14_REPORT_DIR ?= /tmp/traf-local-lite-m14-report
 M15_REPORT_DIR ?= /tmp/traf-local-lite-m15-report
@@ -41,6 +41,10 @@ local-lite:
 local-lite-release:
 	@echo "Building Release local-lite Trafodion native core"
 	$(MAKE) SQ_BUILD_TYPE=release local-lite
+
+local-lite-client:
+	@echo "Running local-lite SQLCI-style client checks"
+	scripts/test-local-lite-client.sh
 
 local-lite-regress:
 	@echo "Running local-lite SQL regressions"

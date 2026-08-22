@@ -837,6 +837,23 @@ static bool localLiteParseGet(const std::string &sql,
   return true;
 }
 
+bool LocalLiteSqlTable_getMetadata(const char *sqlText, SqlciEnv *sqlciEnv,
+                                   std::string *title,
+                                   std::vector<std::string> *objects,
+                                   std::string *error)
+{
+  if (!sqlText || !sqlciEnv || !title || !objects || !error)
+    return false;
+
+  std::string sql = trim(sqlText);
+  while (!sql.empty() && sql[sql.size() - 1] == ';')
+    sql = trim(sql.substr(0, sql.size() - 1));
+  if (upper(sql).find("GET TEXT FOR ERROR ") == 0)
+    return false;
+
+  return localLiteParseGet(sql, sqlciEnv, title, objects, error);
+}
+
 static std::string unquoteIdentifier(const std::string &name)
 {
   if (name.size() >= 2 && name[0] == '"' && name[name.size() - 1] == '"')

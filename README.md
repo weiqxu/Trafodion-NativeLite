@@ -298,6 +298,27 @@ environment used above, start the local trusted endpoint with:
 $SQL_LIBS/nativelite-server --listen 127.0.0.1 --port 23400
 ```
 
+The same build also provides a small SQLCI-style network client:
+
+```bash
+$SQL_LIBS/nativelite-client \
+  --host 127.0.0.1 --port 23400
+```
+
+It accepts one or more SQL statements terminated by `;`, supports multiline
+input and `exit`, `quit`, or `\\q`, and can execute a script with `-f`:
+
+```bash
+$SQL_LIBS/nativelite-client \
+  --host 127.0.0.1 --port 23400 -f smoke.sql
+```
+
+The client speaks the LocalLite reduced Trafodion Type 4 protocol directly;
+it is not a PostgreSQL-wire client. It currently implements direct SQL,
+fetching and tabular result display, transaction-independent disconnect, and
+SQL diagnostics. The endpoint remains the local trusted transport described
+below: it has no password or TLS exchange.
+
 Connect with the Trafodion Type 4 JDBC driver
 (`org.trafodion.jdbc.t4.T4Driver`):
 
