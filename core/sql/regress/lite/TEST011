@@ -1,0 +1,71 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Prepared statement coverage adapted from executor/TEST001 and core/TEST001.
+CREATE TABLE LITEREG011_PREPARED_ROWS
+  (id INT PRIMARY KEY,
+   grp INT,
+   label VARCHAR(20));
+
+PREPARE insert_stmt FROM
+  INSERT INTO LITEREG011_PREPARED_ROWS VALUES (1, 10, 'one');
+EXECUTE insert_stmt;
+
+PREPARE select_stmt FROM
+  SELECT id, grp, label FROM LITEREG011_PREPARED_ROWS ORDER BY id;
+EXECUTE select_stmt;
+
+-- Re-execution must open a fresh statement snapshot and see the new row.
+INSERT INTO LITEREG011_PREPARED_ROWS VALUES (2, 20, 'two');
+EXECUTE select_stmt;
+
+-- A prepared-statement error must not poison the next execution.
+EXECUTE insert_stmt;
+EXECUTE select_stmt;
+
+-- Reusing a statement name replaces its old INSERT with this SELECT.
+PREPARE insert_stmt FROM
+  SELECT label FROM LITEREG011_PREPARED_ROWS WHERE id = 2;
+EXECUTE insert_stmt;
+
+-- Parameter values are resolved again for each execution.
+SET PARAM ?wanted 1;
+PREPARE param_select_stmt FROM
+  SELECT id, label FROM LITEREG011_PREPARED_ROWS WHERE id = ?wanted;
+EXECUTE param_select_stmt;
+SET PARAM ?wanted 2;
+EXECUTE param_select_stmt;
+
+-- A prepared INSERT can be reused with a new parameter set.
+SET PARAM ?new_id 3;
+SET PARAM ?new_grp 30;
+SET PARAM ?new_label 'three';
+PREPARE param_insert_stmt FROM
+  INSERT INTO LITEREG011_PREPARED_ROWS VALUES
+    (?new_id, ?new_grp, ?new_label);
+EXECUTE param_insert_stmt;
+SET PARAM ?new_id 4;
+SET PARAM ?new_grp 40;
+SET PARAM ?new_label 'four';
+EXECUTE param_insert_stmt;
+
+SELECT id, grp, label
+  FROM LITEREG011_PREPARED_ROWS
+ ORDER BY id;
+
+DROP TABLE LITEREG011_PREPARED_ROWS;
+exit;

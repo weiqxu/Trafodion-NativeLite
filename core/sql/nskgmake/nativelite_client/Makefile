@@ -1,5 +1,5 @@
 #######################################################################
-# LocalLite SQLCI-style client for the native T4 protocol.
+# Lite SQLCI-style client for the native T4 protocol.
 #######################################################################
 
 CPPSRC := NativeLiteSqlciClientMain.cpp

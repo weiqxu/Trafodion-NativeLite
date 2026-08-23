@@ -4149,7 +4149,7 @@ void NADefaults::updateSystemParameters(NABoolean updateDefaultDefaults)
 void
 NADefaults::getNodeAndClusterNumbers(short& nodeNum, Int32& clusterNum)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   nodeNum = 0;
   clusterNum = 1;
   return;

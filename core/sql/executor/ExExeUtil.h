@@ -66,7 +66,7 @@ class HdfsClient;
 #include "hiveHook.h"
 #include "ExpHbaseDefs.h"
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "SequenceFileReader.h"
 #else
 inline const char *getSqlJniErrorStr()

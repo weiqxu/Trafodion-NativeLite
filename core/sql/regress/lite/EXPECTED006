@@ -1,0 +1,143 @@
+>>CREATE TABLE LITEREG006_LEFT_ROWS
++>  (id INT PRIMARY KEY,
++>   grp INT,
++>   val INT);
+--- SQL operation complete.
+>>CREATE TABLE LITEREG006_RIGHT_ROWS
++>  (id INT PRIMARY KEY,
++>   grp INT,
++>   score INT);
+--- SQL operation complete.
+>>INSERT INTO LITEREG006_LEFT_ROWS VALUES
++>  (1, 10, 5),
++>  (2, 10, 8),
++>  (3, 20, 3),
++>  (4, 30, NULL),
++>  (5, 40, 9);
+--- 5 row(s) inserted.
+>>INSERT INTO LITEREG006_RIGHT_ROWS VALUES
++>  (101, 10, 7),
++>  (102, 20, 4),
++>  (103, 20, 6),
++>  (104, 40, 10),
++>  (105, 50, 1);
+--- 5 row(s) inserted.
+>>SELECT grp
++>  FROM LITEREG006_LEFT_ROWS
++>  WHERE grp <= 20
++>UNION ALL
++>SELECT grp
++>  FROM LITEREG006_RIGHT_ROWS
++>  WHERE grp <= 20
++>ORDER BY 1;
+GRP
+-----------
+         10
+         10
+         10
+         20
+         20
+         20
+--- 6 row(s) selected.
+>>SELECT grp
++>  FROM LITEREG006_LEFT_ROWS
++>UNION
++>SELECT grp
++>  FROM LITEREG006_RIGHT_ROWS
++>ORDER BY 1;
+GRP
+-----------
+         10
+         20
+         30
+         40
+         50
+--- 5 row(s) selected.
+>>SELECT u.grp, COUNT(*) AS occurrences, SUM(u.val) AS total
++>  FROM (SELECT grp, val
++>          FROM LITEREG006_LEFT_ROWS
++>        UNION ALL
++>        SELECT grp, score
++>          FROM LITEREG006_RIGHT_ROWS) AS u(grp, val)
++>  GROUP BY u.grp
++>  ORDER BY u.grp;
+GRP          OCCURRENCES           TOTAL
+-----------  --------------------  --------------------
+         10                     3                    20
+         20                     3                    13
+         30                     1                     ?
+         40                     2                    19
+         50                     1                     1
+--- 5 row(s) selected.
+>>SELECT l.grp, l.total AS left_total, r.total AS right_total
++>  FROM (SELECT grp, SUM(val) AS total
++>          FROM LITEREG006_LEFT_ROWS
++>         GROUP BY grp) AS l
++>  JOIN (SELECT grp, SUM(score) AS total
++>          FROM LITEREG006_RIGHT_ROWS
++>         GROUP BY grp) AS r
++>    ON l.grp = r.grp
++>  ORDER BY l.grp;
+GRP          LEFT_TOTAL            RIGHT_TOTAL
+-----------  --------------------  --------------------
+         10                    13                     7
+         20                     3                    10
+         40                     9                    10
+--- 3 row(s) selected.
+>>SELECT l.id
++>  FROM LITEREG006_LEFT_ROWS AS l
++>  WHERE EXISTS
++>        (SELECT 1
++>           FROM LITEREG006_RIGHT_ROWS AS r
++>          WHERE r.grp = l.grp
++>            AND r.score > l.val)
++>  ORDER BY l.id;
+ID
+-----------
+          1
+          3
+          5
+--- 3 row(s) selected.
+>>SELECT l.id
++>  FROM LITEREG006_LEFT_ROWS AS l
++>  WHERE NOT EXISTS
++>        (SELECT 1
++>           FROM LITEREG006_RIGHT_ROWS AS r
++>          WHERE r.grp = l.grp)
++>  ORDER BY l.id;
+ID
+-----------
+          4
+--- 1 row(s) selected.
+>>SELECT l.id,
++>       (SELECT MAX(r.score)
++>          FROM LITEREG006_RIGHT_ROWS AS r
++>         WHERE r.grp = l.grp) AS max_score
++>  FROM LITEREG006_LEFT_ROWS AS l
++>  ORDER BY l.id;
+ID           MAX_SCORE
+-----------  -----------
+          1            7
+          2            7
+          3            6
+          4            ?
+          5           10
+--- 5 row(s) selected.
+>>SELECT l.id
++>  FROM LITEREG006_LEFT_ROWS AS l
++>  WHERE l.val <
++>        (SELECT AVG(r.score)
++>           FROM LITEREG006_RIGHT_ROWS AS r
++>          WHERE r.grp = l.grp)
++>  ORDER BY l.id;
+ID
+-----------
+          1
+          3
+          5
+--- 3 row(s) selected.
+>>DROP TABLE LITEREG006_RIGHT_ROWS;
+--- SQL operation complete.
+>>DROP TABLE LITEREG006_LEFT_ROWS;
+--- SQL operation complete.
+>>exit;

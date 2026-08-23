@@ -5390,7 +5390,7 @@ RelExpr *RelRoot::bindNode(BindWA *bindWA)
 
   if (isTrueRoot()) 
     {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
       // if this is simple scalar aggregate on a seabase table
       //  (of the form:  select count(*), sum(a) from t; )
       // then transform it so it could be evaluated using hbase co-processor.
@@ -10972,8 +10972,8 @@ RelExpr *Insert::bindNode(BindWA *bindWA)
   }
   if (NOT isMerge() &&
       (NOT noIMneeded()
-#ifdef TRAF_LOCAL_LITE
-       || getenv("TRAF_LOCAL_LITE")
+#ifdef TRAF_LITE
+       || getenv("TRAF_LITE")
 #endif
       ))
     boundExpr = handleInlining(bindWA, boundExpr);
@@ -11851,10 +11851,10 @@ RelExpr *Update::bindNode(BindWA *bindWA)
 
   if ((transformUpdateKey) && (NOT isMerge()))
     {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       // RocksDB updates replace the old row, primary-key entry, and UNIQUE
       // entries in one WriteBatch. Keep the normal UPDATE operator so the
-      // local-lite executor can submit a before/after mutation directly.
+      // lite executor can submit a before/after mutation directly.
       boundExpr = handleInlining(bindWA, boundExpr);
 #else
       boundExpr = transformUpdatePrimaryKey(bindWA);
@@ -12249,8 +12249,8 @@ RelExpr *Delete::bindNode(BindWA *bindWA)
   // Triggers --
   
   if (NOT noIMneeded()
-#ifdef TRAF_LOCAL_LITE
-      || getenv("TRAF_LOCAL_LITE")
+#ifdef TRAF_LITE
+      || getenv("TRAF_LITE")
 #endif
      )
     boundExpr = handleInlining(bindWA, boundExpr);
@@ -13065,8 +13065,8 @@ RelExpr * GenericUpdate::bindNode(BindWA *bindWA)
   if (naTable && naTable->isHbaseTable())
     hbaseOper() = TRUE;
 
-#ifdef TRAF_LOCAL_LITE
-  if (getenv("TRAF_LOCAL_LITE") && naTable && naTable->isHbaseTable())
+#ifdef TRAF_LITE
+  if (getenv("TRAF_LITE") && naTable && naTable->isHbaseTable())
     setNoIMneeded(TRUE);
 #endif
 
@@ -13904,12 +13904,12 @@ RelExpr * GenericUpdate::bindNode(BindWA *bindWA)
 
   // Copy the check constraints to the private memory of the GenericUpdate.
   //
-#ifdef TRAF_LOCAL_LITE
-  // Local-lite persists CHECK definitions in its catalog and validates them
+#ifdef TRAF_LITE
+  // Lite Storage persists CHECK definitions in its catalog and validates them
   // at the storage boundary.  Do not copy the native HBase predicate into
   // the DML expression tree: its tuple offsets are not stable across local
   // ALTER ADD COLUMN layouts, and date literals can fail during expression
-  // binding before the local-lite executor is entered.
+  // binding before the lite executor is entered.
   getTableDesc()->checkConstraints().clear();
 #endif
   checkConstraints() = getTableDesc()->getCheckConstraints();

@@ -81,7 +81,7 @@
 #include "seabed/ms.h"
 #include "seabed/fs.h"
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HdfsClient_JNI.h"
 #endif
 struct ModName {
@@ -690,7 +690,7 @@ Lng32 ComRtGetProgramInfo(char * pathName,    /* out */
 
   // Map the node number to cpu
   nodeNumber = cpu;
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   strcpy(processNameString, myPhandle.getPhandleString());
   MS_Mon_Process_Info_Type processInfo;
   if ((retcode = msg_mon_get_process_info_detail(
@@ -729,7 +729,7 @@ Lng32 ComRtGetProcessCreateTime(short  *cpu, /* cpu */
 {
   Lng32 retcode = 0;
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   MS_Mon_Process_Info_Type processInfo;
   char processName[MS_MON_MAX_PROCESS_NAME];
 
@@ -774,7 +774,7 @@ Int32 ComRtGetCPUArray(Int32 *&cpuArray, NAHeap *heap)
 
   cpuArray = NULL;
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   // Get the number of nodes to know how much info space to allocate
   Int32 error = msg_mon_get_node_info(&nodeCount, 0, NULL);
   if (error != 0)
@@ -815,7 +815,7 @@ Int32 ComRtGetCPUArray(Int32 *&cpuArray, NAHeap *heap)
 
   NADELETEBASIC(nodeInfo, heap);
 #else
-  // Local-lite: single node (node 0) only.
+  // Lite Storage: single node (node 0) only.
   cpuArray = new(heap) Int32[1];
   if (!cpuArray)
      return 0;
@@ -827,7 +827,7 @@ Int32 ComRtGetCPUArray(Int32 *&cpuArray, NAHeap *heap)
 
 NABoolean ComRtGetCpuStatus(char *nodeName, short cpuNum)
 {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   NABoolean retval = FALSE;   // assume cpu is down
   MS_Mon_Node_Info_Type nodeInfo;
   memset(&nodeInfo, 0, sizeof(nodeInfo));
@@ -837,7 +837,7 @@ NABoolean ComRtGetCpuStatus(char *nodeName, short cpuNum)
   }
   return retval;
 #else
-  // Local-lite: only node 0 exists and it's always up.
+  // Lite Storage: only node 0 exists and it's always up.
   return (cpuNum == 0);
 #endif
 }
@@ -846,7 +846,7 @@ void genLinuxCorefile(const char *eventMsg)
 {
   if (eventMsg)
     SQLMXLoggingArea::logExecRtInfo(__FILE__, __LINE__, eventMsg, 0);
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   NAProcessHandle myPhandle;
   myPhandle.getmine();
   myPhandle.decompose();
@@ -1041,7 +1041,7 @@ void dumpTrafStack(LIST(TrafAddrStack*) *la, const char *header, bool toFile)
 
 Int16 getBDRClusterName(char *bdrClusterName)
 {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   MS_Mon_Reg_Get_Type regList;
   Int16  error;
   strcpy(bdrClusterName, "UNKNOWN");
@@ -1064,7 +1064,7 @@ Int16 getBDRClusterName(char *bdrClusterName)
   }
   return error;
 #else
-  strcpy(bdrClusterName, "local-lite");
+  strcpy(bdrClusterName, "lite");
   return 0;
 #endif
 }

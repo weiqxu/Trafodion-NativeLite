@@ -52,7 +52,7 @@
 #include "CmpSeabaseDDL.h"
 #include "TrafDDLdesc.h"
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HBaseClient_JNI.h"
 #else
 enum { HBC_OK = 0 };
@@ -2449,7 +2449,7 @@ short FileScan::genTableName(Generator * generator,
                     FALSE), 0);
         }
     }
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   else if (naTable && naTable->objectUid().get_value() >= 1000000000000LL &&
            naTable->objectUid().get_value() < 1000000000010LL)
     {
@@ -2658,7 +2658,7 @@ short HbaseAccess::codeGen(Generator * generator)
 	}
      }
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if (!executorPred().isEmpty())
     {
       ValueIdSet predColumns;
@@ -2902,7 +2902,7 @@ short HbaseAccess::codeGen(Generator * generator)
 
       colAttr->copyLocationAttrs(castAttr);
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       ItemExpr *colExpr = colValId.getItemExpr();
       NAColumn *colNAColumn = NULL;
       if (colExpr->getOperatorType() == ITM_BASECOLUMN)
@@ -2922,17 +2922,17 @@ short HbaseAccess::codeGen(Generator * generator)
               else if (retExpr->getOperatorType() == ITM_INDEXCOLUMN)
                 retNAColumn = ((IndexColumn *)retExpr)->getNAColumn();
 
-              NABoolean sameLocalLiteColumn =
+              NABoolean sameLiteColumn =
                 (retNAColumn &&
                  ((*retNAColumn == *colNAColumn) ||
                   ((retNAColumn->getPosition() == colNAColumn->getPosition()) &&
                    (retNAColumn->getColName() == colNAColumn->getColName()))));
-              if ((!sameLocalLiteColumn) &&
+              if ((!sameLiteColumn) &&
                   retExpr->getOperatorType() == ITM_BASECOLUMN &&
                   ((BaseColumn *)retExpr)->getEIC().contains(colValId))
-                sameLocalLiteColumn = TRUE;
+                sameLiteColumn = TRUE;
 
-              if (sameLocalLiteColumn)
+              if (sameLiteColumn)
                 {
                   MapInfo *retMapInfo = generator->getMapInfoAsIs(retValId);
                   if (!retMapInfo)
@@ -2998,11 +2998,11 @@ short HbaseAccess::codeGen(Generator * generator)
 
   Queue * listOfFetchedColNames = NULL;
   char * pkeyColName = NULL;
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if ((getTableDesc()->getNATable()->isSeabaseTable()) &&
       (isAlignedFormat))
     {
-      // Local-lite projects individual columns from one canonical LLBR1 row.
+      // Lite Storage projects individual columns from one canonical LTBR1 row.
       // Preserve each physical source ordinal, including the SYSKEY marker.
       listOfFetchedColNames = new(space) Queue(space);
 
@@ -3016,7 +3016,7 @@ short HbaseAccess::codeGen(Generator * generator)
           else if (colNode->getOperatorType() == ITM_INDEXCOLUMN)
             nac = ((IndexColumn *)colNode)->getNAColumn();
           else
-            GenAssert(0, "local-lite fetched column is not a table column");
+            GenAssert(0, "lite fetched column is not a table column");
 
           NAString cnInList;
           HbaseAccess::createHbaseColId(
@@ -3218,14 +3218,14 @@ short HbaseAccess::codeGen(Generator * generator)
   ExpTupleDesc * rowIdAsciiTupleDesc = 0;
   ex_expr * rowIdExpr = NULL;
   ULng32 rowIdLength = 0;
-#ifdef TRAF_LOCAL_LITE
-  UInt16 localLiteBoundInputTuppIndex[
-    ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundInputOffset[
-    ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundInputLength[
-    ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
-  NABoolean localLiteBoundInputComplete = TRUE;
+#ifdef TRAF_LITE
+  UInt16 liteBoundInputTuppIndex[
+    ComTdbLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundInputOffset[
+    ComTdbLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundInputLength[
+    ComTdbLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS] = {0};
+  NABoolean liteBoundInputComplete = TRUE;
 #endif
   Queue * tdbListOfRangeRows = NULL;
   Queue * tdbListOfUniqueRows = NULL;
@@ -3235,7 +3235,7 @@ short HbaseAccess::codeGen(Generator * generator)
       // dont encode keys for hbase mapped tables since these tables
       // could be populated from outside of traf.
       NABoolean encodeKeys = TRUE;
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       encodeKeys = FALSE;
 #endif
       if (getTableDesc()->getNATable()->isHbaseMapTable())
@@ -3263,12 +3263,12 @@ short HbaseAccess::codeGen(Generator * generator)
 	   rowIdExpr);
     }
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   // A parameterized primary-key predicate is intentionally not represented
   // by the legacy HbaseSearchKey list (that list is reserved for compile-time
   // literal GETs).  Build the local scan's bound-key expression directly from
   // the equality predicate RHS values and materialize them into the same
-  // exploded key tuple consumed by LocalLiteRocksdbScanTcb.
+  // exploded key tuple consumed by LiteRocksdbScanTcb.
   if (!rowIdExpr && (!tablename || !strstr(tablename, "__TEMP")) &&
       getBeginKeyPred().entries() > 0 &&
       getIndexDesc() && getIndexDesc()->getNAFileSet())
@@ -3302,17 +3302,17 @@ short HbaseAccess::codeGen(Generator * generator)
             Attributes *boundAttr = boundMap ? boundMap->getAttr() : NULL;
             if (boundAttr)
               {
-            localLiteBoundInputTuppIndex[i] =
+            liteBoundInputTuppIndex[i] =
                 static_cast<UInt16>(boundAttr->getAtpIndex());
-              localLiteBoundInputOffset[i] = boundAttr->getOffset();
-                localLiteBoundInputLength[i] = boundAttr->getLength();
+              liteBoundInputOffset[i] = boundAttr->getOffset();
+                liteBoundInputLength[i] = boundAttr->getLength();
               }
             else
-              localLiteBoundInputComplete = FALSE;
+              liteBoundInputComplete = FALSE;
             }
           else if (boundValue->getOperatorType() == ITM_DYN_PARAM)
             {
-              localLiteBoundInputComplete = FALSE;
+              liteBoundInputComplete = FALSE;
               // Named parameters do not use the reduced positional-input
               // layout. Constants and generated values need no direct copy;
               // the bound-key expression materializes them normally.
@@ -3490,9 +3490,9 @@ short HbaseAccess::codeGen(Generator * generator)
 
   // NativeLite scans have their own TDB image and executor contract.  Keep
   // the legacy HBase construction only for non-local builds.
-#ifdef TRAF_LOCAL_LITE
-  ComTdbLocalLiteRocksdbScan *hbasescan_tdb = new(space)
-    ComTdbLocalLiteRocksdbScan(
+#ifdef TRAF_LITE
+  ComTdbLiteRocksdbScan *hbasescan_tdb = new(space)
+    ComTdbLiteRocksdbScan(
       tablename, convert_expr, scanExpr, rowIdExpr,
       asciiRowLen, convertRowLen, rowIdLength, rowIdAsciiRowLen,
       asciiTuppIndex, convertTuppIndex, rowIdTuppIndex,
@@ -3501,17 +3501,17 @@ short HbaseAccess::codeGen(Generator * generator)
       work_cri_desc, givenDesc, returnedDesc, downqueuelength,
       upqueuelength, expectedRows, numBuffers, buffersize);
   if (getIndexDesc()->getNAFileSet()->getIndexKeyColumns().entries() >
-      ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS)
-    localLiteBoundInputComplete = FALSE;
-  if (rowIdExpr && localLiteBoundInputComplete)
+      ComTdbLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS)
+    liteBoundInputComplete = FALSE;
+  if (rowIdExpr && liteBoundInputComplete)
     for (CollIndex i = 0; i < getIndexDesc()->getNAFileSet()
                                     ->getIndexKeyColumns().entries() &&
-                            i < ComTdbLocalLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS;
+                            i < ComTdbLiteRocksdbScan::MAX_BOUND_KEY_COLUMNS;
        i++)
-    if (localLiteBoundInputLength[i] > 0)
+    if (liteBoundInputLength[i] > 0)
       hbasescan_tdb->setBoundKeyInput(
-          static_cast<UInt16>(i), localLiteBoundInputTuppIndex[i],
-          localLiteBoundInputOffset[i], localLiteBoundInputLength[i]);
+          static_cast<UInt16>(i), liteBoundInputTuppIndex[i],
+          liteBoundInputOffset[i], liteBoundInputLength[i]);
 #else
   ComTdbHbaseAccess *hbasescan_tdb = new(space) 
     ComTdbHbaseAccess(
@@ -3597,7 +3597,7 @@ short HbaseAccess::codeGen(Generator * generator)
 
   generator->initTdbFields(hbasescan_tdb);
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   if (getTableDesc()->getNATable()->isHbaseRowTable()) //rowwiseHbaseFormat())
     hbasescan_tdb->setRowwiseFormat(TRUE);
 
@@ -3643,10 +3643,10 @@ short HbaseAccess::codeGen(Generator * generator)
 #else
   // Dynamic primary-key predicates do not always produce an HbaseSearchKey
   // (the legacy HBase path normally falls back to its key-range machinery),
-  // but the local executor can still evaluate the generated bound-key
+  // but the Lite executor can still evaluate the generated bound-key
   // expression.  Mark only the primary access path as eligible so ranges and
   // secondary indexes retain their scan behavior.
-  if (rowIdExpr && localLiteBoundInputComplete &&
+  if (rowIdExpr && liteBoundInputComplete &&
       getIndexDesc() && getIndexDesc()->getNAFileSet() &&
       getIndexDesc()->getNAFileSet()->getKeytag() == 0)
     hbasescan_tdb->setUniqueKeyInfo(TRUE);
@@ -3657,7 +3657,7 @@ short HbaseAccess::codeGen(Generator * generator)
        addExplainInfo(hbasescan_tdb, 0, 0, generator));
   }
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   if ((generator->computeStats()) && 
       (generator->collectStatsType() == ComTdb::PERTABLE_STATS
       || generator->collectStatsType() == ComTdb::OPERATOR_STATS))

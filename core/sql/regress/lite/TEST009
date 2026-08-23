@@ -1,0 +1,70 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Compiler DDL diagnostics plus catalog-DDL coverage.
+CREATE TABLE LITEREG009_BASE
+  (id INT PRIMARY KEY,
+   label VARCHAR(20));
+
+INSERT INTO LITEREG009_BASE VALUES (1, 'still-here');
+
+-- Compiler-routed DDL must preserve lite diagnostics while supported
+-- constraints and defaults remain usable.
+CREATE TABLE LITEREG009_BASE (id INT);
+CREATE TABLE LITEREG009_CHECK (id INT CHECK (id > 0));
+CREATE TABLE LITEREG009_DEFAULT (id INT DEFAULT 1);
+CREATE TABLE LITEREG009_LOB (payload BLOB(100));
+CREATE TABLE LITEREG009_CASCADE (id INT);
+DROP TABLE LITEREG009_CASCADE CASCADE;
+DROP TABLE LITEREG009_MISSING;
+
+-- Supported DML remains usable alongside SQLCI-rejected statement classes.
+UPDATE LITEREG009_BASE SET label = 'changed' WHERE id = 1;
+DELETE FROM LITEREG009_BASE WHERE id = 1;
+MERGE INTO LITEREG009_BASE USING (SELECT * FROM LITEREG009_BASE) AS source_rows
+  ON LITEREG009_BASE.id = source_rows.id
+  WHEN MATCHED THEN UPDATE SET label = 'changed';
+UPSERT INTO LITEREG009_BASE VALUES (2, 'upserted');
+UPSERT USING LOAD INTO LITEREG009_BASE VALUES (3, 'bulk-upserted');
+CREATE INDEX LITEREG009_IX ON LITEREG009_BASE(id);
+CREATE VIEW LITEREG009_VIEW AS SELECT * FROM LITEREG009_BASE;
+CREATE SEQUENCE LITEREG009_SEQ;
+CREATE SCHEMA LITEREG009_SCHEMA;
+CREATE SYNONYM LITEREG009_SYN FOR LITEREG009_BASE;
+CREATE EXTERNAL TABLE LITEREG009_EXT (id INT);
+ALTER TABLE LITEREG009_BASE ADD COLUMN extra_col INT;
+
+-- Supported and rejected statements must leave the session and dependencies
+-- usable. Added nullable columns read as NULL for pre-existing rows.
+SELECT id, label, extra_col
+  FROM LITEREG009_BASE
+  ORDER BY id;
+SELECT id, label FROM LITEREG009_VIEW ORDER BY id;
+SELECT id, label FROM LITEREG009_SYN ORDER BY id;
+
+DROP SYNONYM LITEREG009_SYN;
+DROP VIEW LITEREG009_VIEW;
+DROP SEQUENCE LITEREG009_SEQ;
+DROP SCHEMA LITEREG009_SCHEMA;
+DROP TABLE LITEREG009_CHECK;
+DROP TABLE LITEREG009_DEFAULT;
+
+TRUNCATE TABLE LITEREG009_BASE;
+SELECT id, label FROM LITEREG009_BASE ORDER BY id;
+
+DROP TABLE LITEREG009_BASE;
+exit;

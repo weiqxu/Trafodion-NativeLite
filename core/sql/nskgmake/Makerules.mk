@@ -291,7 +291,7 @@ mavenbuild_hdp:
 	cp -pf ../target/trafodion-sql-hdp*.jar $(TRAF_HOME)/export/lib
 
 # This is where the top-level is declared to build everything.
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 buildall: $(FINAL_LIBS) $(FINAL_DLLS) $(FINAL_INSTALL_OBJS) $(FINAL_EXES)
 else
 buildall: $(FINAL_LIBS) $(FINAL_DLLS) $(FINAL_INSTALL_OBJS) $(FINAL_EXES) mavenbuild mavenbuild_hdp mavenbuild_apache
@@ -308,7 +308,7 @@ clean:
 	@rm -rf $(LOGFILE) $(LOGFILE).old
 	@echo "Removing coverage files"
 	@-find $(TOPDIR) -maxdepth 1 -name '*.gcov' -print | xargs rm -f
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 	@cd ..; $(MAVEN) clean
 endif
 	@rm -rf $(TRAF_HOME)/export/lib/trafodion-sql-*.jar

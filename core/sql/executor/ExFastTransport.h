@@ -34,7 +34,7 @@
 #include "ex_tcb.h"
 #include "ComSmallDefs.h"
 #include "ExStats.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HdfsClient_JNI.h"
 #endif
 #include "ExpLOBinterface.h"

@@ -1,0 +1,112 @@
+>>CREATE TABLE LITEREG010_SOURCE_ROWS
++>  (id INT PRIMARY KEY,
++>   grp INT,
++>   label VARCHAR(20),
++>   val INT);
+--- SQL operation complete.
+>>CREATE TABLE LITEREG010_TARGET_ROWS
++>  (id INT PRIMARY KEY,
++>   label VARCHAR(20),
++>   val INT);
+--- SQL operation complete.
+>>CREATE TABLE LITEREG010_CONFLICT_ROWS
++>  (id INT PRIMARY KEY,
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG010_SOURCE_ROWS VALUES
++>  (1, 10, 'one', 5),
++>  (2, 10, 'two', 7),
++>  (3, 20, 'three', 9);
+--- 3 row(s) inserted.
+>>INSERT INTO LITEREG010_TARGET_ROWS (label, id, val)
++>  SELECT label, id + 10, val * 2
++>    FROM LITEREG010_SOURCE_ROWS
++>   WHERE grp = 10;
+--- 2 row(s) inserted.
+>>SELECT id, label, val
++>  FROM LITEREG010_TARGET_ROWS
++> ORDER BY id;
+ID           LABEL                 VAL
+-----------  --------------------  -----------
+         11  one                            10
+         12  two                            14
+--- 2 row(s) selected.
+>>INSERT INTO LITEREG010_TARGET_ROWS
++>  SELECT id + 20, label, val
++>    FROM LITEREG010_SOURCE_ROWS
++>   WHERE id = 3
++>UNION ALL
++>  SELECT id + 30, label, val
++>    FROM LITEREG010_SOURCE_ROWS
++>   WHERE id = 1;
+--- 2 row(s) inserted.
+>>SELECT id, label, val
++>  FROM LITEREG010_TARGET_ROWS
++> ORDER BY id;
+ID           LABEL                 VAL
+-----------  --------------------  -----------
+         11  one                            10
+         12  two                            14
+         23  three                           9
+         31  one                             5
+--- 4 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>INSERT INTO LITEREG010_TARGET_ROWS
++>  SELECT id + 100, label, val
++>    FROM LITEREG010_SOURCE_ROWS;
+--- 3 row(s) inserted.
+>>SELECT id, label, val
++>  FROM LITEREG010_TARGET_ROWS
++> WHERE id >= 100
++> ORDER BY id;
+ID           LABEL                 VAL
+-----------  --------------------  -----------
+        101  one                             5
+        102  two                             7
+        103  three                           9
+--- 3 row(s) selected.
+>>ROLLBACK WORK;
+--- SQL operation complete.
+>>SELECT COUNT(*) AS rolled_back_rows
++>  FROM LITEREG010_TARGET_ROWS
++> WHERE id >= 100;
+ROLLED_BACK_ROWS
+--------------------
+                   0
+--- 1 row(s) selected.
+>>INSERT INTO LITEREG010_CONFLICT_ROWS VALUES (15, 'committed');
+--- 1 row(s) inserted.
+>>INSERT INTO LITEREG010_CONFLICT_ROWS
++>  SELECT id + 12, label
++>    FROM LITEREG010_SOURCE_ROWS;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate lite primary key <MXID>
+--- 0 row(s) inserted.
+>>SELECT id, label
++>  FROM LITEREG010_CONFLICT_ROWS
++> ORDER BY id;
+ID           LABEL
+-----------  --------------------
+         15  committed
+--- 1 row(s) selected.
+>>INSERT INTO LITEREG010_CONFLICT_ROWS
++>  SELECT 99, label
++>    FROM LITEREG010_SOURCE_ROWS
++>   WHERE id = 1;
+--- 1 row(s) inserted.
+>>SELECT id, label
++>  FROM LITEREG010_CONFLICT_ROWS
++> ORDER BY id;
+ID           LABEL
+-----------  --------------------
+         15  committed
+         99  one
+--- 2 row(s) selected.
+>>DROP TABLE LITEREG010_CONFLICT_ROWS;
+--- SQL operation complete.
+>>DROP TABLE LITEREG010_TARGET_ROWS;
+--- SQL operation complete.
+>>DROP TABLE LITEREG010_SOURCE_ROWS;
+--- SQL operation complete.
+>>exit;

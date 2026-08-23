@@ -55,11 +55,11 @@ CPPSRC := CmpDescribe.cpp \
 	QCache.cpp \
 	vers_libsqlcomp.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-CPPSRC += LocalLiteRocksDBStore.cpp \
-	LocalLiteStorage.cpp \
-	LocalLiteUnifiedRocksDB.cpp
-SRCPATH += localstore
+ifeq ($(TRAF_LITE),1)
+CPPSRC += LiteRocksDBStore.cpp \
+	LiteStorage.cpp \
+	LiteUnifiedRocksDB.cpp
+SRCPATH += litestore
 endif
 
 ifeq ($(strip $(TRAFODION_VER_MAJOR)),)

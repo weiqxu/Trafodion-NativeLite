@@ -54,8 +54,8 @@ class Descriptor;
 class ExRtFragTable;
 class TransMode;
 class ComDiagsArea;
-#ifdef TRAF_LOCAL_LITE
-class LocalLiteTxnContext;
+#ifdef TRAF_LITE
+class LiteTxnContext;
 #endif
 
 //
@@ -356,14 +356,14 @@ private:
   bool mayPinAudit_;
   bool mayLock_;
 
-#ifdef TRAF_LOCAL_LITE
-  void beginLocalLiteStatement(ExExeStmtGlobals *glob);
-  void endLocalLiteStatement();
+#ifdef TRAF_LITE
+  void beginLiteStatement(ExExeStmtGlobals *glob);
+  void endLiteStatement();
 
-  LocalLiteTxnContext *localLiteTxnContext_;
-  const void *localLiteStatementOwner_;
-  UInt64 localLiteStatementExecutionId_;
-  NABoolean localLiteStatementActive_;
+  LiteTxnContext *liteTxnContext_;
+  const void *liteStatementOwner_;
+  UInt64 liteStatementExecutionId_;
+  NABoolean liteStatementActive_;
 #endif
 
   // private methods

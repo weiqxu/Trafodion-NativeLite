@@ -176,12 +176,12 @@ public:
 
   ComTdb::ex_node_type getNodeType() const { return nodeType_; }
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   // Used by tuple flow to give compiler-generated local INSERT plans one
   // statement-atomic transaction boundary.
-  virtual NABoolean isLocalLiteInsert() const { return FALSE; }
-  virtual NABoolean isLocalLiteUpdate() const { return FALSE; }
-  virtual NABoolean isLocalLiteDelete() const { return FALSE; }
+  virtual NABoolean isLiteInsert() const { return FALSE; }
+  virtual NABoolean isLiteUpdate() const { return FALSE; }
+  virtual NABoolean isLiteDelete() const { return FALSE; }
 #endif
 
   // QSTUFF

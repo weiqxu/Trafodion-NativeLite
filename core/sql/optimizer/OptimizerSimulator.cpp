@@ -52,7 +52,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <cstdarg>
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HBaseClient_JNI.h"
 #else
 #include "ExpHbaseInterface.h"
@@ -2056,8 +2056,8 @@ NABoolean OptimizerSimulator::readHiveStmt(ifstream & DDLFile, NAString & stmt, 
 
 void OptimizerSimulator::histogramHDFSToLocal()
 {
-#ifdef TRAF_LOCAL_LITE
-    raiseOsimException("HDFS histogram capture is disabled in local-lite");
+#ifdef TRAF_LITE
+    raiseOsimException("HDFS histogram capture is disabled in lite");
 #else
     Int32 status;
     struct hdfsBuilder * srcBld = hdfsNewBuilder();
@@ -2113,7 +2113,7 @@ void OptimizerSimulator::histogramHDFSToLocal()
 
 void OptimizerSimulator::removeHDFSCacheDirectory()
 {    
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
     //build hdfs handle
     struct hdfsBuilder * hdfsBld = hdfsNewBuilder();
     hdfsBuilderSetNameNode(hdfsBld, "default");

@@ -50,7 +50,7 @@
 
 
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "hdfs.h"
 #include "jni.h"
 #endif
@@ -65,7 +65,7 @@
 #include "ComQueue.h"
 #include "QRLogger.h"
 #include "NAMemory.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HdfsClient_JNI.h"
 #else
 enum HDFS_Client_RetCode

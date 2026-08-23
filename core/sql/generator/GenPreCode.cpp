@@ -69,9 +69,9 @@
 #include "CmpSeabaseDDL.h"
 #include "NAExecTrans.h"
 #include "exp_function.h"
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteRocksDBStore.h"
-#include "LocalLiteRowCodec.h"
+#ifdef TRAF_LITE
+#include "LiteRocksDBStore.h"
+#include "LiteRowCodec.h"
 
 #include <stdio.h>
 #include <string>
@@ -150,13 +150,13 @@ static void generateKeyExpr(const ValueIdSet & externalInputs,
 
 } // static generateKeyExpr()
 
-#ifdef TRAF_LOCAL_LITE
-static std::string localLiteNAStringToStd(const NAString &s)
+#ifdef TRAF_LITE
+static std::string liteNAStringToStd(const NAString &s)
 {
   return std::string(s.data(), s.length());
 }
 
-static std::string localLiteFormatExactNumeric(Int64 value, Lng32 scale)
+static std::string liteFormatExactNumeric(Int64 value, Lng32 scale)
 {
   bool negative = value < 0;
   UInt64 magnitude = negative ? (static_cast<UInt64>(0) -
@@ -182,32 +182,32 @@ static std::string localLiteFormatExactNumeric(Int64 value, Lng32 scale)
   return result;
 }
 
-static NABoolean localLiteLoadTable(TableDesc *tdesc,
-                                    LocalLiteTableDef *table)
+static NABoolean liteLoadTable(TableDesc *tdesc,
+                                    LiteTableDef *table)
 {
   if (!tdesc || !tdesc->getNATable())
     return FALSE;
 
   const QualifiedName &qn = tdesc->getNATable()->getTableName();
-  LocalLiteRocksDBStore store;
+  LiteRocksDBStore store;
   std::string error;
   bool exists = false;
-  if (!store.tableExists(localLiteNAStringToStd(qn.getCatalogName()),
-                         localLiteNAStringToStd(qn.getSchemaName()),
-                         localLiteNAStringToStd(qn.getObjectName()),
+  if (!store.tableExists(liteNAStringToStd(qn.getCatalogName()),
+                         liteNAStringToStd(qn.getSchemaName()),
+                         liteNAStringToStd(qn.getObjectName()),
                          &exists,
                          &error) ||
       !exists)
     return FALSE;
 
-  return store.loadTable(localLiteNAStringToStd(qn.getCatalogName()),
-                         localLiteNAStringToStd(qn.getSchemaName()),
-                         localLiteNAStringToStd(qn.getObjectName()),
+  return store.loadTable(liteNAStringToStd(qn.getCatalogName()),
+                         liteNAStringToStd(qn.getSchemaName()),
+                         liteNAStringToStd(qn.getObjectName()),
                          table,
                          &error) ? TRUE : FALSE;
 }
 
-static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
+static NABoolean liteConstValueObjectToText(ConstValue *cv,
                                                  NABoolean negate,
                                                  std::string *text)
 {
@@ -227,7 +227,7 @@ static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
       const NAString *raw = cv->getRawText();
       if (!raw)
         return FALSE;
-      *text = localLiteNAStringToStd(*raw);
+      *text = liteNAStringToStd(*raw);
       return TRUE;
     }
 
@@ -238,7 +238,7 @@ static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
       const NAString *raw = cv->getRawText();
       if (!raw)
         return FALSE;
-      *text = localLiteNAStringToStd(*raw);
+      *text = liteNAStringToStd(*raw);
       return TRUE;
     }
 
@@ -249,7 +249,7 @@ static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
       Int64 value = cv->getExactNumericValue(scale);
       if (negate)
         value = -value;
-      *text = localLiteFormatExactNumeric(value, scale);
+      *text = liteFormatExactNumeric(value, scale);
       return TRUE;
     }
 
@@ -283,7 +283,7 @@ static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
       const NAString *raw = cv->getRawText();
       if (!raw)
         return FALSE;
-      *text = localLiteNAStringToStd(*raw);
+      *text = liteNAStringToStd(*raw);
       if (negate && !text->empty() && (*text)[0] != '-')
         text->insert(text->begin(), '-');
       return TRUE;
@@ -292,7 +292,7 @@ static NABoolean localLiteConstValueObjectToText(ConstValue *cv,
   return FALSE;
 }
 
-static NABoolean localLiteConstExprIsExactZero(ItemExpr *expr)
+static NABoolean liteConstExprIsExactZero(ItemExpr *expr)
 {
   std::string text;
   if (!expr)
@@ -302,7 +302,7 @@ static NABoolean localLiteConstExprIsExactZero(ItemExpr *expr)
   ConstValue *cv = expr->castToConstValue(negate);
   if (!cv && expr->getOperatorType() == ITM_CACHE_PARAM)
     cv = static_cast<ConstantParameter *>(expr)->getConstVal();
-  if (!localLiteConstValueObjectToText(cv, negate, &text))
+  if (!liteConstValueObjectToText(cv, negate, &text))
     return FALSE;
 
   for (size_t i = 0; i < text.size(); i++)
@@ -311,7 +311,7 @@ static NABoolean localLiteConstExprIsExactZero(ItemExpr *expr)
   return TRUE;
 }
 
-static NABoolean localLiteConstExprToText(ItemExpr *expr,
+static NABoolean liteConstExprToText(ItemExpr *expr,
                                           NABoolean inheritedNegate,
                                           std::string *text)
 {
@@ -321,11 +321,11 @@ static NABoolean localLiteConstExprToText(ItemExpr *expr,
   NABoolean negate = FALSE;
   ConstValue *cv = expr->castToConstValue(negate);
   if (cv)
-    return localLiteConstValueObjectToText(
+    return liteConstValueObjectToText(
         cv, (inheritedNegate != negate), text);
 
   if (expr->getOperatorType() == ITM_CACHE_PARAM)
-    return localLiteConstValueObjectToText(
+    return liteConstValueObjectToText(
         static_cast<ConstantParameter *>(expr)->getConstVal(),
         inheritedNegate,
         text);
@@ -334,11 +334,11 @@ static NABoolean localLiteConstExprToText(ItemExpr *expr,
       expr->getOperatorType() == ITM_CAST_CONVERT ||
       expr->getOperatorType() == ITM_CAST_TYPE ||
       expr->getOperatorType() == ITM_NARROW)
-    return localLiteConstExprToText(
+    return liteConstExprToText(
         expr->child(0)->castToItemExpr(), inheritedNegate, text);
 
   if (expr->getOperatorType() == ITM_NEGATE)
-    return localLiteConstExprToText(
+    return liteConstExprToText(
         expr->child(0)->castToItemExpr(), !inheritedNegate, text);
 
   if (expr->getOperatorType() == ITM_MINUS ||
@@ -346,26 +346,26 @@ static NABoolean localLiteConstExprToText(ItemExpr *expr,
     {
       ItemExpr *left = expr->child(0)->castToItemExpr();
       ItemExpr *right = expr->child(1)->castToItemExpr();
-      if (localLiteConstExprIsExactZero(left))
-        return localLiteConstExprToText(
+      if (liteConstExprIsExactZero(left))
+        return liteConstExprToText(
             right,
             (expr->getOperatorType() == ITM_MINUS) ?
                 !inheritedNegate : inheritedNegate,
             text);
-      if (localLiteConstExprIsExactZero(right))
-        return localLiteConstExprToText(left, inheritedNegate, text);
+      if (liteConstExprIsExactZero(right))
+        return liteConstExprToText(left, inheritedNegate, text);
     }
 
   return FALSE;
 }
 
-static NABoolean localLiteConstValueToText(ValueId valueId,
+static NABoolean liteConstValueToText(ValueId valueId,
                                            std::string *text)
 {
-  return localLiteConstExprToText(valueId.getItemExpr(), FALSE, text);
+  return liteConstExprToText(valueId.getItemExpr(), FALSE, text);
 }
 
-static NABoolean localLiteColumnPosition(ValueId valueId,
+static NABoolean liteColumnPosition(ValueId valueId,
                                          size_t *position)
 {
   ItemExpr *expr = valueId.getItemExpr();
@@ -411,10 +411,10 @@ static NABoolean localLiteColumnPosition(ValueId valueId,
   ValueId columnId = columns.init();
   if (!columns.next(columnId))
     return FALSE;
-  return localLiteColumnPosition(columnId, position);
+  return liteColumnPosition(columnId, position);
 }
 
-static NABoolean localLiteMatchColumnConstEquality(ItemExpr *predicate,
+static NABoolean liteMatchColumnConstEquality(ItemExpr *predicate,
                                                    size_t *columnPosition,
                                                    std::string *field)
 {
@@ -424,18 +424,18 @@ static NABoolean localLiteMatchColumnConstEquality(ItemExpr *predicate,
   ValueId left = predicate->child(0)->getValueId();
   ValueId right = predicate->child(1)->getValueId();
 
-  if (localLiteColumnPosition(left, columnPosition) &&
-      localLiteConstValueToText(right, field))
+  if (liteColumnPosition(left, columnPosition) &&
+      liteConstValueToText(right, field))
     return TRUE;
 
-  if (localLiteColumnPosition(right, columnPosition) &&
-      localLiteConstValueToText(left, field))
+  if (liteColumnPosition(right, columnPosition) &&
+      liteConstValueToText(left, field))
     return TRUE;
 
   return FALSE;
 }
 
-static NABoolean localLiteMatchVEGColumnConstEquality(ItemExpr *predicate,
+static NABoolean liteMatchVEGColumnConstEquality(ItemExpr *predicate,
                                                       size_t *columnPosition,
                                                       std::string *field)
 {
@@ -452,7 +452,7 @@ static NABoolean localLiteMatchVEGColumnConstEquality(ItemExpr *predicate,
        members.advance(member))
     {
       std::string value;
-      if (localLiteConstValueToText(member, &value))
+      if (liteConstValueToText(member, &value))
         {
           constId = member;
           *field = value;
@@ -470,14 +470,14 @@ static NABoolean localLiteMatchVEGColumnConstEquality(ItemExpr *predicate,
       if (member == constId)
         continue;
 
-      if (localLiteColumnPosition(member, columnPosition))
+      if (liteColumnPosition(member, columnPosition))
         return TRUE;
     }
 
   return FALSE;
 }
 
-static NABoolean localLiteMatchColumnConstRange(ItemExpr *predicate,
+static NABoolean liteMatchColumnConstRange(ItemExpr *predicate,
                                                 size_t *columnPosition)
 {
   if (!predicate)
@@ -490,16 +490,16 @@ static NABoolean localLiteMatchColumnConstRange(ItemExpr *predicate,
   std::string ignored;
   ValueId left = predicate->child(0)->getValueId();
   ValueId right = predicate->child(1)->getValueId();
-  if (localLiteColumnPosition(left, columnPosition) &&
-      localLiteConstValueToText(right, &ignored))
+  if (liteColumnPosition(left, columnPosition) &&
+      liteConstValueToText(right, &ignored))
     return TRUE;
-  if (localLiteColumnPosition(right, columnPosition) &&
-      localLiteConstValueToText(left, &ignored))
+  if (liteColumnPosition(right, columnPosition) &&
+      liteConstValueToText(left, &ignored))
     return TRUE;
   return FALSE;
 }
 
-static OperatorTypeEnum localLiteReverseComparison(OperatorTypeEnum op)
+static OperatorTypeEnum liteReverseComparison(OperatorTypeEnum op)
 {
   switch (op)
     {
@@ -511,7 +511,7 @@ static OperatorTypeEnum localLiteReverseComparison(OperatorTypeEnum op)
     }
 }
 
-static NABoolean localLiteMatchColumnConstRangeValue(
+static NABoolean liteMatchColumnConstRangeValue(
     ItemExpr *predicate,
     size_t *columnPosition,
     std::string *field,
@@ -525,23 +525,23 @@ static NABoolean localLiteMatchColumnConstRangeValue(
     return FALSE;
   ValueId left = predicate->child(0)->getValueId();
   ValueId right = predicate->child(1)->getValueId();
-  if (localLiteColumnPosition(left, columnPosition) &&
-      localLiteConstValueToText(right, field))
+  if (liteColumnPosition(left, columnPosition) &&
+      liteConstValueToText(right, field))
     {
       *normalizedOperator = op;
       return TRUE;
     }
-  if (localLiteColumnPosition(right, columnPosition) &&
-      localLiteConstValueToText(left, field))
+  if (liteColumnPosition(right, columnPosition) &&
+      liteConstValueToText(left, field))
     {
-      *normalizedOperator = localLiteReverseComparison(op);
+      *normalizedOperator = liteReverseComparison(op);
       return TRUE;
     }
   return FALSE;
 }
 
-static NABoolean localLiteBuildPrimaryKeyForSearchKey(
-    const LocalLiteTableDef &table,
+static NABoolean liteBuildPrimaryKeyForSearchKey(
+    const LiteTableDef &table,
     HbaseSearchKey *searchKey,
     std::string *rowKey)
 {
@@ -560,18 +560,18 @@ static NABoolean localLiteBuildPrimaryKeyForSearchKey(
   for (size_t i = 0; i < table.primaryKeyColumns.size(); i++)
     {
       std::string field;
-      if (!localLiteConstValueToText(keyValues[i], &field))
+      if (!liteConstValueToText(keyValues[i], &field))
         return FALSE;
       keyFields.push_back(field);
     }
 
   std::string error;
-  return LocalLiteBuildPrimaryKeyFromTextFields(table, keyFields, rowKey,
+  return LiteBuildPrimaryKeyFromTextFields(table, keyFields, rowKey,
                                                 &error) ? TRUE : FALSE;
 }
 
-static NABoolean localLiteBuildKeyFieldsFromPredicates(
-    const LocalLiteTableDef &table,
+static NABoolean liteBuildKeyFieldsFromPredicates(
+    const LiteTableDef &table,
     const std::vector<size_t> &keyColumns,
     const ValueIdSet &predicates,
     std::vector<std::string> *keyFields,
@@ -592,10 +592,10 @@ static NABoolean localLiteBuildKeyFieldsFromPredicates(
       ItemExpr *pred = predId.getItemExpr();
       size_t columnPosition = 0;
       std::string field;
-      if (!localLiteMatchColumnConstEquality(pred,
+      if (!liteMatchColumnConstEquality(pred,
                                              &columnPosition,
                                              &field) &&
-          !localLiteMatchVEGColumnConstEquality(pred,
+          !liteMatchVEGColumnConstEquality(pred,
                                                 &columnPosition,
                                                 &field))
         continue;
@@ -621,7 +621,7 @@ static NABoolean localLiteBuildKeyFieldsFromPredicates(
   return TRUE;
 }
 
-static size_t localLiteBuildLeadingKeyFieldsFromPredicates(
+static size_t liteBuildLeadingKeyFieldsFromPredicates(
     const std::vector<size_t> &keyColumns,
     const ValueIdSet &predicates,
     std::vector<std::string> *keyFields)
@@ -637,9 +637,9 @@ static size_t localLiteBuildLeadingKeyFieldsFromPredicates(
           size_t columnPosition = 0;
           std::string field;
           ItemExpr *pred = predId.getItemExpr();
-          if ((localLiteMatchColumnConstEquality(
+          if ((liteMatchColumnConstEquality(
                    pred, &columnPosition, &field) ||
-               localLiteMatchVEGColumnConstEquality(
+               liteMatchVEGColumnConstEquality(
                    pred, &columnPosition, &field)) &&
               columnPosition == keyColumns[keyNumber])
             {
@@ -654,7 +654,7 @@ static size_t localLiteBuildLeadingKeyFieldsFromPredicates(
   return keyFields->size();
 }
 
-static NABoolean localLiteHasRangePredicateForColumn(
+static NABoolean liteHasRangePredicateForColumn(
     size_t column,
     const ValueIdSet &predicates)
 {
@@ -663,7 +663,7 @@ static NABoolean localLiteHasRangePredicateForColumn(
        predicates.advance(predId))
     {
       size_t columnPosition = 0;
-      if (localLiteMatchColumnConstRange(predId.getItemExpr(),
+      if (liteMatchColumnConstRange(predId.getItemExpr(),
                                          &columnPosition) &&
           columnPosition == column)
         return TRUE;
@@ -671,7 +671,7 @@ static NABoolean localLiteHasRangePredicateForColumn(
   return FALSE;
 }
 
-static NABoolean localLiteHasIsNullPredicateForColumn(
+static NABoolean liteHasIsNullPredicateForColumn(
     size_t column,
     const ValueIdSet &predicates)
 {
@@ -682,7 +682,7 @@ static NABoolean localLiteHasIsNullPredicateForColumn(
       ItemExpr *predicate = predId.getItemExpr();
       size_t columnPosition = 0;
       if (predicate && predicate->getOperatorType() == ITM_IS_NULL &&
-          localLiteColumnPosition(predicate->child(0)->getValueId(),
+          liteColumnPosition(predicate->child(0)->getValueId(),
                                   &columnPosition) &&
           columnPosition == column)
         return TRUE;
@@ -690,8 +690,8 @@ static NABoolean localLiteHasIsNullPredicateForColumn(
   return FALSE;
 }
 
-static NABoolean localLiteBuildPrimaryKeyFromPredicates(
-    const LocalLiteTableDef &table,
+static NABoolean liteBuildPrimaryKeyFromPredicates(
+    const LiteTableDef &table,
     const ValueIdSet &predicates,
     std::string *rowKey)
 {
@@ -699,19 +699,19 @@ static NABoolean localLiteBuildPrimaryKeyFromPredicates(
     return FALSE;
 
   std::vector<std::string> keyFields;
-  if (!localLiteBuildKeyFieldsFromPredicates(
+  if (!liteBuildKeyFieldsFromPredicates(
           table, table.primaryKeyColumns, predicates, &keyFields))
     return FALSE;
 
   std::string error;
-  return LocalLiteBuildPrimaryKeyFromTextFields(table, keyFields, rowKey,
+  return LiteBuildPrimaryKeyFromTextFields(table, keyFields, rowKey,
                                                 &error) ? TRUE : FALSE;
 }
 
-static std::string localLiteEncodeGetRowKey(const std::string &rowKey)
+static std::string liteEncodeGetRowKey(const std::string &rowKey)
 {
   static const char hex[] = "0123456789abcdef";
-  std::string encoded("LLPK1:");
+  std::string encoded("LTPK1:");
   encoded.reserve(encoded.size() + rowKey.size() * 2);
   for (size_t i = 0; i < rowKey.size(); i++)
     {
@@ -722,7 +722,7 @@ static std::string localLiteEncodeGetRowKey(const std::string &rowKey)
   return encoded;
 }
 
-static NABoolean localLiteRewritePrimaryGetRows(
+static NABoolean liteRewritePrimaryGetRows(
     TableDesc *tdesc,
     NAList<HbaseSearchKey*> &searchKeys,
     ListOfUniqueRows &listOfUniqueRows)
@@ -730,8 +730,8 @@ static NABoolean localLiteRewritePrimaryGetRows(
   if (listOfUniqueRows.entries() == 0 || searchKeys.entries() == 0)
     return FALSE;
 
-  LocalLiteTableDef table;
-  if (!localLiteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
+  LiteTableDef table;
+  if (!liteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
     return FALSE;
 
   HbaseUniqueRows localGetSpec;
@@ -740,9 +740,9 @@ static NABoolean localLiteRewritePrimaryGetRows(
   for (CollIndex i = 0; i < searchKeys.entries(); i++)
     {
       std::string rowKey;
-      if (!localLiteBuildPrimaryKeyForSearchKey(table, searchKeys[i], &rowKey))
+      if (!liteBuildPrimaryKeyForSearchKey(table, searchKeys[i], &rowKey))
         return FALSE;
-      rowKey = localLiteEncodeGetRowKey(rowKey);
+      rowKey = liteEncodeGetRowKey(rowKey);
       localGetSpec.rowIds_.insert(NAString(rowKey.data(),
                                            static_cast<Int32>(rowKey.size())));
     }
@@ -755,19 +755,19 @@ static NABoolean localLiteRewritePrimaryGetRows(
   return TRUE;
 }
 
-static NABoolean localLiteRewritePrimaryGetRowsFromPredicates(
+static NABoolean liteRewritePrimaryGetRowsFromPredicates(
     TableDesc *tdesc,
     const ValueIdSet &predicates,
     ListOfUniqueRows &listOfUniqueRows)
 {
-  LocalLiteTableDef table;
-  if (!localLiteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
+  LiteTableDef table;
+  if (!liteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
     return FALSE;
 
   std::string rowKey;
-  if (!localLiteBuildPrimaryKeyFromPredicates(table, predicates, &rowKey))
+  if (!liteBuildPrimaryKeyFromPredicates(table, predicates, &rowKey))
     return FALSE;
-  rowKey = localLiteEncodeGetRowKey(rowKey);
+  rowKey = liteEncodeGetRowKey(rowKey);
 
   HbaseUniqueRows localGetSpec;
   localGetSpec.rowTS_ = -1;
@@ -779,7 +779,7 @@ static NABoolean localLiteRewritePrimaryGetRowsFromPredicates(
   return TRUE;
 }
 
-static NABoolean localLiteCollectColumnConstEqualities(
+static NABoolean liteCollectColumnConstEqualities(
     ItemExpr *predicate,
     size_t *columnPosition,
     std::vector<std::string> *fields)
@@ -792,9 +792,9 @@ static NABoolean localLiteCollectColumnConstEqualities(
       size_t rightColumn = 0;
       std::vector<std::string> leftFields;
       std::vector<std::string> rightFields;
-      if (!localLiteCollectColumnConstEqualities(
+      if (!liteCollectColumnConstEqualities(
               predicate->child(0), &leftColumn, &leftFields) ||
-          !localLiteCollectColumnConstEqualities(
+          !liteCollectColumnConstEqualities(
               predicate->child(1), &rightColumn, &rightFields) ||
           leftColumn != rightColumn)
         return FALSE;
@@ -805,27 +805,27 @@ static NABoolean localLiteCollectColumnConstEqualities(
     }
 
   std::string field;
-  if (!localLiteMatchColumnConstEquality(
+  if (!liteMatchColumnConstEquality(
           predicate, columnPosition, &field) &&
-      !localLiteMatchVEGColumnConstEquality(
+      !liteMatchVEGColumnConstEquality(
           predicate, columnPosition, &field))
     return FALSE;
   fields->push_back(field);
   return TRUE;
 }
 
-static size_t localLiteBuildLeadingKeyFieldsFromPredicates(
+static size_t liteBuildLeadingKeyFieldsFromPredicates(
     const std::vector<size_t> &keyColumns,
     const ValueIdSet &predicates,
     std::vector<std::string> *keyFields);
 
-static NABoolean localLiteRewritePrimaryMultiGetRowsFromPredicates(
+static NABoolean liteRewritePrimaryMultiGetRowsFromPredicates(
     TableDesc *tdesc,
     const ValueIdSet &predicates,
     ListOfUniqueRows &listOfUniqueRows)
 {
-  LocalLiteTableDef table;
-  if (!localLiteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
+  LiteTableDef table;
+  if (!liteLoadTable(tdesc, &table) || table.primaryKeyColumns.empty())
     return FALSE;
 
   size_t multiColumn = 0;
@@ -836,7 +836,7 @@ static NABoolean localLiteRewritePrimaryMultiGetRowsFromPredicates(
     {
       size_t candidateColumn = 0;
       std::vector<std::string> candidateFields;
-      if (localLiteCollectColumnConstEqualities(
+      if (liteCollectColumnConstEqualities(
               predId.getItemExpr(), &candidateColumn, &candidateFields) &&
           candidateFields.size() > 1)
         {
@@ -859,7 +859,7 @@ static NABoolean localLiteRewritePrimaryMultiGetRowsFromPredicates(
           continue;
         }
       std::vector<std::string> equalityField;
-      if (localLiteBuildLeadingKeyFieldsFromPredicates(
+      if (liteBuildLeadingKeyFieldsFromPredicates(
               std::vector<size_t>(1, table.primaryKeyColumns[key]),
               predicates, &equalityField) != 1)
         return FALSE;
@@ -876,10 +876,10 @@ static NABoolean localLiteRewritePrimaryMultiGetRowsFromPredicates(
       keyFields[multiKeyPosition] = multiFields[value];
       std::string rowKey;
       std::string error;
-      if (!LocalLiteBuildPrimaryKeyFromTextFields(
+      if (!LiteBuildPrimaryKeyFromTextFields(
               table, keyFields, &rowKey, &error))
         return FALSE;
-      rowKey = localLiteEncodeGetRowKey(rowKey);
+      rowKey = liteEncodeGetRowKey(rowKey);
       if (encodedKeys.insert(rowKey).second)
         localGetSpec.rowIds_.insert(NAString(
             rowKey.data(), static_cast<Int32>(rowKey.size())));
@@ -891,14 +891,14 @@ static NABoolean localLiteRewritePrimaryMultiGetRowsFromPredicates(
   return TRUE;
 }
 
-static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
+static NABoolean liteRewriteUniqueGetRowsFromPredicates(
     TableDesc *tdesc,
     const ValueIdSet &predicates,
     ListOfUniqueRows &listOfUniqueRows,
     ValueIdSet *coveredPredicates = NULL)
 {
-  LocalLiteTableDef table;
-  if (!localLiteLoadTable(tdesc, &table) || table.uniqueKeyColumns.empty())
+  LiteTableDef table;
+  if (!liteLoadTable(tdesc, &table) || table.uniqueKeyColumns.empty())
     return FALSE;
 
   for (size_t keyIndex = 0; keyIndex < table.uniqueKeyColumns.size();
@@ -906,7 +906,7 @@ static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
     {
       std::vector<std::string> keyFields;
       ValueIdSet matchedPredicates;
-      if (!localLiteBuildKeyFieldsFromPredicates(
+      if (!liteBuildKeyFieldsFromPredicates(
               table, table.uniqueKeyColumns[keyIndex], predicates,
               &keyFields, &matchedPredicates))
         continue;
@@ -914,13 +914,13 @@ static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
       std::string rowKey;
       bool hasKey = false;
       std::string error;
-      if (!LocalLiteBuildUniqueKeyFromTextFields(
+      if (!LiteBuildUniqueKeyFromTextFields(
               table, table.uniqueKeyColumns[keyIndex], keyIndex, keyFields,
               &rowKey, &hasKey, &error) ||
           !hasKey)
         continue;
 
-      rowKey = localLiteEncodeGetRowKey(rowKey);
+      rowKey = liteEncodeGetRowKey(rowKey);
       HbaseUniqueRows localGetSpec;
       localGetSpec.rowTS_ = -1;
       localGetSpec.rowIds_.insert(NAString(
@@ -936,17 +936,17 @@ static NABoolean localLiteRewriteUniqueGetRowsFromPredicates(
   return FALSE;
 }
 
-static void localLiteAppendIndexUint64(std::string *out, uint64_t value)
+static void liteAppendIndexUint64(std::string *out, uint64_t value)
 {
   for (int shift = 56; shift >= 0; shift -= 8)
     out->push_back(static_cast<char>((value >> shift) & 0xff));
 }
 
-static std::string localLiteEncodeIndexPrefix(const std::string &prefix,
+static std::string liteEncodeIndexPrefix(const std::string &prefix,
                                                NABoolean exact)
 {
   static const char hex[] = "0123456789abcdef";
-  std::string encoded(exact ? "LLIX1:" : "LLIR1:");
+  std::string encoded(exact ? "LTIX1:" : "LTIR1:");
   encoded.reserve(encoded.size() + prefix.size() * 2);
   for (size_t i = 0; i < prefix.size(); i++)
     {
@@ -957,7 +957,7 @@ static std::string localLiteEncodeIndexPrefix(const std::string &prefix,
   return encoded;
 }
 
-static NABoolean localLitePrefixSuccessor(const std::string &prefix,
+static NABoolean litePrefixSuccessor(const std::string &prefix,
                                           std::string *successor)
 {
   *successor = prefix;
@@ -973,7 +973,7 @@ static NABoolean localLitePrefixSuccessor(const std::string &prefix,
   return TRUE;
 }
 
-static std::string localLiteHex(const std::string &value)
+static std::string liteHex(const std::string &value)
 {
   static const char hex[] = "0123456789abcdef";
   std::string encoded;
@@ -987,35 +987,35 @@ static std::string localLiteHex(const std::string &value)
   return encoded;
 }
 
-static std::string localLiteEncodeIndexBounds(const std::string &startKey,
+static std::string liteEncodeIndexBounds(const std::string &startKey,
                                                const std::string &endKey)
 {
-  return "LLIB1:" + localLiteHex(startKey) + ":" + localLiteHex(endKey);
+  return "LTIB1:" + liteHex(startKey) + ":" + liteHex(endKey);
 }
 
-static NABoolean localLiteRewritePrimaryPrefixFromPredicates(
+static NABoolean liteRewritePrimaryPrefixFromPredicates(
     TableDesc *tdesc,
     const ValueIdSet &predicates,
     ListOfUniqueRows &listOfUniqueRows)
 {
-  LocalLiteTableDef table;
-  if (!localLiteLoadTable(tdesc, &table) ||
+  LiteTableDef table;
+  if (!liteLoadTable(tdesc, &table) ||
       table.primaryKeyColumns.size() < 2)
     return FALSE;
   std::vector<std::string> keyFields;
-  const size_t leading = localLiteBuildLeadingKeyFieldsFromPredicates(
+  const size_t leading = liteBuildLeadingKeyFieldsFromPredicates(
       table.primaryKeyColumns, predicates, &keyFields);
   if (leading == 0 || leading >= table.primaryKeyColumns.size())
     return FALSE;
   std::string startKey;
   std::string endKey;
   std::string error;
-  if (!LocalLiteBuildPrimaryKeyPrefixFromTextFields(
+  if (!LiteBuildPrimaryKeyPrefixFromTextFields(
           table, keyFields, &startKey, &error) ||
-      !localLitePrefixSuccessor(startKey, &endKey))
+      !litePrefixSuccessor(startKey, &endKey))
     return FALSE;
   const std::string encoded =
-      "LLPB1:" + localLiteHex(startKey) + ":" + localLiteHex(endKey);
+      "LTPB1:" + liteHex(startKey) + ":" + liteHex(endKey);
   HbaseUniqueRows localGetSpec;
   localGetSpec.rowTS_ = -1;
   localGetSpec.rowIds_.insert(NAString(
@@ -1025,16 +1025,16 @@ static NABoolean localLiteRewritePrimaryPrefixFromPredicates(
   return TRUE;
 }
 
-static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
+static NABoolean liteRewriteSecondaryIndexGetRowsFromPredicates(
     TableDesc *tdesc,
     const ValueIdSet &predicates,
     ListOfUniqueRows &listOfUniqueRows)
 {
-  LocalLiteTableDef table;
-  if (!localLiteLoadTable(tdesc, &table) || table.secondaryIndexes.empty())
+  LiteTableDef table;
+  if (!liteLoadTable(tdesc, &table) || table.secondaryIndexes.empty())
     return FALSE;
 
-  const LocalLiteIndexDef *bestIndex = NULL;
+  const LiteIndexDef *bestIndex = NULL;
   std::vector<std::string> bestKeyFields;
   std::vector<bool> bestNullFields;
   size_t bestLeadingKeys = 0;
@@ -1042,14 +1042,14 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
   for (size_t indexNumber = 0;
        indexNumber < table.secondaryIndexes.size(); indexNumber++)
     {
-      const LocalLiteIndexDef &index = table.secondaryIndexes[indexNumber];
+      const LiteIndexDef &index = table.secondaryIndexes[indexNumber];
       std::vector<std::string> keyFields;
       std::vector<bool> nullFields;
       for (size_t keyNumber = 0; keyNumber < index.keyColumns.size();
            keyNumber++)
         {
           std::vector<std::string> equalityFields;
-          size_t equalityCount = localLiteBuildLeadingKeyFieldsFromPredicates(
+          size_t equalityCount = liteBuildLeadingKeyFieldsFromPredicates(
               std::vector<size_t>(1, index.keyColumns[keyNumber]),
               predicates, &equalityFields);
           if (equalityCount == 1)
@@ -1058,7 +1058,7 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
               nullFields.push_back(false);
             }
           else if (index.keyEncodingVersion >= 3 &&
-                   localLiteHasIsNullPredicateForColumn(
+                   liteHasIsNullPredicateForColumn(
                        index.keyColumns[keyNumber], predicates))
             {
               keyFields.push_back(std::string());
@@ -1070,7 +1070,7 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
       size_t leadingKeys = keyFields.size();
       NABoolean hasRange =
           leadingKeys < index.keyColumns.size() &&
-          localLiteHasRangePredicateForColumn(index.keyColumns[leadingKeys],
+          liteHasRangePredicateForColumn(index.keyColumns[leadingKeys],
                                               predicates);
       if (leadingKeys == 0 && !hasRange)
         continue;
@@ -1096,7 +1096,7 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
   if (!bestIndex)
     return FALSE;
 
-  const LocalLiteIndexDef &index = *bestIndex;
+  const LiteIndexDef &index = *bestIndex;
   const std::vector<std::string> &keyFields = bestKeyFields;
   const std::vector<bool> &nullFields = bestNullFields;
   size_t leadingKeys = bestLeadingKeys;
@@ -1104,12 +1104,12 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
 
       std::string physicalPrefix;
       physicalPrefix.push_back('I');
-      localLiteAppendIndexUint64(&physicalPrefix, index.objectUid);
+      liteAppendIndexUint64(&physicalPrefix, index.objectUid);
       if (leadingKeys > 0 && index.keyEncodingVersion >= 2)
         {
           std::string payloadPrefix;
           std::string error;
-          if (!LocalLiteBuildOrderedSecondaryNullablePrefixFromTextFields(
+          if (!LiteBuildOrderedSecondaryNullablePrefixFromTextFields(
                   table, index, keyFields, nullFields,
                   &payloadPrefix, &error))
             return FALSE;
@@ -1120,9 +1120,9 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
           std::string payloadPrefix;
           std::string error;
           bool builtPrefix = index.keyEncodingVersion >= 2
-              ? LocalLiteBuildOrderedSecondaryKeyPrefixFromTextFields(
+              ? LiteBuildOrderedSecondaryKeyPrefixFromTextFields(
                     table, index, keyFields, &payloadPrefix, &error)
-              : LocalLiteBuildSecondaryIndexPrefixFromTextFields(
+              : LiteBuildSecondaryIndexPrefixFromTextFields(
                     table, index.keyColumns, keyFields,
                     &payloadPrefix, &error);
           if (!builtPrefix)
@@ -1134,7 +1134,7 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
         {
           std::string startKey = physicalPrefix;
           std::string endKey;
-          if (!localLitePrefixSuccessor(physicalPrefix, &endKey))
+          if (!litePrefixSuccessor(physicalPrefix, &endKey))
             return FALSE;
 
           if (leadingKeys < index.keyColumns.size())
@@ -1145,7 +1145,7 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
                 size_t columnPosition = 0;
                 std::string field;
                 OperatorTypeEnum op = ITM_EQUAL;
-                if (!localLiteMatchColumnConstRangeValue(
+                if (!liteMatchColumnConstRangeValue(
                         predId.getItemExpr(), &columnPosition,
                         &field, &op) ||
                     columnPosition != index.keyColumns[leadingKeys])
@@ -1157,16 +1157,16 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
                 boundNullFields.push_back(false);
                 std::string boundPayload;
                 std::string error;
-                if (!LocalLiteBuildOrderedSecondaryNullablePrefixFromTextFields(
+                if (!LiteBuildOrderedSecondaryNullablePrefixFromTextFields(
                         table, index, boundFields, boundNullFields,
                         &boundPayload, &error))
                   continue;
                 std::string boundKey;
                 boundKey.push_back('I');
-                localLiteAppendIndexUint64(&boundKey, index.objectUid);
+                liteAppendIndexUint64(&boundKey, index.objectUid);
                 boundKey += boundPayload;
                 std::string afterBound;
-                if (!localLitePrefixSuccessor(boundKey, &afterBound))
+                if (!litePrefixSuccessor(boundKey, &afterBound))
                   continue;
 
                 bool descending =
@@ -1199,10 +1199,10 @@ static NABoolean localLiteRewriteSecondaryIndexGetRowsFromPredicates(
               }
           if (endKey <= startKey)
             return FALSE;
-          encoded = localLiteEncodeIndexBounds(startKey, endKey);
+          encoded = liteEncodeIndexBounds(startKey, endKey);
         }
       else
-        encoded = localLiteEncodeIndexPrefix(physicalPrefix, exact);
+        encoded = liteEncodeIndexPrefix(physicalPrefix, exact);
 
       HbaseUniqueRows localGetSpec;
       localGetSpec.rowTS_ = -1;
@@ -1321,31 +1321,31 @@ static NABoolean processConstHBaseKeys(Generator * generator,
 					      listOfUpdSubsetRows))
 	return FALSE;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       if (tdesc &&
           (relExpr->getOperatorType() == REL_HBASE_ACCESS ||
            relExpr->getOperatorType() == REL_HBASE_UPDATE ||
            relExpr->getOperatorType() == REL_HBASE_DELETE))
         {
-          NABoolean localLiteGetRows = FALSE;
+          NABoolean liteGetRows = FALSE;
           if (listOfUpdSubsetRows.entries() == 0)
-            localLiteGetRows =
-              localLiteRewritePrimaryGetRows(tdesc, mySearchKeys,
+            liteGetRows =
+              liteRewritePrimaryGetRows(tdesc, mySearchKeys,
                                              listOfUpdUniqueRows);
-          if (!localLiteGetRows)
+          if (!liteGetRows)
             {
-              ValueIdSet localLitePreds;
-              localLitePreds += executorPreds;
-              localLitePreds += relExpr->getSelectionPred();
-              localLitePreds += skey->getFullKeyPredicates();
+              ValueIdSet litePreds;
+              litePreds += executorPreds;
+              litePreds += relExpr->getSelectionPred();
+              litePreds += skey->getFullKeyPredicates();
               ValueIdSet coveredPredicates;
-              if (localLiteRewritePrimaryMultiGetRowsFromPredicates(
-                      tdesc, localLitePreds, listOfUpdUniqueRows) ||
-                  localLiteRewritePrimaryGetRowsFromPredicates(
-                      tdesc, localLitePreds, listOfUpdUniqueRows))
+              if (liteRewritePrimaryMultiGetRowsFromPredicates(
+                      tdesc, litePreds, listOfUpdUniqueRows) ||
+                  liteRewritePrimaryGetRowsFromPredicates(
+                      tdesc, litePreds, listOfUpdUniqueRows))
                 listOfUpdSubsetRows.clear();
-              else if (localLiteRewriteUniqueGetRowsFromPredicates(
-                           tdesc, localLitePreds, listOfUpdUniqueRows,
+              else if (liteRewriteUniqueGetRowsFromPredicates(
+                           tdesc, litePreds, listOfUpdUniqueRows,
                            &coveredPredicates))
                 {
                   listOfUpdSubsetRows.clear();
@@ -1356,12 +1356,12 @@ static NABoolean processConstHBaseKeys(Generator * generator,
                       hba->selectionPred().subtractSet(coveredPredicates);
                     }
                 }
-              else if (localLiteRewritePrimaryPrefixFromPredicates(
-                           tdesc, localLitePreds, listOfUpdUniqueRows))
+              else if (liteRewritePrimaryPrefixFromPredicates(
+                           tdesc, litePreds, listOfUpdUniqueRows))
                 listOfUpdSubsetRows.clear();
               else
-                localLiteRewriteSecondaryIndexGetRowsFromPredicates(
-                    tdesc, localLitePreds, listOfUpdUniqueRows);
+                liteRewriteSecondaryIndexGetRowsFromPredicates(
+                    tdesc, litePreds, listOfUpdUniqueRows);
             }
         }
 #endif
@@ -4022,7 +4022,7 @@ RelExpr * DDLExpr::preCodeGen(Generator * generator,
   else
     xnNeeded() = FALSE;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   ExprNode * ddlNode = getDDLNode();
   if (ddlNode &&
       ((ddlNode->getOperatorType() == DDL_CREATE_TABLE) ||
@@ -5778,7 +5778,7 @@ RelExpr * UpdateCursor::preCodeGen(Generator * generator,
   if (! Update::preCodeGen(generator,externalInputs,pulledNewInputs))
     return NULL;
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   // primary key columns cannot be updated, yet. After RI support
   // is in, they could be updated.
    const NAColumnArray & key_column_array =
@@ -6277,7 +6277,7 @@ RelExpr * HbaseDelete::preCodeGen(Generator * generator,
   // Use hbase or region transactions. 
   // Hbase guarantees single row consistency.
   Int64 transId = -1;
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   noDTMxn() = TRUE;
   generator->resetTransactionFlag();
 #else
@@ -6336,9 +6336,9 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
       GenExit();
     }
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   // Native HBase MERGE evaluates a generated row-id to find the target row.
-  // Local-lite stores a different canonical RocksDB key, so retain the full
+  // Lite Storage stores a different canonical RocksDB key, so retain the full
   // ON-key predicate for evaluation against the current source and target.
   if (isMerge() && getSearchKey())
     executorPred() += getSearchKey()->getFullKeyPredicates();
@@ -6385,7 +6385,7 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
              BaseColumn * bc = (BaseColumn*)getTableDesc()->getColumnList()[i].getItemExpr();
              CMPASSERT(bc->getOperatorType() == ITM_BASECOLUMN);
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
              // Alternate indexes are not necessarily ordered like the base
              // table. On a table with unique indexes, locate the selected
              // index column whose definition is this exact BaseColumn instead
@@ -6425,7 +6425,7 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
   if ((isMerge()) &&
       (mergeInsertRecExpr().entries() > 0))
     {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       // The RocksDB executor evaluates the retained ON predicate and rejects
       // more than one target match at runtime. The native uniqueness proof is
       // tied to HBase search-key generation and is not authoritative here.
@@ -6607,7 +6607,7 @@ RelExpr * HbaseUpdate::preCodeGen(Generator * generator,
   // Use hbase or region transactions. 
   // Hbase guarantees single row consistency.
   Int64 transId = -1;
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   noDTMxn() = TRUE;
   generator->resetTransactionFlag();
 #else
@@ -13435,32 +13435,32 @@ RelExpr * HbaseAccess::preCodeGen(Generator * generator,
   if (! FileScan::preCodeGen(generator,externalInputs,pulledNewInputs))
     return NULL;
 
-#ifdef TRAF_LOCAL_LITE
-  ValueIdSet localLitePreds;
-  localLitePreds += executorPred();
-  localLitePreds += selectionPred();
+#ifdef TRAF_LITE
+  ValueIdSet litePreds;
+  litePreds += executorPred();
+  litePreds += selectionPred();
   if (getSearchKey())
-    localLitePreds += getSearchKey()->getFullKeyPredicates();
+    litePreds += getSearchKey()->getFullKeyPredicates();
   ValueIdSet coveredPredicates;
-  if (localLiteRewritePrimaryMultiGetRowsFromPredicates(
-          getTableDesc(), localLitePreds, listOfUniqueRows_) ||
-      localLiteRewritePrimaryGetRowsFromPredicates(
-          getTableDesc(), localLitePreds, listOfUniqueRows_))
+  if (liteRewritePrimaryMultiGetRowsFromPredicates(
+          getTableDesc(), litePreds, listOfUniqueRows_) ||
+      liteRewritePrimaryGetRowsFromPredicates(
+          getTableDesc(), litePreds, listOfUniqueRows_))
     listOfRangeRows_.clear();
-  else if (localLiteRewriteUniqueGetRowsFromPredicates(
-             getTableDesc(), localLitePreds, listOfUniqueRows_,
+  else if (liteRewriteUniqueGetRowsFromPredicates(
+             getTableDesc(), litePreds, listOfUniqueRows_,
              &coveredPredicates))
     {
       listOfRangeRows_.clear();
       executorPred().subtractSet(coveredPredicates);
       selectionPred().subtractSet(coveredPredicates);
     }
-  else if (localLiteRewritePrimaryPrefixFromPredicates(
-               getTableDesc(), localLitePreds, listOfUniqueRows_))
+  else if (liteRewritePrimaryPrefixFromPredicates(
+               getTableDesc(), litePreds, listOfUniqueRows_))
     listOfRangeRows_.clear();
   else
-    localLiteRewriteSecondaryIndexGetRowsFromPredicates(
-        getTableDesc(), localLitePreds, listOfUniqueRows_);
+    liteRewriteSecondaryIndexGetRowsFromPredicates(
+        getTableDesc(), litePreds, listOfUniqueRows_);
 #endif
 
   //compute isUnique:

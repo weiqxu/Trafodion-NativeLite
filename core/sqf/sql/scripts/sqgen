@@ -196,8 +196,8 @@ mkdir -p $MPI_TMPDIR/tmp
 # mkdir a dir for CBF data used by SQL IUS feature
 mkdir -p $HOME/cbfs
 
-# Clean HBase classpath cache file (skip for local-lite)
-if [[ "$TRAF_LOCAL_LITE" != "1" ]]; then
+# Clean HBase classpath cache file (skip for lite)
+if [[ "$TRAF_LITE" != "1" ]]; then
   rm -rf $TRAF_VAR/hbase_classpath
 fi
 

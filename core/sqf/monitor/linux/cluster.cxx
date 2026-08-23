@@ -73,7 +73,7 @@ using namespace std;
 #include "ptpclient.h"
 #endif
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #define MON_MPI_STATUS_COUNT(status) ((status).count_lo)
 #else
 #define MON_MPI_STATUS_COUNT(status) ((status).count)

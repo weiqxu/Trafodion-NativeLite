@@ -1,11 +1,11 @@
 milestone	gate	required	purpose
-M10	make local-lite-m10	yes	bounded RocksDB SQL compatibility and native regressions
-M11	make local-lite-m11	yes	session runtime server restart and reduced T4 lifecycle
-M12	make local-lite-m12	yes	transactional storage backend recovery and operations
-M13	make local-lite-m13	yes	exclusive unified TransactionDB format and restart
-M14A	make local-lite-m14a	yes	versioned TPC-C contract and baseline
-M14B	make local-lite-m14b	yes	deterministic schema load consistency and restore
-M14C	make local-lite-m14c	yes	five functional transaction profiles through T4 JDBC
-M14D	make local-lite-m14d	yes	serializable isolation retry and crash atomicity
-M14E	make local-lite-m14e	yes	concurrent runtime cancellation and peer survival
-M14F	make local-lite-m14f	yes	multi-warehouse workload metrics and operations
+M10	make lite-m10	yes	bounded RocksDB SQL compatibility and native regressions
+M11	make lite-m11	yes	session runtime server restart and reduced T4 lifecycle
+M12	make lite-m12	yes	transactional storage backend recovery and operations
+M13	make lite-m13	yes	exclusive unified TransactionDB format and restart
+M14A	make lite-m14a	yes	versioned TPC-C contract and baseline
+M14B	make lite-m14b	yes	deterministic schema load consistency and restore
+M14C	make lite-m14c	yes	five functional transaction profiles through T4 JDBC
+M14D	make lite-m14d	yes	serializable isolation retry and crash atomicity
+M14E	make lite-m14e	yes	concurrent runtime cancellation and peer survival
+M14F	make lite-m14f	yes	multi-warehouse workload metrics and operations

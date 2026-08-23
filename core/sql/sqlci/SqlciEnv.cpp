@@ -71,11 +71,11 @@
 #include "str.h"
 #include "BaseTypes.h"
 #include "ComSchemaName.h"
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #include "Globals.h"
 #include "Context.h"
 #include "ex_transaction.h"
-#include "LocalLiteSqlTable.h"
+#include "LiteSqlTable.h"
 #endif
 
 #include "DefaultConstants.h"
@@ -536,13 +536,13 @@ static void SqlciEnv_prologue_to_run(SqlciEnv *sqlciEnv)
   if (sqlciEnv->doneWithPrologue())
     return;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if (NOT sqlciEnv->noBanner())
     sqlciEnv->welcomeMessage();
 
-  short localLiteIdentityRetcode = 0;
-  if (!LocalLiteSqlTable_setCurrentUser(sqlciEnv,
-                                        &localLiteIdentityRetcode))
+  short liteIdentityRetcode = 0;
+  if (!LiteSqlTable_setCurrentUser(sqlciEnv,
+                                        &liteIdentityRetcode))
     {
       sqlciEnv->setDoneWithPrologue(TRUE);
       return;
@@ -550,12 +550,12 @@ static void SqlciEnv_prologue_to_run(SqlciEnv *sqlciEnv)
 
   // SQLCI's Formatter expects datetime and interval values in their internal
   // representation. The regular prologue enables that CLI contract below,
-  // but local-lite returns before reaching it to avoid service-stack setup.
+  // but lite returns before reaching it to avoid service-stack setup.
   SqlCmd::executeQuery("SET SESSION DEFAULT INTERNAL_FORMAT_IO 'ON';", sqlciEnv);
 
   // Keep compiler-generated explain fragments enabled in the standalone
-  // local-lite session.  The regular SQLCI prologue does this below, but the
-  // local-lite early return intentionally skips the service-stack setup.
+  // lite session.  The regular SQLCI prologue does this below, but the
+  // lite early return intentionally skips the service-stack setup.
   sqlciEnv->setSpecialError(MXCI_DONOTISSUE_ERRMSGS, NULL);
   sqlciEnv->generateExplain();
   sqlciEnv->resetSpecialError();
@@ -659,7 +659,7 @@ void SqlciEnv::run()
    
    SqlciEnv_prologue_to_run(this);
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
     // tell CLI that this user session has started.
    SqlCmd::executeQuery("SET SESSION DEFAULT SQL_SESSION 'BEGIN';", this);
 #endif
@@ -689,7 +689,7 @@ void SqlciEnv::runWithInputString(char * input_string)
   // that any errors will be fatal. Should an error occur,  exit MXCI.
    SqlciEnv_prologue_to_run(this);
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
    SqlCmd::executeQuery("SET SESSION DEFAULT SQL_SESSION 'BEGIN';", this);
 #endif
    // Initialize lifetime objects
@@ -726,7 +726,7 @@ void SqlciEnv::run(char * in_filename, char * input_string)
   // that any errors will be fatal. Should an error occur,  exit MXCI.
   SqlciEnv_prologue_to_run(this);
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
    SqlCmd::executeQuery("SET SESSION DEFAULT SQL_SESSION 'BEGIN';", this);
 #endif
   Int32 retval = 0;
@@ -944,7 +944,7 @@ Int32 SqlciEnv::executeCommands(InputStmt *& input_stmt)
 // Optionally returns the transaction identifier, if transid is passed in.
 short SqlciEnv::statusTransaction(Int64 * transid)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   CliGlobals *cliGlobals = GetCliGlobals();
   ContextCli *context = cliGlobals ? cliGlobals->currContext() : NULL;
   ExTransaction *transaction = context ? context->getTransaction() : NULL;
@@ -1288,9 +1288,9 @@ ChangeUser::ChangeUser(char * argument_, Lng32 argLen_)
 short ChangeUser::process (SqlciEnv * sqlci_env)
 {
   sqlci_env->setUserNameFromCommandLine(get_argument());
-#ifdef TRAF_LOCAL_LITE
-  short localLiteRetcode = 0;
-  LocalLiteSqlTable_setCurrentUser(sqlci_env, &localLiteRetcode);
+#ifdef TRAF_LITE
+  short liteRetcode = 0;
+  LiteSqlTable_setCurrentUser(sqlci_env, &liteRetcode);
 #else
   sqlci_env->setUserIdentityInCLI();
 #endif

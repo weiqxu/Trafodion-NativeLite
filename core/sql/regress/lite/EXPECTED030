@@ -1,0 +1,54 @@
+>>CREATE TABLE LITEREG030_BASE
++>  (id INT NOT NULL PRIMARY KEY,
++>   code VARCHAR(8),
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG030_BASE VALUES
++>  (1, 'A', 'one'),
++>  (2, 'B', 'two');
+--- 2 row(s) inserted.
+>>CREATE INDEX LITEREG030_IX ON LITEREG030_BASE(code, id DESC);
+--- SQL operation complete.
+>>CREATE TABLE LITEREG030_IX (id INT);
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. lite object already exists: TRAFODION.SEABASE.LITEREG030_IX <MXID>
+--- SQL operation failed with errors.
+>>CREATE INDEX LITEREG030_IX ON LITEREG030_BASE(label);
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. lite index already exists: TRAFODION.SEABASE.LITEREG030_IX <MXID>
+--- SQL operation failed with errors.
+>>CREATE INDEX LITEREG030_BAD ON LITEREG030_BASE(missing_col);
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. lite index column does not exist <MXID>
+--- SQL operation failed with errors.
+>>CREATE INDEX LITEREG030_DUPCOL ON LITEREG030_BASE(code, code);
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. duplicate lite index column <MXID>
+--- SQL operation failed with errors.
+>>CREATE UNIQUE INDEX LITEREG030_UNIQUE ON LITEREG030_BASE(code);
+--- SQL operation complete.
+>>SELECT id, code, label FROM LITEREG030_BASE ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         one
+          2  B         two
+--- 2 row(s) selected.
+>>DROP INDEX LITEREG030_IX;
+--- SQL operation complete.
+>>CREATE INDEX LITEREG030_IX ON LITEREG030_BASE(label);
+--- SQL operation complete.
+>>DROP TABLE LITEREG030_BASE;
+--- SQL operation complete.
+>>CREATE TABLE LITEREG030_OTHER (id INT PRIMARY KEY, label VARCHAR(20));
+--- SQL operation complete.
+>>CREATE INDEX LITEREG030_IX ON LITEREG030_OTHER(label);
+--- SQL operation complete.
+>>DROP INDEX LITEREG030_IX;
+--- SQL operation complete.
+>>DROP INDEX LITEREG030_IX;
+*** ERROR[3242]
+*** ERROR[16001] No message found for SQLCODE -3242. lite index does not exist: TRAFODION.SEABASE.LITEREG030_IX <MXID>
+--- SQL operation failed with errors.
+>>DROP TABLE LITEREG030_OTHER;
+--- SQL operation complete.
+>>exit;

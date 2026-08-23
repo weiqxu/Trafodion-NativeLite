@@ -115,9 +115,9 @@ class ExTupleFlowTcb : public ex_tcb
   ex_queue_pair  qSrc_;
   ex_queue_pair  qTgt_;
 
-#ifdef TRAF_LOCAL_LITE
-  NABoolean localLiteAutocommitTxnStarted_;
-  Int64 localLiteRowsAffectedBefore_;
+#ifdef TRAF_LITE
+  NABoolean liteAutocommitTxnStarted_;
+  Int64 liteRowsAffectedBefore_;
 #endif
 
 public:

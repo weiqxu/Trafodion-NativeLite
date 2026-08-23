@@ -1,0 +1,31 @@
+>>CREATE TABLE LITEREG003_UQ
++>  (id INT, value VARCHAR(24), UNIQUE(id));
+--- SQL operation complete.
+>>INSERT INTO LITEREG003_UQ VALUES (2, 'committed-row');
+--- 1 row(s) inserted.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>INSERT INTO LITEREG003_UQ VALUES
++>  (1, 'must-not-commit'),
++>  (2, 'duplicate-row');
+--- 2 row(s) inserted.
+>>COMMIT WORK;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate lite unique key <MXID>
+--- SQL operation failed with errors.
+>>SELECT id, value FROM LITEREG003_UQ ORDER BY id;
+ID           VALUE
+-----------  ------------------------
+          2  committed-row
+--- 1 row(s) selected.
+>>INSERT INTO LITEREG003_UQ VALUES (3, 'after-failure');
+--- 1 row(s) inserted.
+>>SELECT id, value FROM LITEREG003_UQ ORDER BY id;
+ID           VALUE
+-----------  ------------------------
+          2  committed-row
+          3  after-failure
+--- 2 row(s) selected.
+>>DROP TABLE LITEREG003_UQ;
+--- SQL operation complete.
+>>exit;

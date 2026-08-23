@@ -55,8 +55,8 @@
 #include "sqlmxmsg_msg.h"
 
 #include "NLSConversion.h"
-#ifdef TRAF_LOCAL_LITE
-// In local-lite mode, the Seabed/ExSM messaging layer is not loaded.
+#ifdef TRAF_LITE
+// In lite mode, the Seabed/ExSM messaging layer is not loaded.
 // Provide local stubs for the ExSM assertion macro and its buffer
 // so that GetErrorMessage can compile and link without libexecutor.so.
 #include <assert.h>
@@ -91,7 +91,7 @@ static const NAWchar
   Cause_Pfx[]	      = WIDE_("\nCAUSE:\n"),
   Recovery_Pfx[]      = WIDE_("\nRECOVERY:\n");
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 static short kludgeReadStraightFromMessageFile(Lng32 num,
                                                 NAWchar *msgBuf,
                                                 Lng32 bufSize);
@@ -497,7 +497,7 @@ short GetErrorMessage (Lng32 error_code,
 
   NABoolean messageFound = getErrorMessageFromCatalog(
       error_code_abs, M_type, msg, ErrorMessage::MSG_BUF_SIZE, &msgCatalog);
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if (!messageFound && M_type == ERROR_TEXT &&
       getenv("TEST_SCHEMA_NAME") != NULL)
     messageFound = kludgeReadStraightFromMessageFile(

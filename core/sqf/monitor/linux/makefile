@@ -48,8 +48,8 @@ FLAGS+= -UNDEBUG
 #   a particular diagnostic (GNU compiler).
 # FLAGS+= -fdiagnostics-show-option
 FLAGS+= -Wall -Wextra -Werror -Wno-unused-variable
-ifeq ($(TRAF_LOCAL_LITE),1)
- FLAGS+= -DTRAF_LOCAL_LITE
+ifeq ($(TRAF_LITE),1)
+ FLAGS+= -DTRAF_LITE
  FLAGS+= -std=gnu++14 -Wno-unused-parameter
  FLAGS+= -Wno-error=format-overflow -Wno-error=format-truncation
  FLAGS+= -Wno-error=stringop-overflow -Wno-error=int-to-pointer-cast
@@ -59,8 +59,8 @@ endif
 
 # Flags for use in compiling Seabed trace modules
 SBFLAGS = -Wall -Wextra -pedantic -Werror -Wno-error=format-security  -Wno-long-long $(DBG_FLGS) $(OPTIM_FLGS) -Xlinker --copy-dt-needed-entries -fPIC
-ifeq ($(TRAF_LOCAL_LITE),1)
- SBFLAGS+= -DTRAF_LOCAL_LITE
+ifeq ($(TRAF_LITE),1)
+ SBFLAGS+= -DTRAF_LITE
  SBFLAGS+= -std=gnu++14 -Wno-unused-parameter
  SBFLAGS+= -Wno-error=format-overflow -Wno-error=format-truncation
  SBFLAGS+= -Wno-error=stringop-overflow -Wno-error=int-to-pointer-cast
@@ -80,7 +80,7 @@ endif
 
 CC_RUNTIME_LIB = -L/usr/lib/x86_64-linux-gnu -L/lib/x86_64-linux-gnu -L$(TOOLSDIR)/apache-log4cxx-0.10.0/lib
 LIBS = $(CC_RUNTIME_LIB) -L$(LIBEXPDIR) -lrt -lsblogalt -ltrafconfig
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 LIBS+= -L$(ZOOKEEPER_DIR)/lib
 LIBS+= -lzookeeper_mt
 endif
@@ -440,8 +440,8 @@ $(OUTDIR)/%.o:%.cxx
 	@echo 'Finished building target: $@'
 	@echo ' '
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-$(OUTDIR)/zclient.o: LocalLiteZClientStubs.cpp zclient.h
+ifeq ($(TRAF_LITE),1)
+$(OUTDIR)/zclient.o: LiteZClientStubs.cpp zclient.h
 	@echo 'Building target2: $@'
 	@echo 'Invoking: C++ Compiler'
 	@echo $(CXX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(INCLUDES) -c -o $@ $<

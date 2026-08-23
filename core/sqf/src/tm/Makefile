@@ -31,8 +31,8 @@ HBASE_TRX_LOC    = $(TRAF_HOME)/src/seatrans/hbase-trx
 DEBUG		=
 DEFINES		= -DDEBUG -DxUSE_FILE_AUDIT 
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-DEFINES		+= -DTRAF_LOCAL_LITE
+ifeq ($(TRAF_LITE),1)
+DEFINES		+= -DTRAF_LITE
 CXXWARN		+= -Wno-unused-parameter
 CXXWARN		+= -Wno-implicit-fallthrough
 CXXWARN		+= -Wno-switch-bool
@@ -61,7 +61,7 @@ DTMOBJS		= -DTMOBJS
 
 
 # gcc 4.8 needs this flag to auto-search dependent shared objects during link.
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 LNK_FLGS       += -Xlinker --copy-dt-needed-entries
 endif
 
@@ -76,7 +76,7 @@ LIBSTMOBJS = $(OUTDIR)/tmtransid.o \
              $(OUTDIR)/tmddlrequests.o\
 			 $(OUTDIR)/versstmlib.o \
 		         $(OUTDIR)/CommonLogger.o 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 LIBSTMOBJS := $(filter-out $(OUTDIR)/tmregisterregion.o $(OUTDIR)/tmddlrequests.o,$(LIBSTMOBJS))
 else
 LIBSTMOBJS += $(OUTDIR)/javaobjectinterfacetm.o
@@ -147,8 +147,8 @@ TMOBJS		= $(OUTDIR)/tmregistry.o \
 		      $(OUTDIR)/tmxarmmain.o \
 		      $(OUTDIR)/tm.o \
 		      $(OUTDIR)/CommonLogger.o  
-ifeq ($(TRAF_LOCAL_LITE),1)
-TMOBJS += $(OUTDIR)/LocalLiteHBaseTmStubs.o
+ifeq ($(TRAF_LITE),1)
+TMOBJS += $(OUTDIR)/LiteHBaseTmStubs.o
 endif
 
 ifeq ($(SUPPORT_TM_SYNC),1)
@@ -173,17 +173,17 @@ endif
 
 all:  $(LIBEXPDIR)/libstmlib.so cp_trx_jar
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 cp_trx_jar:
-	@echo "Skipping transaction jar for local-lite"
+	@echo "Skipping transaction jar for lite"
 else
 cp_trx_jar:
 	cd $(HBASE_TRX_LOC); make all
 endif
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 all:  $(LIBEXPDIR)/libsxatmlib.so $(LIBEXPDIR)/libstmlib.so $(PROGS) $(LIBEXPDIR)/libxarm.so
-	@echo "Skipping TM tools for local-lite"
+	@echo "Skipping TM tools for lite"
 else
 all:  $(LIBEXPDIR)/libsxatmlib.so $(LIBEXPDIR)/libstmlib.so $(PROGS) $(LIBEXPDIR)/libxarm.so
 	cd tools; $(MAKE)
@@ -208,7 +208,7 @@ $(LIBEXPDIR)/libstmlib.so: $(LIBSTMOBJS)
 $(LIBEXPDIR)/libsxatmlib.so: $(LIBSXATMOBJS) 
 	$(CXX) $(LNK_FLGS) -shared -o $@ $(LIBSXATMOBJS) $(LIBSTMX) -L$(LIBEXPDIR) -llog4cxx
 
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 $(LIBEXPDIR)/libshbasetmlib.so: $(LIBSXATMOBJS) cp_trx_jar
 	cd $(HBASETMLIB); $(MAKE)
 endif
@@ -228,8 +228,8 @@ hbasetmlib:
 
 setup:
 	cd tools; $(MAKE) setup
-ifeq ($(TRAF_LOCAL_LITE),1)
-	@echo "Skipping TM Java setup for local-lite"
+ifeq ($(TRAF_LITE),1)
+	@echo "Skipping TM Java setup for lite"
 else
 	@echo "HBASETMLIB = " $(HBASETMLIB)
 	cd $(HBASETMLIB); $(MAKE) setup

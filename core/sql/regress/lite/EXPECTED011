@@ -1,0 +1,86 @@
+>>CREATE TABLE LITEREG011_PREPARED_ROWS
++>  (id INT PRIMARY KEY,
++>   grp INT,
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>PREPARE insert_stmt FROM
++>  INSERT INTO LITEREG011_PREPARED_ROWS VALUES (1, 10, 'one');
+--- SQL command prepared.
+>>EXECUTE insert_stmt;
+--- 1 row(s) inserted.
+>>PREPARE select_stmt FROM
++>  SELECT id, grp, label FROM LITEREG011_PREPARED_ROWS ORDER BY id;
+--- SQL command prepared.
+>>EXECUTE select_stmt;
+ID           GRP          LABEL
+-----------  -----------  --------------------
+          1           10  one
+--- 1 row(s) selected.
+>>INSERT INTO LITEREG011_PREPARED_ROWS VALUES (2, 20, 'two');
+--- 1 row(s) inserted.
+>>EXECUTE select_stmt;
+ID           GRP          LABEL
+-----------  -----------  --------------------
+          1           10  one
+          2           20  two
+--- 2 row(s) selected.
+>>EXECUTE insert_stmt;
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate lite primary key <MXID>
+--- 0 row(s) inserted.
+>>EXECUTE select_stmt;
+ID           GRP          LABEL
+-----------  -----------  --------------------
+          1           10  one
+          2           20  two
+--- 2 row(s) selected.
+>>PREPARE insert_stmt FROM
++>  SELECT label FROM LITEREG011_PREPARED_ROWS WHERE id = 2;
+--- SQL command prepared.
+>>EXECUTE insert_stmt;
+LABEL
+--------------------
+two
+--- 1 row(s) selected.
+>>SET PARAM ?wanted 1;
+>>PREPARE param_select_stmt FROM
++>  SELECT id, label FROM LITEREG011_PREPARED_ROWS WHERE id = ?wanted;
+--- SQL command prepared.
+>>EXECUTE param_select_stmt;
+ID           LABEL
+-----------  --------------------
+          1  one
+--- 1 row(s) selected.
+>>SET PARAM ?wanted 2;
+>>EXECUTE param_select_stmt;
+ID           LABEL
+-----------  --------------------
+          2  two
+--- 1 row(s) selected.
+>>SET PARAM ?new_id 3;
+>>SET PARAM ?new_grp 30;
+>>SET PARAM ?new_label 'three';
+>>PREPARE param_insert_stmt FROM
++>  INSERT INTO LITEREG011_PREPARED_ROWS VALUES
++>    (?new_id, ?new_grp, ?new_label);
+--- SQL command prepared.
+>>EXECUTE param_insert_stmt;
+--- 1 row(s) inserted.
+>>SET PARAM ?new_id 4;
+>>SET PARAM ?new_grp 40;
+>>SET PARAM ?new_label 'four';
+>>EXECUTE param_insert_stmt;
+--- 1 row(s) inserted.
+>>SELECT id, grp, label
++>  FROM LITEREG011_PREPARED_ROWS
++> ORDER BY id;
+ID           GRP          LABEL
+-----------  -----------  --------------------
+          1           10  one
+          2           20  two
+          3           30  three
+          4           40  four
+--- 4 row(s) selected.
+>>DROP TABLE LITEREG011_PREPARED_ROWS;
+--- SQL operation complete.
+>>exit;

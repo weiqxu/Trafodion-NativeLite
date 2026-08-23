@@ -1,0 +1,32 @@
+-- M7 RocksDB-only advanced executor coverage.
+
+CREATE TABLE LITEREG040_T
+  (id INT NOT NULL PRIMARY KEY, grp INT, v INT);
+INSERT INTO LITEREG040_T VALUES
+  (1, 1, 10), (2, 1, 20), (3, 2, 30);
+
+-- SQLCI's cursor adapter is enabled by lite/runregr.  FOR UPDATE makes
+-- the cursor updatable and exercises the RocksDB row-handle path.
+DECLARE C040 CURSOR FOR
+  SELECT id, grp, v FROM LITEREG040_T FOR UPDATE OF v;
+OPEN C040;
+FETCH C040;
+UPDATE LITEREG040_T SET v = v + 1 WHERE CURRENT OF C040;
+FETCH C040;
+DELETE FROM LITEREG040_T WHERE CURRENT OF C040;
+CLOSE C040;
+
+SELECT id, grp, v,
+       ROW_NUMBER() OVER (PARTITION BY grp ORDER BY id) AS rn,
+       RANK() OVER (PARTITION BY grp ORDER BY id) AS rnk,
+       DENSE_RANK() OVER (PARTITION BY grp ORDER BY id) AS drnk,
+       LAG(v) OVER (PARTITION BY grp ORDER BY id) AS prev_v,
+       LEAD(v) OVER (PARTITION BY grp ORDER BY id) AS next_v,
+       SUM(v) OVER (PARTITION BY grp ORDER BY id ROWS UNBOUNDED PRECEDING)
+         AS running
+  FROM LITEREG040_T;
+
+SELECT id, v FROM LITEREG040_T ORDER BY id;
+SELECT grp, SUM(v) AS total FROM LITEREG040_T GROUP BY grp ORDER BY grp;
+DROP TABLE LITEREG040_T;
+exit;

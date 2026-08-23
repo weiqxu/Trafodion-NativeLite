@@ -1,0 +1,78 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Environment-independent session identity coverage adapted from
+-- charsets/TEST313. Do not expose the configured user name in EXPECTED021.
+SELECT CASE
+         WHEN CURRENT_USER = SESSION_USER AND CURRENT_USER = USER
+         THEN 'MATCH' ELSE 'DIFFERENT'
+       END AS identity_state,
+       CASE
+         WHEN CHAR_LENGTH(CURRENT_USER) > 0
+          AND CHAR_LENGTH(SESSION_USER) > 0
+          AND CHAR_LENGTH(USER) > 0
+         THEN 'NONEMPTY' ELSE 'EMPTY'
+       END AS name_state
+  FROM (VALUES (1)) AS v(n);
+
+CREATE TABLE LITEREG021_IDENTITY
+  (id INT PRIMARY KEY,
+   current_name VARCHAR(128),
+   session_name VARCHAR(128),
+   user_name VARCHAR(128),
+   prefixed_name VARCHAR(129));
+
+-- Cover identity assignment through both INSERT VALUES and INSERT SELECT.
+INSERT INTO LITEREG021_IDENTITY VALUES
+  (1, CURRENT_USER, SESSION_USER, USER, 'Z' || CURRENT_USER);
+
+INSERT INTO LITEREG021_IDENTITY
+SELECT 2, CURRENT_USER, SESSION_USER, USER, 'Z' || SESSION_USER
+  FROM (VALUES (1)) AS v(n);
+
+-- Assert only stable relationships, not the environment-specific identity.
+SELECT id,
+       CASE
+         WHEN current_name = session_name AND current_name = user_name
+         THEN 'MATCH' ELSE 'DIFFERENT'
+       END AS stored_identity_state,
+       CASE
+         WHEN CHAR_LENGTH(current_name) > 0
+          AND CHAR_LENGTH(session_name) > 0
+          AND CHAR_LENGTH(user_name) > 0
+         THEN 'NONEMPTY' ELSE 'EMPTY'
+       END AS stored_name_state,
+       CASE WHEN prefixed_name = 'Z' || current_name
+            THEN 'MATCH' ELSE 'DIFFERENT' END AS prefix_state
+  FROM LITEREG021_IDENTITY
+ ORDER BY id;
+
+-- Identity expressions remain usable in local-table predicates.
+SELECT id
+  FROM LITEREG021_IDENTITY
+ WHERE current_name = CURRENT_USER
+   AND session_name = SESSION_USER
+   AND user_name = USER
+ ORDER BY id;
+
+SELECT id
+  FROM LITEREG021_IDENTITY
+ WHERE prefixed_name = 'Z' || USER
+ ORDER BY id;
+
+DROP TABLE LITEREG021_IDENTITY;
+exit;

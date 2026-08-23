@@ -1,13 +1,13 @@
 claim	requirement	status	evidence
-functional_support	all five transaction profiles	pass	make local-lite-m14c
-functional_support	real reduced T4 JDBC boundary	pass	make local-lite-m14c
-functional_support	serializable Level 3 matrix	pass	make local-lite-m14d
-functional_support	durable decision crash atomicity	pass	make local-lite-m14d
-repeatable_tpc_c_like	versioned schema driver and configuration	pass	make local-lite-m14a
-repeatable_tpc_c_like	deterministic two-warehouse load	pass	make local-lite-m14f
-repeatable_tpc_c_like	two terminal sessions and fixed mix	pass	make local-lite-m14f
-repeatable_tpc_c_like	latency throughput repetitions and variance	pass	make local-lite-m14f
-repeatable_tpc_c_like	checkpoint restart restore and watermark	pass	make local-lite-m14f
+functional_support	all five transaction profiles	pass	make lite-m14c
+functional_support	real reduced T4 JDBC boundary	pass	make lite-m14c
+functional_support	serializable Level 3 matrix	pass	make lite-m14d
+functional_support	durable decision crash atomicity	pass	make lite-m14d
+repeatable_tpc_c_like	versioned schema driver and configuration	pass	make lite-m14a
+repeatable_tpc_c_like	deterministic two-warehouse load	pass	make lite-m14f
+repeatable_tpc_c_like	two terminal sessions and fixed mix	pass	make lite-m14f
+repeatable_tpc_c_like	latency throughput repetitions and variance	pass	make lite-m14f
+repeatable_tpc_c_like	checkpoint restart restore and watermark	pass	make lite-m14f
 formal_tpc_c_compliance	normative random transaction selection	fail	D008
 formal_tpc_c_compliance	normative terminal pacing and concurrent writers	fail	D010
 formal_tpc_c_compliance	TPC audit and full disclosure	fail	D006 D007

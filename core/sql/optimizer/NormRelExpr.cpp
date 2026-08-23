@@ -62,7 +62,7 @@
 #include "ItemOther.h"
 #include "ItemExpr.h"
 #include "QRDescGenerator.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HBaseClient_JNI.h"
 #include "HiveClient_JNI.h"
 #else

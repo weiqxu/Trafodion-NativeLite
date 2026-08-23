@@ -1306,7 +1306,7 @@ void ExExeUtilHiveTruncateLegacyTcb::freeResources()
 {
   if (htTdb().getDropOnDealloc())
   {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
       NAString hiveDropDDL("drop table ");
       hiveDropDDL += htTdb().getHiveTableName();
 
@@ -1485,7 +1485,7 @@ void ExExeUtilHiveTruncateTcb::freeResources()
 {
   if (htTdb().getDropOnDealloc())
   {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
     NAString hiveDropDDL("drop table ");
     hiveDropDDL += htTdb().getHiveTableName();
 
@@ -1548,12 +1548,12 @@ short ExExeUtilHiveTruncateTcb::work()
             NAString alterStmt("alter table ");
             alterStmt += htTdb().getHiveTableName(); 
             alterStmt += " set tblproperties ('EXTERNAL'='False')";
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
             Lng32 retCode = -1;
             ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
                             &retCode, NULL, NULL,
                             (char *)"HiveClient_JNI::executeHiveSQL()",
-                            (char *)"Hive truncate is not supported in local-lite builds",
+                            (char *)"Hive truncate is not supported in lite builds",
                             (char *)"");
             step_ = ERROR_;
             break;
@@ -1575,12 +1575,12 @@ short ExExeUtilHiveTruncateTcb::work()
 
         case TRUNCATE_TABLE_:
           {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
             Lng32 retCode = -1;
             ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
                             &retCode, NULL, NULL,
                             (char *)"HiveClient_JNI::executeHiveSQL()",
-                            (char *)"Hive truncate is not supported in local-lite builds",
+                            (char *)"Hive truncate is not supported in lite builds",
                             (char *)"");
             step_ = ERROR_;
             break;
@@ -1616,12 +1616,12 @@ short ExExeUtilHiveTruncateTcb::work()
             NAString alterStmt("alter table ");
             alterStmt += htTdb().getHiveTableName(); 
             alterStmt += " set tblproperties ('EXTERNAL'='TRUE')";
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
             Lng32 retCode = -1;
             ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
                             &retCode, NULL, NULL,
                             (char *)"HiveClient_JNI::executeHiveSQL()",
-                            (char *)"Hive truncate is not supported in local-lite builds",
+                            (char *)"Hive truncate is not supported in lite builds",
                             (char *)"");
             step_ = ERROR_;
             break;
@@ -1729,12 +1729,12 @@ short ExExeUtilHiveQueryTcb::work()
           break;
         case PROCESS_QUERY_:
           {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
             Lng32 retCode = -1;
             ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
                             &retCode, NULL, NULL,
                             (char *)"HiveClient_JNI::executeHiveSQL()",
-                            (char *)"Hive query execution is not supported in local-lite builds",
+                            (char *)"Hive query execution is not supported in lite builds",
                             (char *)"");
             step_ = ERROR_;
             break;

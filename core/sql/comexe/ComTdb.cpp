@@ -686,10 +686,10 @@ char *ComTdb::findVTblPtrCom(short classID)
     }
     break;
 
-#ifdef TRAF_LOCAL_LITE
-  case ex_LOCAL_LITE_ROCKSDB_SCAN:
+#ifdef TRAF_LITE
+  case ex_LITE_ROCKSDB_SCAN:
     {
-      GetVTblPtr(vtblptr, ComTdbLocalLiteRocksdbScan);
+      GetVTblPtr(vtblptr, ComTdbLiteRocksdbScan);
     }
     break;
 #endif

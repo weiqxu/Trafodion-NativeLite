@@ -44,7 +44,7 @@
 #include "NAString.h"
 #include "CmpContext.h"
 #include <time.h>
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "hdfs.h"
 #else
 typedef void *hdfsFS;

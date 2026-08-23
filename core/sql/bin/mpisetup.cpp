@@ -48,7 +48,7 @@ my_mpi_close()
 void
 my_mpi_fclose()
 {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 static Int32 sv_called_count = 0;
 static Int32 sv_retcode = -999;
 #ifdef MPI_

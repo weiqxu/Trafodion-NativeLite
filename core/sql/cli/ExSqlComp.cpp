@@ -1402,7 +1402,7 @@ void CmpMessageStream::actOnSend(IpcConnection*)
     Int32 guaRetcode = phandle.decompose();
     if (XZFIL_ERR_OK == guaRetcode)
     {
-      #ifndef TRAF_LOCAL_LITE
+      #ifndef TRAF_LITE
       msg_mon_stop_process_name(phandle.getPhandleString());
 #endif
     }
@@ -1478,7 +1478,7 @@ void CmpMessageStream::actOnReceive(IpcConnection*)
               Int32 guaRetcode = phandle.decompose();
               if (XZFIL_ERR_OK == guaRetcode)
               {
-                #ifndef TRAF_LOCAL_LITE
+                #ifndef TRAF_LITE
       msg_mon_stop_process_name(phandle.getPhandleString());
 #endif
               }

@@ -46,7 +46,7 @@ LIBSX	+= -lrt
 # need -lsqlite3 for SQLite
 LIBSX	+=  -lsqlite3
 
-LOCAL_SQLITE_ROOT ?= $(TRAF_HOME)/opt/local-lite-sqlite
+LOCAL_SQLITE_ROOT ?= $(TRAF_HOME)/opt/lite-sqlite
 ifneq ($(wildcard $(LOCAL_SQLITE_ROOT)/include/sqlite3.h),)
 INCLUDES += -I$(LOCAL_SQLITE_ROOT)/include
 endif

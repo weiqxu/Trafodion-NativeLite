@@ -1,11 +1,11 @@
 #######################################################################
-# LocalLite native TPCC bulk loader.
+# Lite native TPCC bulk loader.
 #######################################################################
 
 CPPSRC := NativeLiteBulkLoaderMain.cpp
 TARGET := nativelite-bulk-loader
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 EARLY_DLLS := -Wl,--no-as-needed
 SYS_LIBS += -Wl,--as-needed
 endif
@@ -40,5 +40,5 @@ DEP_LIBS += \
 
 EXTERN_LIBS := $(LIBROOT)/libtdm_tmfuser.so
 SYS_LIBS += -pthread
-INCLUDE_DIRS := bin sqlci executor localstore cli common
-SRCPATH := bin sqlci executor localstore cli common
+INCLUDE_DIRS := bin sqlci executor litestore cli common
+SRCPATH := bin sqlci executor litestore cli common

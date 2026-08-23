@@ -107,14 +107,14 @@ class ComTdbHbaseAccess : public ComTdb
   friend class ExMetadataUpgradeTcb;
   friend class ExHbaseAccessBulkLoadPrepSQTcb;
   friend class ExHbaseAccessBulkLoadTaskTcb;
-#ifdef TRAF_LOCAL_LITE
-  friend class LocalLiteHbaseInsertTcb;
-  friend class LocalLiteHbaseUpdateTcb;
-  friend class LocalLiteHbaseDeleteTcb;
+#ifdef TRAF_LITE
+  friend class LiteHbaseInsertTcb;
+  friend class LiteHbaseUpdateTcb;
+  friend class LiteHbaseDeleteTcb;
 #endif
 
 public:
-  enum { MAX_LOCAL_LITE_BOUND_KEY_COLUMNS = 16 };
+  enum { MAX_LITE_BOUND_KEY_COLUMNS = 16 };
 
   enum ComTdbAccessType
   {
@@ -721,28 +721,28 @@ public:
   {(v ? flags_ |= UNIQUE_KEY_INFO : flags_ &= ~UNIQUE_KEY_INFO); };
   NABoolean uniqueKeyInfo() { return (flags_ & UNIQUE_KEY_INFO) != 0; };
 
-#ifdef TRAF_LOCAL_LITE
-  void setLocalLiteBoundKeyInput(UInt16 keyIndex, UInt16 tuppIndex,
+#ifdef TRAF_LITE
+  void setLiteBoundKeyInput(UInt16 keyIndex, UInt16 tuppIndex,
                                  UInt32 offset, UInt32 length)
   {
-    if (keyIndex >= MAX_LOCAL_LITE_BOUND_KEY_COLUMNS)
+    if (keyIndex >= MAX_LITE_BOUND_KEY_COLUMNS)
       return;
-    if (keyIndex >= localLiteBoundKeyInputCount_)
-      localLiteBoundKeyInputCount_ = keyIndex + 1;
-    localLiteBoundKeyInputTuppIndex_[keyIndex] = tuppIndex;
-    localLiteBoundKeyInputOffset_[keyIndex] = offset;
-    localLiteBoundKeyInputLength_[keyIndex] = length;
+    if (keyIndex >= liteBoundKeyInputCount_)
+      liteBoundKeyInputCount_ = keyIndex + 1;
+    liteBoundKeyInputTuppIndex_[keyIndex] = tuppIndex;
+    liteBoundKeyInputOffset_[keyIndex] = offset;
+    liteBoundKeyInputLength_[keyIndex] = length;
   }
-  void setLocalLiteBoundUpdateInput(UInt16 columnIndex, UInt16 tuppIndex,
+  void setLiteBoundUpdateInput(UInt16 columnIndex, UInt16 tuppIndex,
                                     UInt32 offset, UInt32 length)
   {
-    if (columnIndex >= MAX_LOCAL_LITE_BOUND_KEY_COLUMNS)
+    if (columnIndex >= MAX_LITE_BOUND_KEY_COLUMNS)
       return;
-    if (columnIndex >= localLiteBoundUpdateInputCount_)
-      localLiteBoundUpdateInputCount_ = columnIndex + 1;
-    localLiteBoundUpdateInputTuppIndex_[columnIndex] = tuppIndex;
-    localLiteBoundUpdateInputOffset_[columnIndex] = offset;
-    localLiteBoundUpdateInputLength_[columnIndex] = length;
+    if (columnIndex >= liteBoundUpdateInputCount_)
+      liteBoundUpdateInputCount_ = columnIndex + 1;
+    liteBoundUpdateInputTuppIndex_[columnIndex] = tuppIndex;
+    liteBoundUpdateInputOffset_[columnIndex] = offset;
+    liteBoundUpdateInputLength_[columnIndex] = length;
   }
 #endif
 
@@ -1098,17 +1098,17 @@ public:
   // number of column in row being inserted, not of the column in table.
   Int16 colIndexOfPK1_ ;
 
-#ifdef TRAF_LOCAL_LITE
-  UInt16 localLiteBoundKeyInputCount_;
-  UInt16 localLiteBoundKeyInputReserved_;
-  UInt16 localLiteBoundKeyInputTuppIndex_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
-  UInt32 localLiteBoundKeyInputOffset_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
-  UInt32 localLiteBoundKeyInputLength_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
-  UInt16 localLiteBoundUpdateInputCount_;
-  UInt16 localLiteBoundUpdateInputReserved_;
-  UInt16 localLiteBoundUpdateInputTuppIndex_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
-  UInt32 localLiteBoundUpdateInputOffset_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
-  UInt32 localLiteBoundUpdateInputLength_[MAX_LOCAL_LITE_BOUND_KEY_COLUMNS];
+#ifdef TRAF_LITE
+  UInt16 liteBoundKeyInputCount_;
+  UInt16 liteBoundKeyInputReserved_;
+  UInt16 liteBoundKeyInputTuppIndex_[MAX_LITE_BOUND_KEY_COLUMNS];
+  UInt32 liteBoundKeyInputOffset_[MAX_LITE_BOUND_KEY_COLUMNS];
+  UInt32 liteBoundKeyInputLength_[MAX_LITE_BOUND_KEY_COLUMNS];
+  UInt16 liteBoundUpdateInputCount_;
+  UInt16 liteBoundUpdateInputReserved_;
+  UInt16 liteBoundUpdateInputTuppIndex_[MAX_LITE_BOUND_KEY_COLUMNS];
+  UInt32 liteBoundUpdateInputOffset_[MAX_LITE_BOUND_KEY_COLUMNS];
+  UInt32 liteBoundUpdateInputLength_[MAX_LITE_BOUND_KEY_COLUMNS];
 #endif
 
   char fillers[4];
@@ -1236,21 +1236,21 @@ class ComTdbHbaseCoProcAggr : public ComTdbHbaseCoProcAccess
   QueuePtr listOfAggrTypes_;
 };
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 // --------------------------------------------------------------------------
 // NativeLite scan TDB.  This is deliberately independent from
 // ComTdbHbaseAccess: local scans own parameter binding and the RocksDB
 // lookup lifecycle, while the HBase TDB remains an HBase-only contract.
 // --------------------------------------------------------------------------
-class ComTdbLocalLiteRocksdbScan : public ComTdb
+class ComTdbLiteRocksdbScan : public ComTdb
 {
-  friend class LocalLiteRocksdbScanTdb;
-  friend class LocalLiteRocksdbScanTcb;
+  friend class LiteRocksdbScanTdb;
+  friend class LiteRocksdbScanTcb;
 
 public:
   enum { MAX_BOUND_KEY_COLUMNS = 16 };
-  ComTdbLocalLiteRocksdbScan();
-  ComTdbLocalLiteRocksdbScan(
+  ComTdbLiteRocksdbScan();
+  ComTdbLiteRocksdbScan(
       char *tableName, ex_expr *convertExpr, ex_expr *scanExpr,
       ex_expr *rowIdExpr, UInt32 asciiRowLen, UInt32 convertRowLen,
       UInt32 rowIdLen, UInt32 rowIdAsciiRowLen,
@@ -1269,13 +1269,13 @@ public:
     ComTdb::populateImageVersionIDArray();
   }
   virtual short getClassSize()
-  { return (short)sizeof(ComTdbLocalLiteRocksdbScan); }
+  { return (short)sizeof(ComTdbLiteRocksdbScan); }
   virtual Long pack(void *space);
   virtual Lng32 unpack(void *base, void *reallocator);
   virtual const ComTdb *getChild(Int32) const { return NULL; }
   virtual Int32 numChildren() const { return 0; }
   virtual const char *getNodeName() const
-  { return "EX_LOCAL_LITE_ROCKSDB_SCAN"; }
+  { return "EX_LITE_ROCKSDB_SCAN"; }
   virtual Int32 numExpressions() const { return 3; }
   virtual const char *getExpressionName(Int32 pos) const;
   virtual ex_expr *getExpressionNode(Int32 pos);
@@ -1327,7 +1327,7 @@ private:
   UInt32 flags_;
   char fillers_[24];
 };
-#endif // TRAF_LOCAL_LITE
+#endif // TRAF_LITE
 
 // --------------------------------------------------------------------------
 // Template instantiation to produce a 64-bit pointer emulator class

@@ -53,7 +53,7 @@
 #include "ExpHbaseDefs.h"
 #include "ExStats.h"
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HBaseClient_JNI.h"
 #include "HiveClient_JNI.h"
 #else
@@ -418,7 +418,7 @@ protected:
 char * getHbaseErrStr(Lng32 errEnum);
 
 // ===========================================================================
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 class ExpHbaseInterface_JNI : public ExpHbaseInterface
 {
  public:

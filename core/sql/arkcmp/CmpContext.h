@@ -635,7 +635,7 @@ private:
   // for any Hive SQL operations we may want to do
   HiveClient_JNI* hiveClient_;
 public:
-  // Authorization state is compiler-session state in embedded LocalLite.
+  // Authorization state is compiler-session state in embedded Lite.
   // Keep it thread-local so first-use compiler contexts on independent
   // session threads cannot overwrite one another.
   static THREAD_P Int32 authorizationState_;

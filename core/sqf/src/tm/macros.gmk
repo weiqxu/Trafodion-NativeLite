@@ -39,14 +39,14 @@ endif
 INCMONDIR	= ../../monitor/linux
 
 #tm
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 LIBSTMB         =  -L$(LIBEXPDIR) -lsbutil -lsbms
 else
 LIBSTMB         =  -L$(LIBEXPDIR) -lutil -lsbms
 endif
 
 LIBSTMX         =  $(LIBSTMB) $(LIBS) $(DEBUG)
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 LIBSTM          =  $(LIBSTMB) -lsxatmlib $(LIBS) $(DEBUG)
 else
 LIBSTM          =  $(LIBSTMB) -lsxatmlib -lshbasetmlib $(LIBS) $(DEBUG)
@@ -102,7 +102,7 @@ HPCWARN		= -Wno-unused-parameter
 HPCXXWARN	= -Wno-unused-parameter -Wno-non-virtual-dtor
 endif
 INCLUDES	= -I$(INCEXPDIR) -I$(INCMONDIR) -I$(MY_SPROOT)/export/include -I$(MY_SPROOT)/source/publications -I$(PROTOBUFS)/include
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 INCLUDES	+= -I$(HBASETMLIB) -I$(INC_JAVA) -I$(INC_JAVALINUX)
 endif
 INCLUDES	+= -I$(LOG4CXX_INC_DIR) -I$(LOG4CXX_INC_DIR)/log4cxx -I$(LIBCLOGGER) -I$(TRAF_HOME)/src/tm

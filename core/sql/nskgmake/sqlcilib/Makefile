@@ -42,8 +42,8 @@ CPPSRC := Define.cpp \
 	SqlCmd.cpp \
 	sqlclicmd.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-CPPSRC += LocalLiteSqlTable.cpp LocalLiteUdr.cpp
+ifeq ($(TRAF_LITE),1)
+CPPSRC += LiteSqlTable.cpp LiteUdr.cpp
 endif
 
 YINC := tdm_sqlmxmsg_intl
@@ -57,7 +57,7 @@ LSRC := sqlci_lex.ll
 YACC_VAR_PREFIX := sqlci
 LEX_PREFIX := sqlci
 
-SRCPATH := sqlci exp localstore
+SRCPATH := sqlci exp litestore
 
 $(TARGOBJDIR)/$(LEX_PREFIX)/sqlci_lex.$(OBJSUFFIX) : $(TARGOBJDIR)/sqlci_yacc.h
 $(TARGOBJDIR)/SqlCmd.$(OBJSUFFIX): tdm_sqlmxmsg_intl/$(TARGTYPE)/$(ARCHBITS)/$(FLAVOR)/sqlmxmsg_msg.h

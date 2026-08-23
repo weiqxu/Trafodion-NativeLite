@@ -59,13 +59,13 @@
 #include "ExCextdecs.h"
 #include "dtm/tm.h"
 
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteRocksDBStore.h"
+#ifdef TRAF_LITE
+#include "LiteRocksDBStore.h"
 
-static int64_t localLiteExecutorTxnId(ExTransaction *ta)
+static int64_t liteExecutorTxnId(ExTransaction *ta)
 {
   if (!ta)
-    return LocalLiteTxnManager::INVALID_EXECUTOR_TXN_ID;
+    return LiteTxnManager::INVALID_EXECUTOR_TXN_ID;
 
   Int64 executorTxnId = ta->getExeXnId();
   if (executorTxnId != Int64(-1))
@@ -87,24 +87,24 @@ ExTransaction::ExTransaction(CliGlobals * cliGlob, CollHeap *heap)
        savepointId_(0),
        volatileSchemaExists_(FALSE),
        transtag_(-1)
-#ifdef TRAF_LOCAL_LITE
-       , localLiteTxnContext_(NULL)
+#ifdef TRAF_LITE
+       , liteTxnContext_(NULL)
 #endif
 {
   transMode_ = new(heap) TransMode(TransMode::SERIALIZABLE_, 
 			     TransMode::READ_WRITE_,
 			     TransMode::OFF_);
-#ifdef TRAF_LOCAL_LITE
-  localLiteTxnContext_ = LocalLiteTxnManager::createContext();
+#ifdef TRAF_LITE
+  liteTxnContext_ = LiteTxnManager::createContext();
 #endif
   resetXnState();
 }
 
 ExTransaction::~ExTransaction()
 {
-#ifdef TRAF_LOCAL_LITE
-  LocalLiteTxnManager::destroyContext(localLiteTxnContext_);
-  localLiteTxnContext_ = NULL;
+#ifdef TRAF_LITE
+  LiteTxnManager::destroyContext(liteTxnContext_);
+  liteTxnContext_ = NULL;
 #endif
   if (transMode_)
     NADELETE(transMode_, TransMode, heap_);
@@ -115,11 +115,11 @@ ExTransaction::~ExTransaction()
   heap_ = NULL;
 }
 
-#ifdef TRAF_LOCAL_LITE
-bool ExTransaction::beginLocalLiteTransaction(std::string *error)
+#ifdef TRAF_LITE
+bool ExTransaction::beginLiteTransaction(std::string *error)
 {
-  const int64_t executorTxnId = localLiteExecutorTxnId(this);
-  if (!LocalLiteTxnManager::beginForExecutor(localLiteTxnContext_,
+  const int64_t executorTxnId = liteExecutorTxnId(this);
+  if (!LiteTxnManager::beginForExecutor(liteTxnContext_,
                                               executorTxnId, error))
     return false;
 
@@ -133,32 +133,32 @@ bool ExTransaction::beginLocalLiteTransaction(std::string *error)
   return true;
 }
 
-bool ExTransaction::commitLocalLiteTransaction(std::string *error)
+bool ExTransaction::commitLiteTransaction(std::string *error)
 {
-  const int64_t executorTxnId = localLiteExecutorTxnId(this);
-  const bool committed = LocalLiteTxnManager::commitForExecutor(
-      localLiteTxnContext_, executorTxnId, error);
-  // Validation/conflict failures consume the local transaction just like a
+  const int64_t executorTxnId = liteExecutorTxnId(this);
+  const bool committed = LiteTxnManager::commitForExecutor(
+      liteTxnContext_, executorTxnId, error);
+  // Validation/conflict failures consume the Lite transaction just like a
   // successful commit.  Keep the coordinator active only for a mismatch that
   // left the storage participant active.
-  if (!LocalLiteTxnManager::active(localLiteTxnContext_))
+  if (!LiteTxnManager::active(liteTxnContext_))
     resetXnState();
   return committed;
 }
 
-bool ExTransaction::rollbackLocalLiteTransaction(std::string *error)
+bool ExTransaction::rollbackLiteTransaction(std::string *error)
 {
-  const int64_t executorTxnId = localLiteExecutorTxnId(this);
-  const bool rolledBack = LocalLiteTxnManager::rollbackForExecutor(
-      localLiteTxnContext_, executorTxnId, error);
-  if (!LocalLiteTxnManager::active(localLiteTxnContext_))
+  const int64_t executorTxnId = liteExecutorTxnId(this);
+  const bool rolledBack = LiteTxnManager::rollbackForExecutor(
+      liteTxnContext_, executorTxnId, error);
+  if (!LiteTxnManager::active(liteTxnContext_))
     resetXnState();
   return rolledBack;
 }
 
-void ExTransaction::resetLocalLiteTransaction()
+void ExTransaction::resetLiteTransaction()
 {
-  LocalLiteTxnManager::resetContext(localLiteTxnContext_);
+  LiteTxnManager::resetContext(liteTxnContext_);
   resetXnState();
 }
 #endif
@@ -467,7 +467,7 @@ short ExTransaction::beginTransaction()
 
 short ExTransaction::suspendTransaction()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   return 0;
 #endif
   short retcode = FEOK;
@@ -483,7 +483,7 @@ short ExTransaction::suspendTransaction()
 
 short ExTransaction::resumeTransaction()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   return 0;
 #endif
   short retcode = 0;
@@ -757,7 +757,7 @@ short ExTransaction::commitTransaction()
 ////////////////////////////////////////////////////////////
 short ExTransaction::inheritTransaction()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   // There is no process-wide TMF transaction to inherit.  The storage
   // participant is already bound to this ExTransaction/ContextCli session.
   return 0;
@@ -882,8 +882,8 @@ short ExTransaction::inheritTransaction()
 ////////////////////////////////////////////////////////////
 short ExTransaction::validateTransaction()
 {
-#ifdef TRAF_LOCAL_LITE
-  return LocalLiteTxnManager::active(localLiteTxnContext_) ==
+#ifdef TRAF_LITE
+  return LiteTxnManager::active(liteTxnContext_) ==
                  (xnInProgress_ != FALSE)
              ? 0 : -1;
 #endif
@@ -1205,14 +1205,14 @@ short ExTransTcb::work()
 	    short rc;
 	    switch (transTdb().transType_)  {
 	      case BEGIN_: {
-#ifdef TRAF_LOCAL_LITE
-	        std::string localLiteError;
-	        if (!ta->beginLocalLiteTransaction(&localLiteError))
+#ifdef TRAF_LITE
+	        std::string liteError;
+	        if (!ta->beginLiteTransaction(&liteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
 	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-	                   << DgString0(localLiteError.c_str());
+	                   << DgString0(liteError.c_str());
 	            handleErrors(pentry_down, diags);
 	            break;
 	          }
@@ -1243,11 +1243,11 @@ short ExTransTcb::work()
       break;
 	  
 	      case COMMIT_: {
-#ifdef TRAF_LOCAL_LITE
-	        std::string localLiteError;
-	        if (!ta->commitLocalLiteTransaction(&localLiteError))
+#ifdef TRAF_LITE
+	        std::string liteError;
+	        if (!ta->commitLiteTransaction(&liteError))
 	          {
-	            // The local transaction manager discards the pending image
+	            // The Lite transaction manager discards the pending image
 	            // when commit validation fails. Restore the session state as
 	            // well so the next statement does not remain in a phantom
 	            // manual transaction.
@@ -1255,7 +1255,7 @@ short ExTransTcb::work()
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
 	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-	                   << DgString0(localLiteError.c_str());
+	                   << DgString0(liteError.c_str());
 	            handleErrors(pentry_down, diags);
 	            break;
 	          }
@@ -1307,14 +1307,14 @@ short ExTransTcb::work()
       break;
       
 	      case ROLLBACK_:  {
-#ifdef TRAF_LOCAL_LITE
-	        std::string localLiteError;
-	        if (!ta->rollbackLocalLiteTransaction(&localLiteError))
+#ifdef TRAF_LITE
+	        std::string liteError;
+	        if (!ta->rollbackLiteTransaction(&liteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
 	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-	                   << DgString0(localLiteError.c_str());
+	                   << DgString0(liteError.c_str());
 	            handleErrors(pentry_down, diags);
 	            break;
 	          }
@@ -1368,14 +1368,14 @@ short ExTransTcb::work()
       break;
 
 	      case ROLLBACK_WAITED_:  {
-#ifdef TRAF_LOCAL_LITE
-	        std::string localLiteError;
-	        if (!ta->rollbackLocalLiteTransaction(&localLiteError))
+#ifdef TRAF_LITE
+	        std::string liteError;
+	        if (!ta->rollbackLiteTransaction(&liteError))
 	          {
 	            ComDiagsArea *diags =
 	              ComDiagsArea::allocate(stmtGlob->getDefaultHeap());
 	            *diags << DgSqlCode(-EXE_INTERNAL_ERROR)
-	                   << DgString0(localLiteError.c_str());
+	                   << DgString0(liteError.c_str());
 	            handleErrors(pentry_down, diags);
 	            break;
 	          }

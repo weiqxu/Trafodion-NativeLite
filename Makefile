@@ -21,266 +21,266 @@
 #
 # @@@ END COPYRIGHT @@@
 
-.PHONY: all local-lite local-lite-release local-lite-client local-lite-regress local-lite-metadata local-lite-legacy-audit local-lite-regress-inventory local-lite-m10 local-lite-m11a local-lite-m11b local-lite-m11c local-lite-m11 local-lite-m12a local-lite-m12b local-lite-m12c local-lite-m12 local-lite-m13 local-lite-m14a local-lite-m14b local-lite-m14c local-lite-m14d local-lite-m14e local-lite-m14f local-lite-m14 local-lite-m15a local-lite-m15b local-lite-m15c local-lite-m15d local-lite-m15e local-lite-m15f local-lite-m15g local-lite-m15 local-lite-m16a local-lite-m16b local-lite-m16c local-lite-m16d local-lite-m16e local-lite-m16f local-lite-m16g local-lite-m16 local-lite-m17a local-lite-m17b local-lite-m17c local-lite-m17 local-lite-m18 local-lite-m19 local-lite-m20 local-lite-m21 local-lite-m21-tpcc local-lite-m22a local-lite-m22b local-lite-m22c local-lite-m22d local-lite-m22e local-lite-m22f local-lite-m22g local-lite-m22h local-lite-m22
+.PHONY: all lite lite-release lite-client lite-regress lite-metadata lite-legacy-audit lite-regress-inventory lite-m10 lite-m11a lite-m11b lite-m11c lite-m11 lite-m12a lite-m12b lite-m12c lite-m12 lite-m13 lite-m14a lite-m14b lite-m14c lite-m14d lite-m14e lite-m14f lite-m14 lite-m15a lite-m15b lite-m15c lite-m15d lite-m15e lite-m15f lite-m15g lite-m15 lite-m16a lite-m16b lite-m16c lite-m16d lite-m16e lite-m16f lite-m16g lite-m16 lite-m17a lite-m17b lite-m17c lite-m17 lite-m18 lite-m19 lite-m20 lite-m21 lite-m21-tpcc lite-m22a lite-m22b lite-m22c lite-m22d lite-m22e lite-m22f lite-m22g lite-m22h lite-m22
 SRCDIR = $(shell echo $(TRAFODION_VER_PROD) | sed -e 's/ /-/g' | tr 'A-Z' 'a-z')
-M14_REPORT_DIR ?= /tmp/traf-local-lite-m14-report
-M15_REPORT_DIR ?= /tmp/traf-local-lite-m15-report
-M16_REPORT_DIR ?= /tmp/traf-local-lite-m16-report
-M17_REPORT_DIR ?= /tmp/traf-local-lite-m17-report
-M21_REPORT_DIR ?= /tmp/traf-local-lite-m21-full-report
-M22_REPORT_DIR ?= /tmp/traf-local-lite-m22-full-report
+M14_REPORT_DIR ?= /tmp/traf-lite-m14-report
+M15_REPORT_DIR ?= /tmp/traf-lite-m15-report
+M16_REPORT_DIR ?= /tmp/traf-lite-m16-report
+M17_REPORT_DIR ?= /tmp/traf-lite-m17-report
+M21_REPORT_DIR ?= /tmp/traf-lite-m21-full-report
+M22_REPORT_DIR ?= /tmp/traf-lite-m22-full-report
 
 all:
 	@echo "Building all Trafodion components"
 	cd core && $(MAKE) all 
 
-local-lite:
-	@echo "Building local-lite Trafodion native core"
-	cd core && $(MAKE) local-lite
+lite:
+	@echo "Building Trafodion native core with Lite Storage"
+	cd core && $(MAKE) lite
 
-local-lite-release:
-	@echo "Building Release local-lite Trafodion native core"
-	$(MAKE) SQ_BUILD_TYPE=release local-lite
+lite-release:
+	@echo "Building Release Trafodion native core with Lite Storage"
+	$(MAKE) SQ_BUILD_TYPE=release lite
 
-local-lite-client:
-	@echo "Running local-lite SQLCI-style client checks"
-	scripts/test-local-lite-client.sh
+lite-client:
+	@echo "Running Lite Storage SQLCI-style client checks"
+	scripts/test-lite-client.sh
 
-local-lite-regress:
-	@echo "Running local-lite SQL regressions"
-	core/sql/regress/localLite/runregr $(LOCAL_LITE_REGR_TESTS)
+lite-regress:
+	@echo "Running Lite Storage SQL regressions"
+	core/sql/regress/lite/runregr $(LITE_REGR_TESTS)
 
-local-lite-metadata:
-	@echo "Running local-lite metadata SQL check"
-	scripts/test-local-lite-metadata.sh
+lite-metadata:
+	@echo "Running lite metadata SQL check"
+	scripts/test-lite-metadata.sh
 
-local-lite-legacy-audit:
-	@echo "Auditing local-lite legacy regression inventory"
-	scripts/audit-local-lite-legacy-regress.sh --report
+lite-legacy-audit:
+	@echo "Auditing lite legacy regression inventory"
+	scripts/audit-lite-legacy-regress.sh --report
 
-local-lite-regress-inventory:
+lite-regress-inventory:
 	@echo "Auditing complete upstream regression assets"
-	scripts/audit-local-lite-upstream-regress.sh --report
+	scripts/audit-lite-upstream-regress.sh --report
 
-local-lite-m10:
+lite-m10:
 	@echo "Running bounded RocksDB-only legacy convergence gate"
-	scripts/test-local-lite-legacy-convergence.sh
+	scripts/test-lite-legacy-convergence.sh
 
-local-lite-m11a:
+lite-m11a:
 	@echo "Running M11A session-owned transaction context checks"
-	scripts/test-local-lite-runtime.sh
-	scripts/test-local-lite-context-transactions.sh
-	scripts/test-local-lite-statement-snapshot.sh
-	scripts/test-local-lite-transaction-snapshot.sh
-	scripts/test-local-lite-store-concurrency.sh
-	scripts/test-local-lite-session-transactions.sh
+	scripts/test-lite-runtime.sh
+	scripts/test-lite-context-transactions.sh
+	scripts/test-lite-statement-snapshot.sh
+	scripts/test-lite-transaction-snapshot.sh
+	scripts/test-lite-store-concurrency.sh
+	scripts/test-lite-session-transactions.sh
 
-local-lite-m11b:
+lite-m11b:
 	@echo "Running M11B standalone server and restart checks"
-	scripts/test-local-lite-server.sh
+	scripts/test-lite-server.sh
 
-local-lite-m11c:
+lite-m11c:
 	@echo "Running M11C Trafodion Type 4 JDBC checks"
-	scripts/test-local-lite-t4jdbc.sh
+	scripts/test-lite-t4jdbc.sh
 
-local-lite-m11: local-lite-m11a local-lite-m11b local-lite-m11c
+lite-m11: lite-m11a lite-m11b lite-m11c
 	@echo "M11 sessionized server and client protocol checks passed"
 
-local-lite-m12a:
+lite-m12a:
 	@echo "Running M12A backend-neutral storage contract checks"
-	scripts/test-local-lite-storage-contract.sh
-	scripts/test-local-lite-metadata-key-migration.sh
+	scripts/test-lite-storage-contract.sh
+	scripts/test-lite-metadata-key-migration.sh
 
-local-lite-m12b: local-lite-m12a
+lite-m12b: lite-m12a
 	@echo "Running M12B transactional backend comparison"
-	scripts/test-local-lite-storage-backends.sh
+	scripts/test-lite-storage-backends.sh
 
-local-lite-m12c: local-lite-m12b
+lite-m12c: lite-m12b
 	@echo "Running M12C recovery and operations checks"
-	scripts/test-local-lite-sql-commit-recovery.sh
+	scripts/test-lite-sql-commit-recovery.sh
 
-local-lite-m12: local-lite-m12c
+lite-m12: lite-m12c
 	@echo "M12 transactional storage and recovery checks passed"
 
-local-lite-m13: local-lite-m12
+lite-m13: lite-m12
 	@echo "Running M13 exclusive unified storage checks"
-	scripts/test-local-lite-storage-cutover.sh
+	scripts/test-lite-storage-cutover.sh
 	@echo "M13 exclusive unified TransactionDB checks passed"
 
-local-lite-m14a:
+lite-m14a:
 	@echo "Running M14A TPC-C specification and baseline checks"
-	scripts/test-local-lite-tpcc-baseline.sh
+	scripts/test-lite-tpcc-baseline.sh
 
-local-lite-m14b: local-lite-m14a
+lite-m14b: lite-m14a
 	@echo "Running M14B TPC-C schema, loader, and integrity checks"
-	scripts/test-local-lite-tpcc-loader.sh
+	scripts/test-lite-tpcc-loader.sh
 
-local-lite-m14c: local-lite-m14b
+lite-m14c: lite-m14b
 	@echo "Running M14C five-profile T4 JDBC transaction checks"
-	scripts/test-local-lite-tpcc-transactions.sh
+	scripts/test-lite-tpcc-transactions.sh
 
-local-lite-m14d: local-lite-m14c
+lite-m14d: lite-m14c
 	@echo "Running M14D isolation and crash-recovery checks"
-	scripts/test-local-lite-tpcc-isolation.sh
+	scripts/test-lite-tpcc-isolation.sh
 
-local-lite-m14e: local-lite-m14d
+lite-m14e: lite-m14d
 	@echo "Running M14E concurrent compiler/executor checks"
-	scripts/test-local-lite-tpcc-concurrency.sh
+	scripts/test-lite-tpcc-concurrency.sh
 	@echo "Running M14E cancellation, disconnect, and peer-survival regression"
-	scripts/test-local-lite-t4jdbc.sh
+	scripts/test-lite-t4jdbc.sh
 
-local-lite-m14f: local-lite-m14e
+lite-m14f: lite-m14e
 	@echo "Running M14F multi-warehouse performance and operations checks"
-	TPCC_M14F_ARTIFACT_DIR="$(TPCC_M14F_ARTIFACT_DIR)" scripts/test-local-lite-tpcc-performance.sh
+	TPCC_M14F_ARTIFACT_DIR="$(TPCC_M14F_ARTIFACT_DIR)" scripts/test-lite-tpcc-performance.sh
 
-local-lite-m14: TPCC_M14F_ARTIFACT_DIR := $(M14_REPORT_DIR)
-local-lite-m14: local-lite-m10 local-lite-m11 local-lite-m12 local-lite-m13 local-lite-m14f
+lite-m14: TPCC_M14F_ARTIFACT_DIR := $(M14_REPORT_DIR)
+lite-m14: lite-m10 lite-m11 lite-m12 lite-m13 lite-m14f
 	@echo "Composing M14 aggregate qualification report"
-	scripts/test-local-lite-tpcc-qualification.sh "$(M14_REPORT_DIR)"
+	scripts/test-lite-tpcc-qualification.sh "$(M14_REPORT_DIR)"
 
-local-lite-m15a:
+lite-m15a:
 	@echo "Running M15A Trafodion MVCC/OCC contract checks"
-	scripts/test-local-lite-occ-contract.sh
+	scripts/test-lite-occ-contract.sh
 
-local-lite-m15b: local-lite-m15a
+lite-m15b: lite-m15a
 	@echo "Running M15B transaction-wide unified snapshot checks"
-	scripts/test-local-lite-statement-snapshot.sh
-	scripts/test-local-lite-transaction-snapshot.sh
+	scripts/test-lite-statement-snapshot.sh
+	scripts/test-lite-transaction-snapshot.sh
 
-local-lite-m15c: local-lite-m15b
+lite-m15c: lite-m15b
 	@echo "Running M15C OCC read/write-set checks"
-	scripts/test-local-lite-transaction-snapshot.sh
+	scripts/test-lite-transaction-snapshot.sh
 
-local-lite-m15d: local-lite-m15c
+lite-m15d: lite-m15c
 	@echo "Running M15D Trafodion OCC validation matrix"
-	scripts/test-local-lite-occ-validation.sh
+	scripts/test-lite-occ-validation.sh
 
-local-lite-m15e: local-lite-m15d
+lite-m15e: lite-m15d
 	@echo "Running M15E transactional secondary-index checks"
-	scripts/test-local-lite-occ-validation.sh
+	scripts/test-lite-occ-validation.sh
 
-local-lite-m15f: local-lite-m15e
+lite-m15f: lite-m15e
 	@echo "Running M15F atomic delta-commit checks"
-	scripts/test-local-lite-occ-validation.sh
-	scripts/test-local-lite-sql-commit-recovery.sh
+	scripts/test-lite-occ-validation.sh
+	scripts/test-lite-sql-commit-recovery.sh
 
-local-lite-m15g: local-lite-m15f local-lite-release
+lite-m15g: lite-m15f lite-release
 	@echo "Running M15G Release 32-warehouse concurrent OCC qualification"
 	TPCC_PROPERTIES="$(CURDIR)/benchmarks/tpcc/m15-production.properties" \
-	TPCC_SCALE=multi LOCAL_LITE_BUILD_TYPE=release \
+	TPCC_SCALE=multi LITE_BUILD_TYPE=release \
 	TPCC_ARTIFACT_DIR="$(M15_REPORT_DIR)" \
-		scripts/test-local-lite-tpcc-performance.sh
-	scripts/test-local-lite-tpcc-occ-qualification.sh "$(M15_REPORT_DIR)"
+		scripts/test-lite-tpcc-performance.sh
+	scripts/test-lite-tpcc-occ-qualification.sh "$(M15_REPORT_DIR)"
 
-local-lite-m15: local-lite-m15g
+lite-m15: lite-m15g
 	@echo "M15 Trafodion MVCC/OCC and Release TPC-C-like checks passed"
 
-local-lite-m16a:
+lite-m16a:
 	@echo "Running M16A Stock-Level optimization contract checks"
 	@test -s benchmarks/tpcc/stock-level-contract.tsv
 	@test -s benchmarks/tpcc/m16-stock-level.properties
 	@awk -F '\t' '$$1 == "full_scan_policy" && $$2 == "stock_level_zero" { found=1 } END { exit !found }' benchmarks/tpcc/stock-level-contract.tsv
 
-local-lite-m16b: local-lite-m16a
+lite-m16b: lite-m16a
 	@echo "Running M16B Stock-Level index checks"
-	scripts/test-local-lite-m16b.sh
+	scripts/test-lite-m16b.sh
 
-local-lite-m16c: local-lite-m16b
+lite-m16c: lite-m16b
 	@echo "Running M16C Stock-Level transaction source checks"
-	scripts/test-local-lite-m16c.sh
+	scripts/test-lite-m16c.sh
 
-local-lite-m16d: local-lite-m16c
+lite-m16d: lite-m16c
 	@echo "Running M16D optimizer range and correctness checks"
-	scripts/test-local-lite-m16d.sh
+	scripts/test-lite-m16d.sh
 
-local-lite-m16e: local-lite-m16d
+lite-m16e: lite-m16d
 	@echo "Running M16E telemetry and qualification contract checks"
-	scripts/test-local-lite-m16e.sh
+	scripts/test-lite-m16e.sh
 
-local-lite-m16f: local-lite-m16e local-lite-release
+lite-m16f: lite-m16e lite-release
 	@echo "Running M16F Release Stock-Level qualification"
 	TPCC_PROPERTIES="$(CURDIR)/benchmarks/tpcc/m15-production.properties" \
-	TPCC_SCALE=multi LOCAL_LITE_BUILD_TYPE=release \
+	TPCC_SCALE=multi LITE_BUILD_TYPE=release \
 	TPCC_ARTIFACT_DIR="$(M16_REPORT_DIR)" \
-		scripts/test-local-lite-m16f.sh
+		scripts/test-lite-m16f.sh
 
-local-lite-m16g: local-lite-m16f
+lite-m16g: lite-m16f
 	@echo "Running M16G final evidence and regression checks"
-	scripts/test-local-lite-m16g.sh "$(M16_REPORT_DIR)"
+	scripts/test-lite-m16g.sh "$(M16_REPORT_DIR)"
 
-local-lite-m16: local-lite-m16g
+lite-m16: lite-m16g
 	@echo "M16 Stock-Level range aggregation and index optimization checks passed"
 
-local-lite-m17a:
+lite-m17a:
 	@echo "Running M17 transaction path and OCC index contract checks"
-	scripts/test-local-lite-m17.sh
-	scripts/test-local-lite-new-order-batch.sh
+	scripts/test-lite-m17.sh
+	scripts/test-lite-new-order-batch.sh
 
-local-lite-m17b: local-lite-m17a
+lite-m17b: lite-m17a
 	@echo "Running M17 T4 and transaction regression checks"
-	scripts/test-local-lite-t4jdbc.sh
-	scripts/test-local-lite-tpcc-transactions.sh
+	scripts/test-lite-t4jdbc.sh
+	scripts/test-lite-tpcc-transactions.sh
 
-local-lite-m17c: local-lite-m17b local-lite-release
+lite-m17c: lite-m17b lite-release
 	@echo "Running M17 Release TPCC-like qualification"
 	TPCC_PROPERTIES="$(CURDIR)/benchmarks/tpcc/m15-production.properties" \
-	TPCC_SCALE=multi LOCAL_LITE_BUILD_TYPE=release \
+	TPCC_SCALE=multi LITE_BUILD_TYPE=release \
 	TPCC_ARTIFACT_DIR="$(M17_REPORT_DIR)" \
-		scripts/test-local-lite-tpcc-performance.sh
+		scripts/test-lite-tpcc-performance.sh
 
-local-lite-m17: local-lite-m17c
+lite-m17: lite-m17c
 	@echo "M17 New-Order execution and OCC validation optimization checks passed"
 
-local-lite-m18: local-lite
+lite-m18: lite
 	@echo "Running M18 T4 transaction-control and durable publication checks"
-	scripts/test-local-lite-t4jdbc.sh
-	scripts/test-local-lite-sql-commit-recovery.sh
+	scripts/test-lite-t4jdbc.sh
+	scripts/test-lite-sql-commit-recovery.sh
 
-local-lite-m19: local-lite-m18
+lite-m19: lite-m18
 	@echo "Running M19 execution-path, cache, and rowset checks"
-	scripts/test-local-lite-new-order-batch.sh
-	scripts/test-local-lite-storage-contract.sh
+	scripts/test-lite-new-order-batch.sh
+	scripts/test-lite-storage-contract.sh
 
-local-lite-m20: local-lite-m19
+lite-m20: lite-m19
 	@echo "Running M20 retained-plan and server-batch transaction checks"
-	scripts/test-local-lite-tpcc-transactions.sh
+	scripts/test-lite-tpcc-transactions.sh
 
-local-lite-m21: local-lite
+lite-m21: lite
 	@echo "Running M21 multi-worker/session isolation and capacity checks"
-	scripts/test-local-lite-m21-concurrency.sh
+	scripts/test-lite-m21-concurrency.sh
 
-local-lite-m21-tpcc: local-lite-m21
+lite-m21-tpcc: lite-m21
 	@echo "Running M21 complete 10-warehouse/32-terminal TPCC-like qualification"
 	TPCC_PROPERTIES="$(CURDIR)/benchmarks/tpcc/m21-10w32c.properties" \
 	TPCC_SCALE=qualification TPCC_NATIVE_BULK_LOAD=1 TPCC_NATIVE_COMMIT_ROWS=10000 NATIVELITE_WORKERS=64 \
 	TPCC_ARTIFACT_DIR="$(M21_REPORT_DIR)" \
-		scripts/test-local-lite-tpcc-performance.sh
+		scripts/test-lite-tpcc-performance.sh
 
-local-lite-m22a:
-	scripts/test-local-lite-m22a.sh
+lite-m22a:
+	scripts/test-lite-m22a.sh
 
-local-lite-m22b: local-lite-m22a
-	scripts/test-local-lite-m22b.sh
+lite-m22b: lite-m22a
+	scripts/test-lite-m22b.sh
 
-local-lite-m22c: local-lite-m22b
-	scripts/test-local-lite-m22c.sh
+lite-m22c: lite-m22b
+	scripts/test-lite-m22c.sh
 
-local-lite-m22d: local-lite-m22c
-	scripts/test-local-lite-m22d.sh
+lite-m22d: lite-m22c
+	scripts/test-lite-m22d.sh
 
-local-lite-m22e: local-lite-m22d
-	scripts/test-local-lite-m22e.sh
+lite-m22e: lite-m22d
+	scripts/test-lite-m22e.sh
 
-local-lite-m22f: local-lite-m22e local-lite-release
-	M22_REPORT_DIR="$(M22_REPORT_DIR)" scripts/test-local-lite-m22f.sh
+lite-m22f: lite-m22e lite-release
+	M22_REPORT_DIR="$(M22_REPORT_DIR)" scripts/test-lite-m22f.sh
 
-local-lite-m22g: local-lite-m22f
-	scripts/test-local-lite-m22g.sh "$(M22_REPORT_DIR)"
+lite-m22g: lite-m22f
+	scripts/test-lite-m22g.sh "$(M22_REPORT_DIR)"
 
-local-lite-m22h: local-lite-m22g
-	scripts/test-local-lite-m22h.sh "$(M22_REPORT_DIR)"
+lite-m22h: lite-m22g
+	scripts/test-lite-m22h.sh "$(M22_REPORT_DIR)"
 
-local-lite-m22: local-lite-m18 local-lite-m19 local-lite-m20 local-lite-m21 local-lite-m22h
+lite-m22: lite-m18 lite-m19 lite-m20 lite-m21 lite-m22h
 	@echo "M22 concurrent commit and full-scale qualification checks passed"
 
 package: 

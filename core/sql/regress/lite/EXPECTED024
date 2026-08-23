@@ -1,0 +1,127 @@
+>>SELECT INSERT('abcghi', 4, 0, 'def') AS inserted_txt,
++>       CASE WHEN INSERT('', 1, 0, '') = ''
++>            THEN 'MATCH' ELSE 'DIFFERENT' END AS empty_state,
++>       CASE WHEN INSERT(CAST(NULL AS VARCHAR(1)), 1, 0, 'x') IS NULL
++>            THEN 'NULL' ELSE 'VALUE' END AS null_state,
++>       INSERT('12345678', 7, 8, 'xyz') AS truncated_tail
++>  FROM (VALUES (1)) AS v(n);
+INSERTED_TXT     EMPTY_STATE  NULL_STATE  TRUNCATED_TAIL
+---------------  -----------  ----------  -------------------
+abcdefghi        MATCH        NULL        123456xyz
+--- 1 row(s) selected.
+>>CREATE TABLE LITEREG024_INSERT_SOURCE
++>  (id INT PRIMARY KEY,
++>   source_txt VARCHAR(12),
++>   start_pos INT,
++>   remove_len INT,
++>   replacement_txt VARCHAR(8),
++>   expected_txt VARCHAR(24));
+--- SQL operation complete.
+>>INSERT INTO LITEREG024_INSERT_SOURCE VALUES
++>  (2, '12345678', 1, 0, 'xyz', 'xyz12345678'),
++>  (3, '12345678', 1, 2, 'xyz', 'xyz345678'),
++>  (4, '12345678', 3, 4, 'xyz', '12xyz78'),
++>  (5, '12345678', 7, 8, 'xyz', '123456xyz'),
++>  (6, '12345678', 9, 0, 'xyz', '12345678xyz'),
++>  (7, 'abc', 2, 1, '', 'ac'),
++>  (8, 'abc', 1, 3, '', ''),
++>  (9, '', 1, 0, 'xyz', 'xyz'),
++>  (10, '', 1, 0, '', ''),
++>  (11, NULL, 1, 0, 'xyz', NULL),
++>  (12, 'abc', 1, 0, NULL, NULL),
++>  (13, 'abc', NULL, 0, 'x', NULL),
++>  (14, 'abc', 1, NULL, 'x', NULL);
+--- 13 row(s) inserted.
+>>CREATE TABLE LITEREG024_INSERT_RESULTS
++>  (id INT PRIMARY KEY,
++>   result_txt VARCHAR(24),
++>   expected_txt VARCHAR(24),
++>   wrapped_txt VARCHAR(26));
+--- SQL operation complete.
+>>INSERT INTO LITEREG024_INSERT_RESULTS VALUES
++>  (1, INSERT('abcghi', 4, 0, 'def'), 'abcdefghi',
++>   '[' || INSERT('abcghi', 4, 0, 'def') || ']');
+--- 1 row(s) inserted.
+>>INSERT INTO LITEREG024_INSERT_RESULTS
++>SELECT id,
++>       INSERT(source_txt, start_pos, remove_len, replacement_txt),
++>       expected_txt,
++>       '[' || INSERT(source_txt, start_pos, remove_len, replacement_txt) || ']'
++>  FROM LITEREG024_INSERT_SOURCE;
+--- 13 row(s) inserted.
+>>SELECT id,
++>       CASE
++>         WHEN result_txt IS NULL AND expected_txt IS NULL THEN 'BOTH_NULL'
++>         WHEN result_txt = expected_txt THEN 'MATCH'
++>         ELSE 'DIFFERENT'
++>       END AS result_state,
++>       CHAR_LENGTH(result_txt) AS result_length,
++>       CONVERTTOHEX(result_txt) AS result_hex,
++>       CONVERTTOHEX(wrapped_txt) AS wrapped_hex
++>  FROM LITEREG024_INSERT_RESULTS
++> ORDER BY id;
+ID           RESULT_STATE  RESULT_LENGTH  RESULT_HEX                                        WRAPPED_HEX
+-----------  ------------  -------------  ------------------------------------------------  ----------------------------------------------------
+          1  MATCH                     9  616263646566676869                                5B6162636465666768695D
+          2  MATCH                    11  78797A3132333435363738                            5B78797A31323334353637385D
+          3  MATCH                     9  78797A333435363738                                5B78797A3334353637385D
+          4  MATCH                     7  313278797A3738                                    5B313278797A37385D
+          5  MATCH                     9  31323334353678797A                                5B31323334353678797A5D
+          6  MATCH                    11  313233343536373878797A                            5B313233343536373878797A5D
+          7  MATCH                     2  6163                                              5B61635D
+          8  MATCH                     0                                                    5B5D
+          9  MATCH                     3  78797A                                            5B78797A5D
+         10  MATCH                     0                                                    5B5D
+         11  BOTH_NULL                 ?  ?                                                 ?
+         12  BOTH_NULL                 ?  ?                                                 ?
+         13  BOTH_NULL                 ?  ?                                                 ?
+         14  BOTH_NULL                 ?  ?                                                 ?
+--- 14 row(s) selected.
+>>SELECT id
++>  FROM LITEREG024_INSERT_SOURCE
++> WHERE INSERT(source_txt, start_pos, remove_len, replacement_txt) = expected_txt
++> ORDER BY id;
+ID
+-----------
+          2
+          3
+          4
+          5
+          6
+          7
+          8
+          9
+         10
+--- 9 row(s) selected.
+>>SELECT id
++>  FROM LITEREG024_INSERT_SOURCE
++> WHERE INSERT(source_txt, start_pos, remove_len, replacement_txt) IS NULL
++> ORDER BY id;
+ID
+-----------
+         11
+         12
+         13
+         14
+--- 4 row(s) selected.
+>>SELECT id
++>  FROM LITEREG024_INSERT_RESULTS
++> WHERE result_txt = '12xyz78'
++> ORDER BY id;
+ID
+-----------
+          4
+--- 1 row(s) selected.
+>>SELECT id
++>  FROM LITEREG024_INSERT_RESULTS
++> WHERE wrapped_txt = '[' || INSERT('12345678', 3, 4, 'xyz') || ']'
++> ORDER BY id;
+ID
+-----------
+          4
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG024_INSERT_RESULTS;
+--- SQL operation complete.
+>>DROP TABLE LITEREG024_INSERT_SOURCE;
+--- SQL operation complete.
+>>exit;

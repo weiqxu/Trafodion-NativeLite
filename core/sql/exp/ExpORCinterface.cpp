@@ -23,7 +23,7 @@
 
 #include "ExpORCinterface.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 
 ExpORCinterface* ExpORCinterface::newInstance(CollHeap* heap,
                                               const char* server,
@@ -85,7 +85,7 @@ Lng32 ExpORCinterface::getRowCount(char * orcFileName, Int64 &count)
 
 char * ExpORCinterface::getErrorText(Lng32 errEnum)
 {
-  static char errText[] = "ORC access is disabled in local-lite";
+  static char errText[] = "ORC access is disabled in lite";
   return errText;
 }
 

@@ -1,0 +1,101 @@
+>>CREATE TABLE LITEREG029_TARGET
++>  (id INT NOT NULL PRIMARY KEY, code VARCHAR(8), label VARCHAR(20), UNIQUE(code));
+--- SQL operation complete.
+>>CREATE TABLE LITEREG029_SOURCE
++>  (id INT NOT NULL PRIMARY KEY, code VARCHAR(8), label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG029_TARGET VALUES
++>  (1, 'A', 'old-one'),
++>  (2, 'B', 'old-two');
+--- 2 row(s) inserted.
+>>INSERT INTO LITEREG029_SOURCE VALUES
++>  (1, 'A', 'new-one'),
++>  (3, 'C', 'new-three');
+--- 2 row(s) inserted.
+>>MERGE INTO LITEREG029_TARGET
++>USING (SELECT * FROM LITEREG029_SOURCE) AS s
++>ON LITEREG029_TARGET.id = s.id
++>WHEN MATCHED THEN UPDATE SET label = s.label
++>WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.code, s.label);
+--- 2 row(s) updated.
+>>SELECT id, code, label FROM LITEREG029_TARGET ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         new-one
+          2  B         old-two
+          3  C         new-three
+--- 3 row(s) selected.
+>>DELETE FROM LITEREG029_SOURCE;
+--- 2 row(s) deleted.
+>>INSERT INTO LITEREG029_SOURCE VALUES
++>  (1, 'A', 'txn-one'),
++>  (4, 'D', 'txn-four');
+--- 2 row(s) inserted.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>MERGE INTO LITEREG029_TARGET
++>USING (SELECT * FROM LITEREG029_SOURCE) AS s
++>ON LITEREG029_TARGET.id = s.id
++>WHEN MATCHED THEN UPDATE SET label = s.label
++>WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.code, s.label);
+--- 2 row(s) updated.
+>>SELECT id, code, label FROM LITEREG029_TARGET
++> WHERE id IN (1, 4) ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         txn-one
+          4  D         txn-four
+--- 2 row(s) selected.
+>>ROLLBACK WORK;
+--- SQL operation complete.
+>>SELECT id, code, label FROM LITEREG029_TARGET
++> WHERE id IN (1, 4) ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         new-one
+--- 1 row(s) selected.
+>>DELETE FROM LITEREG029_SOURCE;
+--- 2 row(s) deleted.
+>>INSERT INTO LITEREG029_SOURCE VALUES
++>  (1, 'X', 'must-roll-back'),
++>  (5, 'B', 'duplicate-unique');
+--- 2 row(s) inserted.
+>>MERGE INTO LITEREG029_TARGET
++>USING (SELECT * FROM LITEREG029_SOURCE) AS s
++>ON LITEREG029_TARGET.id = s.id
++>WHEN MATCHED THEN UPDATE SET code = s.code, label = s.label
++>WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.code, s.label);
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate lite unique key <MXID>
+--- 0 row(s) updated.
+>>SELECT id, code, label FROM LITEREG029_TARGET
++> WHERE id IN (1, 5) ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         new-one
+--- 1 row(s) selected.
+>>DELETE FROM LITEREG029_SOURCE;
+--- 2 row(s) deleted.
+>>INSERT INTO LITEREG029_SOURCE VALUES
++>  (2, 'B', 'skip'),
++>  (4, 'D', 'insert-four');
+--- 2 row(s) inserted.
+>>MERGE INTO LITEREG029_TARGET
++>USING (SELECT * FROM LITEREG029_SOURCE) AS s
++>ON LITEREG029_TARGET.id = s.id
++>WHEN MATCHED THEN UPDATE SET label = s.label WHERE s.label <> 'skip'
++>WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.code, s.label);
+--- 1 row(s) updated.
+>>SELECT id, code, label FROM LITEREG029_TARGET ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         new-one
+          2  B         old-two
+          3  C         new-three
+          4  D         insert-four
+--- 4 row(s) selected.
+>>DROP TABLE LITEREG029_SOURCE;
+--- SQL operation complete.
+>>DROP TABLE LITEREG029_TARGET;
+--- SQL operation complete.
+>>exit;

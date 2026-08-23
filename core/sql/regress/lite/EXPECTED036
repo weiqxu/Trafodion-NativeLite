@@ -1,0 +1,119 @@
+>>CREATE TABLE LITEREG036_T
++>  (id INT NOT NULL PRIMARY KEY, v INT);
+--- SQL operation complete.
+>>CREATE TABLE LITEREG036_AUDIT
++>  (seq INT NOT NULL PRIMARY KEY, event_name VARCHAR(20), seen_v INT);
+--- SQL operation complete.
+>>CREATE TRIGGER LITEREG036_BI BEFORE INSERT ON LITEREG036_T
++>  REFERENCING NEW ROW AS n FOR EACH ROW
++>  SET n.v = n.v + 1;
+--- SQL operation complete.
+>>CREATE TRIGGER LITEREG036_AI AFTER INSERT ON LITEREG036_T
++>  REFERENCING NEW ROW AS n FOR EACH ROW
++>  INSERT INTO LITEREG036_AUDIT VALUES
++>    (n.id * 10 + 1, 'after-insert', n.v);
+--- SQL operation complete.
+>>INSERT INTO LITEREG036_T VALUES (1,10),(2,20);
+--- 2 row(s) inserted.
+>>SELECT * FROM LITEREG036_T ORDER BY id;
+ID           V
+-----------  -----------
+          1           11
+          2           21
+--- 2 row(s) selected.
+>>SELECT * FROM LITEREG036_AUDIT ORDER BY seq;
+SEQ          EVENT_NAME            SEEN_V
+-----------  --------------------  -----------
+         11  after-insert                   11
+         21  after-insert                   21
+--- 2 row(s) selected.
+>>DROP TRIGGER LITEREG036_BI;
+--- SQL operation complete.
+>>DROP TRIGGER LITEREG036_AI;
+--- SQL operation complete.
+>>CREATE TRIGGER LITEREG036_BU BEFORE UPDATE ON LITEREG036_T
++>  REFERENCING OLD ROW AS o, NEW ROW AS n FOR EACH ROW
++>  SET n.v = n.v + 100;
+--- SQL operation complete.
+>>CREATE TRIGGER LITEREG036_AU AFTER UPDATE OF (v) ON LITEREG036_T
++>  REFERENCING OLD ROW AS o, NEW ROW AS n FOR EACH ROW
++>  INSERT INTO LITEREG036_AUDIT VALUES
++>    (n.id * 10 + 2, 'after-update', n.v);
+--- SQL operation complete.
+>>UPDATE LITEREG036_T SET v = v + 1;
+--- 2 row(s) updated.
+>>SELECT * FROM LITEREG036_T ORDER BY id;
+ID           V
+-----------  -----------
+          1          112
+          2          122
+--- 2 row(s) selected.
+>>SELECT * FROM LITEREG036_AUDIT ORDER BY seq;
+SEQ          EVENT_NAME            SEEN_V
+-----------  --------------------  -----------
+         11  after-insert                   11
+         12  after-update                  112
+         21  after-insert                   21
+         22  after-update                  122
+--- 4 row(s) selected.
+>>DROP TRIGGER LITEREG036_BU;
+--- SQL operation complete.
+>>CREATE TRIGGER LITEREG036_BLOCK BEFORE UPDATE ON LITEREG036_T
++>  REFERENCING OLD ROW AS o, NEW ROW AS n FOR EACH ROW
++>  WHEN (o.id = 2) SIGNAL SQLSTATE 'S9999' ('blocked');
+--- SQL operation complete.
+>>UPDATE LITEREG036_T SET v = v + 1000;
+*** ERROR[3193]
+*** ERROR[16001] No message found for SQLCODE -3193. S9999 blocked <MXID>
+--- 0 row(s) updated.
+>>SELECT * FROM LITEREG036_T ORDER BY id;
+ID           V
+-----------  -----------
+          1          112
+          2          122
+--- 2 row(s) selected.
+>>SELECT * FROM LITEREG036_AUDIT ORDER BY seq;
+SEQ          EVENT_NAME            SEEN_V
+-----------  --------------------  -----------
+         11  after-insert                   11
+         12  after-update                  112
+         21  after-insert                   21
+         22  after-update                  122
+--- 4 row(s) selected.
+>>DROP TRIGGER LITEREG036_BLOCK;
+--- SQL operation complete.
+>>DROP TRIGGER LITEREG036_AU;
+--- SQL operation complete.
+>>CREATE TRIGGER LITEREG036_AS AFTER INSERT ON LITEREG036_T
++>  FOR EACH STATEMENT
++>  INSERT INTO LITEREG036_AUDIT VALUES (999, 'after-statement', 0);
+--- SQL operation complete.
+>>INSERT INTO LITEREG036_T VALUES (3,30),(4,40);
+--- 2 row(s) inserted.
+>>SELECT * FROM LITEREG036_AUDIT ORDER BY seq;
+SEQ          EVENT_NAME            SEEN_V
+-----------  --------------------  -----------
+         11  after-insert                   11
+         12  after-update                  112
+         21  after-insert                   21
+         22  after-update                  122
+        999  after-statement                 0
+--- 5 row(s) selected.
+>>DROP TRIGGER LITEREG036_AS;
+--- SQL operation complete.
+>>INSERT INTO LITEREG036_T VALUES (5,50);
+--- 1 row(s) inserted.
+>>SELECT * FROM LITEREG036_AUDIT ORDER BY seq;
+SEQ          EVENT_NAME            SEEN_V
+-----------  --------------------  -----------
+         11  after-insert                   11
+         12  after-update                  112
+         21  after-insert                   21
+         22  after-update                  122
+        999  after-statement                 0
+--- 5 row(s) selected.
+>>DROP TABLE LITEREG036_T;
+--- SQL operation complete.
+>>DROP TABLE LITEREG036_AUDIT;
+--- SQL operation complete.
+>>exit;

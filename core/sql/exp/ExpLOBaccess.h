@@ -57,7 +57,7 @@
 #else
 #endif
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #define SQ_USE_HDFS 1
 #include "hdfs.h"
 #else

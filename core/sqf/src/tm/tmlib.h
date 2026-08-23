@@ -22,7 +22,7 @@
 #ifndef TMLIB_H_
 #define TMLIB_H_
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #include <string>
 
 struct JNIEnv;

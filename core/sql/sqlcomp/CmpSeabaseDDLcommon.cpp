@@ -74,11 +74,11 @@
 #include "logmxevent_traf.h"
 #include "exp_clause_derived.h"
 #include "TrafDDLdesc.h"
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #include "ExecuteIdTrig.h"
-#include "LocalLiteRocksDBStore.h"
+#include "LiteRocksDBStore.h"
 
-static uint64_t localLiteNextTriggerTimestamp()
+static uint64_t liteNextTriggerTimestamp()
 {
   static volatile uint64_t lastTimestamp = 0;
   uint64_t now = static_cast<uint64_t>(NA_JulianTimestamp());
@@ -91,9 +91,9 @@ static uint64_t localLiteNextTriggerTimestamp()
     }
 }
 
-static bool localLiteValidTriggerTransition(
-    const LocalLiteTableDef &transition,
-    const LocalLiteTableDef &subject,
+static bool liteValidTriggerTransition(
+    const LiteTableDef &transition,
+    const LiteTableDef &subject,
     std::string *error)
 {
   const bool needsSyskey = subject.primaryKeyColumns.empty();
@@ -115,18 +115,18 @@ static bool localLiteValidTriggerTransition(
         transition.columns[2].type != "LARGEINT" ||
         transition.columns[2].nullable)))
     {
-      if (error) *error = "local-lite trigger transition table has an "
+      if (error) *error = "lite trigger transition table has an "
                           "incompatible hidden-column layout";
       return false;
     }
   for (size_t i = 0; i < subject.columns.size(); i++)
     {
-      const LocalLiteColumnDef &actual = transition.columns[subjectOffset + i];
-      const LocalLiteColumnDef &expected = subject.columns[i];
+      const LiteColumnDef &actual = transition.columns[subjectOffset + i];
+      const LiteColumnDef &expected = subject.columns[i];
       if (actual.name != expected.name || actual.type != expected.type ||
           actual.nullable != expected.nullable)
         {
-          if (error) *error = "local-lite trigger transition table does not "
+          if (error) *error = "lite trigger transition table does not "
                               "match the subject table";
           return false;
         }
@@ -141,14 +141,14 @@ static bool localLiteValidTriggerTransition(
       expectedKeys.push_back(2 + subject.primaryKeyColumns[i]);
   if (transition.primaryKeyColumns != expectedKeys)
     {
-      if (error) *error = "local-lite trigger transition table has an "
+      if (error) *error = "lite trigger transition table has an "
                           "incompatible primary key";
       return false;
     }
   return true;
 }
 
-static void localLiteSequenceDiag(const ComObjectName &name,
+static void liteSequenceDiag(const ComObjectName &name,
                                   const std::string &error)
 {
   if (getenv("TEST_SCHEMA_NAME") == NULL)
@@ -158,13 +158,13 @@ static void localLiteSequenceDiag(const ComObjectName &name,
       return;
     }
   NAString externalName = name.getExternalName(TRUE);
-  if (error.find("local-lite object already exists:") == 0)
+  if (error.find("lite object already exists:") == 0)
     {
       *CmpCommon::diags() << DgSqlCode(-1390)
                           << DgString0(externalName);
       return;
     }
-  if (error.find("local-lite sequence does not exist:") == 0)
+  if (error.find("lite sequence does not exist:") == 0)
     {
       *CmpCommon::diags() << DgSqlCode(-1389)
                           << DgString0(externalName);
@@ -7593,31 +7593,31 @@ short CmpSeabaseDDL::createPrivMgrRepos(ExeCliInterface *cliInterface,
 void  CmpSeabaseDDL::createSeabaseSequence(StmtDDLCreateSequence  * createSequenceNode,
                                            NAString &currCatName, NAString &currSchName)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   ComObjectName localName(createSequenceNode->getSeqName(), COM_TABLE_NAME);
   localName.applyDefaults(ComAnsiNamePart(currCatName),
                           ComAnsiNamePart(currSchName));
   ElemDDLSGOptions *localOptions = createSequenceNode->getSGoptions();
-  LocalLiteSequenceDef localSequence;
-  localSequence.catalog = localName.getCatalogNamePartAsAnsiString().data();
-  localSequence.schema = localName.getSchemaNamePartAsAnsiString(TRUE).data();
-  localSequence.name = localName.getObjectNamePartAsAnsiString(TRUE).data();
+  LiteSequenceDef liteSequence;
+  liteSequence.catalog = localName.getCatalogNamePartAsAnsiString().data();
+  liteSequence.schema = localName.getSchemaNamePartAsAnsiString(TRUE).data();
+  liteSequence.name = localName.getObjectNamePartAsAnsiString(TRUE).data();
   ComUID localUid;
   localUid.make_UID();
-  localSequence.objectUid = localUid.get_value();
-  localSequence.fsDataType = localOptions->getFSDataType();
-  localSequence.startValue = localOptions->getStartValue();
-  localSequence.increment = localOptions->getIncrement();
-  localSequence.minValue = localOptions->getMinValue();
-  localSequence.maxValue = localOptions->getMaxValue();
-  localSequence.nextValue = localSequence.startValue;
-  localSequence.cycle = localOptions->getCycle();
-  localSequence.cache = localOptions->getCache();
-  localSequence.internal = localOptions->isInternalSG();
-  std::string localError;
-  LocalLiteRocksDBStore localStore;
-  if (!localStore.createSequence(localSequence, &localError))
-    localLiteSequenceDiag(localName, localError);
+  liteSequence.objectUid = localUid.get_value();
+  liteSequence.fsDataType = localOptions->getFSDataType();
+  liteSequence.startValue = localOptions->getStartValue();
+  liteSequence.increment = localOptions->getIncrement();
+  liteSequence.minValue = localOptions->getMinValue();
+  liteSequence.maxValue = localOptions->getMaxValue();
+  liteSequence.nextValue = liteSequence.startValue;
+  liteSequence.cycle = localOptions->getCycle();
+  liteSequence.cache = localOptions->getCache();
+  liteSequence.internal = localOptions->isInternalSG();
+  std::string liteError;
+  LiteRocksDBStore liteStore;
+  if (!liteStore.createSequence(liteSequence, &liteError))
+    liteSequenceDiag(localName, liteError);
   ActiveSchemaDB()->getNATableDB()->setCachingOFF();
   ActiveSchemaDB()->getNATableDB()->setCachingON();
   processReturn();
@@ -7768,43 +7768,43 @@ void  CmpSeabaseDDL::createSeabaseSequence(StmtDDLCreateSequence  * createSequen
 void  CmpSeabaseDDL::alterSeabaseSequence(StmtDDLCreateSequence  * alterSequenceNode,
                                           NAString &currCatName, NAString &currSchName)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   ComObjectName localName(alterSequenceNode->getSeqName(), COM_TABLE_NAME);
   localName.applyDefaults(ComAnsiNamePart(currCatName),
                           ComAnsiNamePart(currSchName));
-  LocalLiteSequenceDef localSequence;
+  LiteSequenceDef liteSequence;
   bool localFound = false;
-  std::string localError;
-  LocalLiteRocksDBStore localStore;
-  if (!localStore.loadSequence(
+  std::string liteError;
+  LiteRocksDBStore liteStore;
+  if (!liteStore.loadSequence(
           localName.getCatalogNamePartAsAnsiString().data(),
           localName.getSchemaNamePartAsAnsiString(TRUE).data(),
           localName.getObjectNamePartAsAnsiString(TRUE).data(),
-          &localSequence, &localFound, &localError) || !localFound)
+          &liteSequence, &localFound, &liteError) || !localFound)
     {
-      if (localError.empty()) localError = "local-lite sequence does not exist";
-      localLiteSequenceDiag(localName, localError);
+      if (liteError.empty()) liteError = "lite sequence does not exist";
+      liteSequenceDiag(localName, liteError);
       processReturn();
       return;
     }
   ElemDDLSGOptions *localOptions = alterSequenceNode->getSGoptions();
   if (localOptions->isIncrementSpecified())
-    localSequence.increment = localOptions->getIncrement();
+    liteSequence.increment = localOptions->getIncrement();
   if (localOptions->isMinValueSpecified())
-    localSequence.minValue = localOptions->getMinValue();
+    liteSequence.minValue = localOptions->getMinValue();
   if (localOptions->isMaxValueSpecified())
-    localSequence.maxValue = localOptions->getMaxValue();
+    liteSequence.maxValue = localOptions->getMaxValue();
   if (localOptions->isCycleSpecified())
-    localSequence.cycle = localOptions->getCycle();
+    liteSequence.cycle = localOptions->getCycle();
   if (localOptions->isCacheSpecified())
-    localSequence.cache = localOptions->getCache();
+    liteSequence.cache = localOptions->getCache();
   if (localOptions->isResetSpecified())
     {
-      localSequence.nextValue = localSequence.startValue;
-      localSequence.numCalls = 0;
+      liteSequence.nextValue = liteSequence.startValue;
+      liteSequence.numCalls = 0;
     }
-  if (!localStore.alterSequence(localSequence, &localError))
-    localLiteSequenceDiag(localName, localError);
+  if (!liteStore.alterSequence(liteSequence, &liteError))
+    liteSequenceDiag(localName, liteError);
   ActiveSchemaDB()->getNATableDB()->setCachingOFF();
   ActiveSchemaDB()->getNATableDB()->setCachingON();
   processReturn();
@@ -7962,18 +7962,18 @@ void  CmpSeabaseDDL::alterSeabaseSequence(StmtDDLCreateSequence  * alterSequence
 void  CmpSeabaseDDL::dropSeabaseSequence(StmtDDLDropSequence  * dropSequenceNode,
                                          NAString &currCatName, NAString &currSchName)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   ComObjectName localName(dropSequenceNode->getSeqName(), COM_TABLE_NAME);
   localName.applyDefaults(ComAnsiNamePart(currCatName),
                           ComAnsiNamePart(currSchName));
-  std::string localError;
-  LocalLiteRocksDBStore localStore;
-  if (!localStore.dropSequence(
+  std::string liteError;
+  LiteRocksDBStore liteStore;
+  if (!liteStore.dropSequence(
           localName.getCatalogNamePartAsAnsiString().data(),
           localName.getSchemaNamePartAsAnsiString(TRUE).data(),
           localName.getObjectNamePartAsAnsiString(TRUE).data(),
-          false, &localError))
-    localLiteSequenceDiag(localName, localError);
+          false, &liteError))
+    liteSequenceDiag(localName, liteError);
   ActiveSchemaDB()->getNATableDB()->setCachingOFF();
   ActiveSchemaDB()->getNATableDB()->setCachingON();
   processReturn();
@@ -8873,8 +8873,8 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   ExeCliInterface cliInterface(STMTHEAP, 0, NULL,
     CmpCommon::context()->sqlSession()->getParentQid());
 
-#ifdef TRAF_LOCAL_LITE
-  NABoolean localLiteLocalStoreDDL =
+#ifdef TRAF_LITE
+  NABoolean liteStorageDDL =
     (ddlNode &&
      ((ddlNode->getOperatorType() == DDL_CREATE_TABLE) ||
       (ddlNode->getOperatorType() == DDL_DROP_TABLE) ||
@@ -8895,13 +8895,13 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
       (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ADD_CONSTRAINT_REFERENTIAL_INTEGRITY) ||
       (ddlNode->getOperatorType() == DDL_ALTER_TABLE_DROP_CONSTRAINT)));
 #else
-  NABoolean localLiteLocalStoreDDL = FALSE;
+  NABoolean liteStorageDDL = FALSE;
 #endif
 
   // error accessing hbase. Return.
   if ((CmpCommon::context()->isUninitializedSeabase()) &&
       (CmpCommon::context()->uninitializedSeabaseErrNum() == -TRAF_HBASE_ACCESS_ERROR) &&
-      (NOT localLiteLocalStoreDDL))
+      (NOT liteStorageDDL))
     {
       *CmpCommon::diags() << DgSqlCode(CmpCommon::context()->uninitializedSeabaseErrNum())
                           << DgInt0(CmpCommon::context()->hbaseErrNum())
@@ -8934,7 +8934,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   if (dws && dws->getInitTraf())
     ignoreUninitTrafErr = TRUE;
 
-  if (localLiteLocalStoreDDL)
+  if (liteStorageDDL)
     ignoreUninitTrafErr = TRUE;
 
   if ((CmpCommon::context()->isUninitializedSeabase()) &&
@@ -8944,7 +8944,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
       return -1;
     }
 
-  if ((NOT localLiteLocalStoreDDL) && sendAllControlsAndFlags())
+  if ((NOT liteStorageDDL) && sendAllControlsAndFlags())
     {
       CMPASSERT(0);
       return -1;
@@ -8955,7 +8955,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   if (ddlExpr && ddlExpr->ddlXnsInfo(ddlXns, startXn))
     return -1;
 
-  if (localLiteLocalStoreDDL)
+  if (liteStorageDDL)
     startXn = FALSE;
   
   if (startXn)
@@ -9112,7 +9112,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
           StmtDDLCreateTable * createTableParseNode =
             ddlNode->castToStmtDDLNode()->castToStmtDDLCreateTable();
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
           createSeabaseTable(createTableParseNode, currCatName, currSchName);
 #else
           if ((createTableParseNode->getAddConstraintUniqueArray().entries() > 0) ||
@@ -9361,14 +9361,14 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
           
           dropSeabaseView(dropViewParseNode, currCatName, currSchName);
         }
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       else if (ddlNode->getOperatorType() == DDL_CREATE_TRIGGER)
         {
           StmtDDLCreateTrigger *node =
             ddlNode->castToStmtDDLNode()->castToStmtDDLCreateTrigger();
           const QualifiedName &triggerName = node->getTriggerNameAsQualifiedName();
           const QualifiedName &subjectName = node->getTableNameObject();
-          LocalLiteTriggerDef trigger;
+          LiteTriggerDef trigger;
           trigger.catalog = triggerName.getCatalogName().data();
           trigger.schema = triggerName.getSchemaName().data();
           trigger.name = triggerName.getObjectName().data();
@@ -9380,10 +9380,10 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
               node->isAfter() ? COM_AFTER : COM_BEFORE);
           trigger.granularity = static_cast<int>(
               node->isStatement() ? COM_STATEMENT : COM_ROW);
-          trigger.timestamp = localLiteNextTriggerTimestamp();
+          trigger.timestamp = liteNextTriggerTimestamp();
           trigger.allUpdateColumns = node->areColumnsImplicit();
-          LocalLiteRocksDBStore store;
-          LocalLiteTableDef subject;
+          LiteRocksDBStore store;
+          LiteTableDef subject;
           std::string error;
           if (!store.loadTable(trigger.subjectCatalog, trigger.subjectSchema,
                                trigger.subjectTable, &subject, &error))
@@ -9401,15 +9401,15 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                       found = c;
                   if (found == subject.columns.size())
                     {
-                      error = "local-lite trigger update column does not exist";
+                      error = "lite trigger update column does not exist";
                       break;
                     }
                   trigger.updateColumns.push_back(found);
                 }
               // The legacy trigger inliner uses a hidden transition table.
               // In a full Trafodion installation Catman creates this table;
-              // local-lite creates the equivalent RocksDB table directly.
-              LocalLiteTableDef transition;
+              // lite creates the equivalent RocksDB table directly.
+              LiteTableDef transition;
               const std::string transitionName =
                   trigger.subjectTable + "__TEMP";
               bool transitionExists = false;
@@ -9427,7 +9427,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                   transition.objectUid = trigger.timestamp;
                   if (transition.objectUid == 0)
                     transition.objectUid = subject.objectUid + 1;
-                  LocalLiteColumnDef executeId;
+                  LiteColumnDef executeId;
                   executeId.name = "@UNIQUE_EXECUTE_ID";
                   char executeIdType[64];
                   snprintf(executeIdType, sizeof(executeIdType),
@@ -9437,7 +9437,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                   executeId.nullable = false;
                   executeId.defaultClass = COM_NO_DEFAULT;
                   transition.columns.push_back(executeId);
-                  LocalLiteColumnDef iudId;
+                  LiteColumnDef iudId;
                   iudId.name = "@UNIQUE_IUD_ID";
                   iudId.type = "INT";
                   iudId.nullable = false;
@@ -9447,7 +9447,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                   transition.primaryKeyColumns.push_back(1);
                   if (subject.primaryKeyColumns.empty())
                     {
-                      LocalLiteColumnDef syskey;
+                      LiteColumnDef syskey;
                       syskey.name = "@SYSKEY";
                       syskey.type = "LARGEINT";
                       syskey.nullable = false;
@@ -9469,18 +9469,18 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
                           transition, &error,
                           ComUser::getCurrentUsername(),
                           GetCliGlobals()->currContext()
-                              ->getLocalLiteTxnContext()))
+                              ->getLiteTxnContext()))
                     transitionExists = false;
                   else
                     createdTransition = true;
                 }
               else if (error.empty())
                 {
-                  LocalLiteTableDef existingTransition;
+                  LiteTableDef existingTransition;
                   if (!store.loadTable(trigger.subjectCatalog,
                                        trigger.subjectSchema, transitionName,
                                        &existingTransition, &error) ||
-                      !localLiteValidTriggerTransition(existingTransition,
+                      !liteValidTriggerTransition(existingTransition,
                                                        subject, &error))
                     transitionExists = false;
                 }
@@ -9535,7 +9535,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
           StmtDDLDropTrigger *node =
             ddlNode->castToStmtDDLNode()->castToStmtDDLDropTrigger();
           const QualifiedName &name = node->getTriggerNameAsQualifiedName();
-          LocalLiteRocksDBStore store;
+          LiteRocksDBStore store;
           std::string error;
           if (!store.dropTrigger(name.getCatalogName().data(),
                                  name.getSchemaName().data(),
@@ -9811,7 +9811,7 @@ short CmpSeabaseDDL::executeSeabaseDDL(DDLExpr * ddlExpr, ExprNode * ddlNode,
   
 label_return:
 
-  if (NOT localLiteLocalStoreDDL)
+  if (NOT liteStorageDDL)
     restoreAllControlsAndFlags();
 
   if (CmpCommon::diags()->getNumber(DgSqlCode::ERROR_))

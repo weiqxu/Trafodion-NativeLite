@@ -1,0 +1,79 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the "License"); you may not
+-- use this file except in compliance with the License. You may obtain a copy of
+-- the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Mixed executor row layout: datetime coverage adapted from core/TEST038 and
+-- nullable variable-column coverage adapted from executor/TEST063, combined
+-- here with local primary/UNIQUE, exact numeric, and BigNum fields.
+
+-- Standalone expressions must materialize datetime values in display form.
+VALUES
+  (DATE '2026-07-03', TIME '12:34:56',
+   TIMESTAMP '2026-07-03 12:34:56.123456');
+
+CREATE TABLE LITEREG004_MIXED
+  (id INT PRIMARY KEY,
+   v1 VARCHAR(12),
+   n1 NUMERIC(9,2),
+   d DATE,
+   v2 VARCHAR(20),
+   dec1 DECIMAL(7,3),
+   ts TIMESTAMP,
+   big1 NUMERIC(30,2),
+   uq VARCHAR(16),
+   tm TIME,
+   v3 VARCHAR(8),
+   UNIQUE(uq));
+
+INSERT INTO LITEREG004_MIXED VALUES
+  (1, NULL, 12.34, DATE '2026-07-11', 'middle-one', -45.678,
+   TIMESTAMP '2026-07-11 01:02:03',
+   1234567890123456789012345678.90, 'unique-one', TIME '01:02:03', 'tail-1'),
+  (2, 'front-two', -0.50, DATE '2026-07-12', NULL, 0.125,
+   TIMESTAMP '2026-07-12 12:34:56',
+   -1234567890123456789012345678.90, 'unique-two', TIME '12:34:56', NULL),
+  (3, '', NULL, NULL, 'middle-three', NULL,
+   NULL, NULL, NULL, NULL, 'tail-3');
+
+-- Full scan with variable columns deliberately projected in reverse order.
+SELECT id, v3, v2, v1
+  FROM LITEREG004_MIXED
+  ORDER BY id;
+
+-- Primary-key get-row with mixed fixed-width and variable projection.
+SELECT id, v1, n1, d, v2
+  FROM LITEREG004_MIXED
+  WHERE id = 2;
+
+-- VARCHAR UNIQUE get-row with DECIMAL, TIMESTAMP, and nullable VARCHAR output.
+SELECT id, v3, dec1, ts
+  FROM LITEREG004_MIXED
+  WHERE uq = 'unique-one';
+
+-- Full scan over BigNum and TIME fields, including a row where both are NULL.
+SELECT id, big1, tm
+  FROM LITEREG004_MIXED
+  ORDER BY id;
+
+-- Residual predicates read fields from both fixed and variable portions.
+SELECT id, v2
+  FROM LITEREG004_MIXED
+  WHERE n1 BETWEEN -1.00 AND 20.00
+    AND (v1 IS NULL OR v2 IS NULL)
+  ORDER BY id;
+
+DROP TABLE LITEREG004_MIXED;
+exit;

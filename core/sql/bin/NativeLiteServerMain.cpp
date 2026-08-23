@@ -6,7 +6,7 @@
 
 #include "Platform.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 
 #include "BaseTypes.h"
 #include "ComDiags.h"
@@ -14,9 +14,9 @@
 #include "ExExeUtilCli.h"
 #include "Formatter.h"
 #include "Globals.h"
-#include "LocalLiteConfig.h"
-#include "LocalLiteRocksDBStore.h"
-#include "LocalLiteSqlTable.h"
+#include "LiteConfig.h"
+#include "LiteRocksDBStore.h"
+#include "LiteSqlTable.h"
 #include "QRLogger.h"
 #include "SQLCLIdev.h"
 #include "SqlciEnv.h"
@@ -1348,7 +1348,7 @@ private:
 
     global_sqlci_env = session->env;
     short identityRc = 0;
-    if (!LocalLiteSqlTable_setCurrentUser(session->env, &identityRc))
+    if (!LiteSqlTable_setCurrentUser(session->env, &identityRc))
       {
         request->error = readCapture(session->env->get_logfile());
         if (request->error.empty())
@@ -1426,7 +1426,7 @@ private:
       {
         ContextCli *context = GetCliGlobals()->currContext();
         if (context && context->getTransaction())
-          context->getTransaction()->resetLocalLiteTransaction();
+          context->getTransaction()->resetLiteTransaction();
         SQL_EXEC_ResetContext(handle, NULL);
       }
     SQL_EXEC_SwitchContext_Internal(defaultContext_, NULL, TRUE);
@@ -1449,7 +1449,7 @@ private:
     std::string qualified =
         std::string(catalog && catalog[0] ? catalog : "TRAFODION") + "." +
         (schema && schema[0] ? schema : "SEABASE");
-    LocalLiteSetThreadDefaultSchema(qualified.c_str());
+    LiteSetThreadDefaultSchema(qualified.c_str());
     global_sqlci_env = session->env;
   }
 
@@ -1484,7 +1484,7 @@ private:
         std::string title;
         std::vector<std::string> objects;
         std::string metadataError;
-        if (LocalLiteSqlTable_getMetadata(sql.c_str(), session->env, &title,
+        if (LiteSqlTable_getMetadata(sql.c_str(), session->env, &title,
                                           &objects, &metadataError))
           {
             *handled = true;
@@ -1588,7 +1588,7 @@ private:
         result.commandTag = "SELECT 1";
         if (!describeOnly)
           result.rows.push_back(
-              std::vector<Cell>(1, Cell(LocalLiteOccMetricsJson())));
+              std::vector<Cell>(1, Cell(LiteOccMetricsJson())));
         return result;
       }
 
@@ -1604,7 +1604,7 @@ private:
         result.commandTag = "SELECT 1";
         if (!describeOnly)
           {
-            LocalLiteOccMetricsReset();
+            LiteOccMetricsReset();
             result.rows.push_back(std::vector<Cell>(1, Cell("ok")));
           }
         return result;
@@ -1642,19 +1642,19 @@ private:
         result.commandTag = "SELECT 1";
         if (describeOnly)
           return result;
-        const char *target = getenv("TRAF_LOCAL_LITE_CHECKPOINT_DIR");
+        const char *target = getenv("TRAF_LITE_CHECKPOINT_DIR");
         std::string checkpointError;
         bool checkpointed = false;
         if (target && target[0])
           {
-            checkpointed = LocalLiteRocksDBCheckpoint(target,
+            checkpointed = LiteRocksDBCheckpoint(target,
                                                        &checkpointError);
           }
         if (!checkpointed)
           {
             result.sqlstate = "58030";
             result.error = checkpointError.empty()
-                ? "TRAF_LOCAL_LITE_CHECKPOINT_DIR is not configured"
+                ? "TRAF_LITE_CHECKPOINT_DIR is not configured"
                 : checkpointError;
             return result;
           }
@@ -1692,11 +1692,11 @@ private:
 
         ContextCli *context = GetCliGlobals()->currContext();
         int statementToken = 0;
-        LocalLiteTxnContext *txn = context && context->getTransaction()
-            ? context->getLocalLiteTxnContext() : NULL;
+        LiteTxnContext *txn = context && context->getTransaction()
+            ? context->getLiteTxnContext() : NULL;
         uint64_t sequence = ++session->statementSequence;
         if (txn)
-          LocalLiteTxnManager::beginStatement(txn, &statementToken, sequence);
+          LiteTxnManager::beginStatement(txn, &statementToken, sequence);
         long elapsed = 0;
         while (elapsed < milliseconds && !session->cancelRequested.load())
           {
@@ -1705,7 +1705,7 @@ private:
             elapsed += interval;
           }
         if (txn)
-          LocalLiteTxnManager::endStatement(txn, &statementToken, sequence);
+          LiteTxnManager::endStatement(txn, &statementToken, sequence);
         if (session->cancelRequested.load())
           {
             result.sqlstate = "57014";
@@ -2109,7 +2109,7 @@ private:
     while (active > maximum &&
            !maximumCompilerRequests_.compare_exchange_weak(maximum, active))
       {}
-    const char *hold = getenv("TRAF_LOCAL_LITE_COMPILER_HOLD_MS");
+    const char *hold = getenv("TRAF_LITE_COMPILER_HOLD_MS");
     if (hold && hold[0])
       usleep(static_cast<useconds_t>(strtoul(hold, NULL, 10)) * 1000U);
     const Lng32 result = cli->fetchRowsPrologue(sql.c_str(), TRUE);
@@ -2283,7 +2283,7 @@ private:
       }
 
     // M22E keeps the bound descriptor tuple attached to the root ATP. The
-    // LocalLite scan TCB materializes dynamic primary keys from that tuple and
+    // Lite scan TCB materializes dynamic primary keys from that tuple and
     // evaluates residual/range predicates against the same bound input, so
     // prepared SELECT/UPDATE/DELETE no longer require literal SQL expansion.
 
@@ -2340,7 +2340,7 @@ private:
         plan->cli->GetRowsAffected(&affected);
         if (affected > 0)
           affectedTotal += static_cast<uint64_t>(affected);
-        // End the executor statement after each bound execution so local-lite
+        // End the executor statement after each bound execution so lite
         // implicit transactions publish their writes. The next execution
         // reopens the same prepared plan and rebinds its descriptors.
         if (result.ok())
@@ -2512,7 +2512,7 @@ private:
         return result;
       }
 
-    if (describeOnly && LocalLiteSqlTable_isUtilityStatement(sql.c_str()))
+    if (describeOnly && LiteSqlTable_isUtilityStatement(sql.c_str()))
       {
         result.commandTag = commandTag(sql, 0, 0);
         if (session->cancelRequested.load())
@@ -2533,7 +2533,7 @@ private:
         bool utilityHandled = false;
         {
           std::lock_guard<std::mutex> utilityLock(utilityMutex_);
-          utilityHandled = LocalLiteSqlTable_process(
+          utilityHandled = LiteSqlTable_process(
               sql.c_str(), session->env, &utilityRc);
         }
         if (utilityHandled)
@@ -2572,7 +2572,7 @@ private:
     while (active > maximum &&
            !maximumExecutorRequests_.compare_exchange_weak(maximum, active))
       {}
-    const char *holdText = getenv("TRAF_LOCAL_LITE_EXECUTOR_HOLD_MS");
+    const char *holdText = getenv("TRAF_LITE_EXECUTOR_HOLD_MS");
     if (holdText && holdText[0] &&
         (sql.find("M14E_OVERLAP") != std::string::npos ||
          sql.find("M21_OVERLAP") != std::string::npos))
@@ -2604,7 +2604,7 @@ private:
         bool transactionPassed = transaction != NULL;
         if (transactionPassed && beginControl)
           {
-            transactionPassed = transaction->beginLocalLiteTransaction(
+            transactionPassed = transaction->beginLiteTransaction(
                 &transactionError);
             if (transactionPassed)
               {
@@ -2616,7 +2616,7 @@ private:
           {
             context->closeAllCursors(ContextCli::CLOSE_ALL,
                                      ContextCli::CLOSE_CURR_XN);
-            transactionPassed = transaction->commitLocalLiteTransaction(
+            transactionPassed = transaction->commitLiteTransaction(
                 &transactionError);
             transaction->enableAutoCommit();
           }
@@ -2625,7 +2625,7 @@ private:
             context->closeAllCursors(
                 ContextCli::CLOSE_ALL_INCLUDING_ANSI_PUBSUB_HOLDABLE_WHEN_CQD,
                 ContextCli::CLOSE_CURR_XN);
-            transactionPassed = transaction->rollbackLocalLiteTransaction(
+            transactionPassed = transaction->rollbackLiteTransaction(
                 &transactionError);
             transaction->enableAutoCommit();
           }
@@ -2736,7 +2736,7 @@ private:
   std::atomic<int> maximumExecutorRequests_;
   std::atomic<int> activeCompilerRequests_;
   std::atomic<int> maximumCompilerRequests_;
-  LocalLiteRocksDBStore storeLease_;
+  LiteRocksDBStore storeLease_;
 };
 
 std::string quoteLiteral(const std::string &value)
@@ -3052,7 +3052,7 @@ bool t4Matches(const std::string &value, const std::string &pattern)
          t4PatternMatches(value, pattern);
 }
 
-std::string localLiteJdbcType(const std::string &type)
+std::string liteJdbcType(const std::string &type)
 {
   std::string normalized = upper(type);
   if (startsWith(normalized, "SMALLINT")) return "5";
@@ -3077,13 +3077,13 @@ std::string localLiteJdbcType(const std::string &type)
   return "1111";
 }
 
-std::string localLiteTypeSize(const std::string &type)
+std::string liteTypeSize(const std::string &type)
 {
   size_t open = type.find('(');
   size_t close = type.find(')', open == std::string::npos ? 0 : open + 1);
   if (open != std::string::npos && close != std::string::npos)
     return type.substr(open + 1, close - open - 1);
-  std::string jdbc = localLiteJdbcType(type);
+  std::string jdbc = liteJdbcType(type);
   if (jdbc == "-6") return "3";
   if (jdbc == "5") return "5";
   if (jdbc == "4") return "10";
@@ -3737,7 +3737,7 @@ private:
         return;
       }
     if (!session->autoCommit && session->transactionStatus.load() == 'I' &&
-        !LocalLiteSqlTable_isUtilityStatement(sql.c_str()))
+        !LiteSqlTable_isUtilityStatement(sql.c_str()))
       {
         QueryResult begin = engine_.execute(session, "BEGIN");
         if (!begin.ok() && begin.error.find("already active") ==
@@ -3967,7 +3967,7 @@ private:
       }
     const std::string &transactionSql = state.prepared ? state.sql : sql;
     if (!session->autoCommit && session->transactionStatus.load() == 'I' &&
-        !LocalLiteSqlTable_isUtilityStatement(transactionSql.c_str()))
+        !LiteSqlTable_isUtilityStatement(transactionSql.c_str()))
       {
         QueryResult begin = engine_.execute(session, "BEGIN");
         if (!begin.ok() && begin.error.find("already active") ==
@@ -4092,7 +4092,7 @@ private:
       const std::string &typeList, const std::string &columnPattern)
   {
     QueryResult result;
-    LocalLiteRocksDBStore store;
+    LiteRocksDBStore store;
     std::string error;
     if (api == 10053 && catalogPattern == "%" && schemaPattern.empty() &&
         tablePattern.empty())
@@ -4122,7 +4122,7 @@ private:
       }
     else
       {
-        std::vector<LocalLiteTableDef> tables;
+        std::vector<LiteTableDef> tables;
         if (!store.listTables("", "", &tables, &error))
           {
             result.error = error;
@@ -4140,7 +4140,7 @@ private:
               addT4MetadataColumn(&result, names[i]);
             for (size_t i = 0; i < tables.size(); i++)
               {
-                const LocalLiteTableDef &table = tables[i];
+                const LiteTableDef &table = tables[i];
                 std::string tableType = table.view ? "VIEW" : "TABLE";
                 if (!t4Matches(table.catalog, catalogPattern) ||
                     !t4Matches(table.schema, schemaPattern) ||
@@ -4172,23 +4172,23 @@ private:
               addT4MetadataColumn(&result, names[i]);
             for (size_t i = 0; i < tables.size(); i++)
               {
-                const LocalLiteTableDef &table = tables[i];
+                const LiteTableDef &table = tables[i];
                 if (!t4Matches(table.catalog, catalogPattern) ||
                     !t4Matches(table.schema, schemaPattern) ||
                     !t4Matches(table.name, tablePattern))
                   continue;
                 for (size_t c = 0; c < table.columns.size(); c++)
                   {
-                    const LocalLiteColumnDef &column = table.columns[c];
+                    const LiteColumnDef &column = table.columns[c];
                     if (!t4Matches(column.name, columnPattern)) continue;
                     std::vector<Cell> row;
                     row.push_back(Cell(table.catalog));
                     row.push_back(Cell(table.schema));
                     row.push_back(Cell(table.name));
                     row.push_back(Cell(column.name));
-                    row.push_back(Cell(localLiteJdbcType(column.type)));
+                    row.push_back(Cell(liteJdbcType(column.type)));
                     row.push_back(Cell(column.type));
-                    row.push_back(Cell(localLiteTypeSize(column.type)));
+                    row.push_back(Cell(liteTypeSize(column.type)));
                     row.push_back(Cell("0"));
                     row.push_back(Cell("0"));
                     row.push_back(Cell("10"));
@@ -4198,7 +4198,7 @@ private:
                                       ? Cell() : Cell(column.defaultValue));
                     row.push_back(Cell("0"));
                     row.push_back(Cell("0"));
-                    row.push_back(Cell(localLiteTypeSize(column.type)));
+                    row.push_back(Cell(liteTypeSize(column.type)));
                     row.push_back(Cell(std::to_string(c + 1)));
                     row.push_back(Cell(column.nullable ? "YES" : "NO"));
                     while (row.size() < 22) row.push_back(Cell());
@@ -4216,7 +4216,7 @@ private:
               addT4MetadataColumn(&result, names[i]);
             for (size_t i = 0; i < tables.size(); i++)
               {
-                const LocalLiteTableDef &table = tables[i];
+                const LiteTableDef &table = tables[i];
                 if (!t4Matches(table.catalog, catalogPattern) ||
                     !t4Matches(table.schema, schemaPattern) ||
                     !t4Matches(table.name, tablePattern)) continue;
@@ -4325,10 +4325,10 @@ private:
       }
     result = engine_.execute(session, option == 1 ? "ROLLBACK" : "COMMIT");
     // JDBC permits commit/rollback when no work has started in the current
-    // transaction.  LocalLite's transaction manager reports that condition as
+    // transaction.  Lite's transaction manager reports that condition as
     // -8001; expose it as the required no-op instead of a driver error.
     if (!result.ok() &&
-        result.error.find("no active local-lite transaction") !=
+        result.error.find("no active lite transaction") !=
             std::string::npos)
       {
         result = QueryResult();
@@ -4487,7 +4487,7 @@ int main(int argc, char **argv)
         }
     }
 
-  if (LocalLiteConfig_init() != 0)
+  if (LiteConfig_init() != 0)
     {
       std::cerr << "failed to initialize NativeLite environment" << std::endl;
       return 1;
@@ -4512,7 +4512,7 @@ int main(int argc, char **argv)
 #include <iostream>
 int main()
 {
-  std::cerr << "nativelite-server requires TRAF_LOCAL_LITE" << std::endl;
+  std::cerr << "nativelite-server requires TRAF_LITE" << std::endl;
   return 1;
 }
 

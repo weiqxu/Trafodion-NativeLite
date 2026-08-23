@@ -59,7 +59,7 @@
 #include "ComRtUtils.h"
 #include <semaphore.h>
 #include <pthread.h>
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HBaseClient_JNI.h"
 #include "HdfsClient_JNI.h"
 #include "HiveClient_JNI.h"
@@ -71,18 +71,18 @@
 #include "ExCextdecs.h"
 CliGlobals * cli_globals = NULL;
 __thread ContextTidMap *tsCurrentContextMap = NULL;
-#ifdef TRAF_LOCAL_LITE
-static __thread char localLiteThreadDefaultSchema[512] = {0};
+#ifdef TRAF_LITE
+static __thread char liteThreadDefaultSchema[512] = {0};
 
-void LocalLiteSetThreadDefaultSchema(const char *schema)
+void LiteSetThreadDefaultSchema(const char *schema)
 {
-  snprintf(localLiteThreadDefaultSchema,
-           sizeof(localLiteThreadDefaultSchema), "%s", schema ? schema : "");
+  snprintf(liteThreadDefaultSchema,
+           sizeof(liteThreadDefaultSchema), "%s", schema ? schema : "");
 }
 
-const char *LocalLiteGetThreadDefaultSchema()
+const char *LiteGetThreadDefaultSchema()
 {
-  return localLiteThreadDefaultSchema;
+  return liteThreadDefaultSchema;
 }
 #endif
 
@@ -389,7 +389,7 @@ LmLanguageManager * CliGlobals::getLanguageManager(ComRoutineLanguage language)
   switch (language)
     {
     case COM_LANGUAGE_JAVA:
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       return NULL;
 #else
       return getLanguageManagerJava();
@@ -428,7 +428,7 @@ LmLanguageManagerC * CliGlobals::getLanguageManagerC()
 
 LmLanguageManagerJava * CliGlobals::getLanguageManagerJava()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   return NULL;
 #else
   if (!langManJava_)
@@ -473,7 +473,7 @@ CliGlobals * CliGlobals::createCliGlobals(NABoolean espProcess)
   result =  new CliGlobals(espProcess);
   //pthread_key_create(&thread_key, SQ_CleanupThread);
   cli_globals = result;
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   HBaseClient_JNI::getInstance();
 #endif
   return result;
@@ -1055,7 +1055,7 @@ void CliGlobals::yieldMemoryQuota(ULng32 size)
 
 void SQ_CleanupThread(void *arg)
 {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   HBaseClient_JNI::deleteInstance();
   HiveClient_JNI::deleteInstance();
 #endif

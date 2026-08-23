@@ -62,9 +62,9 @@
 #include "RelUpdate.h"
 #include "MvRefreshBuilder.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #include "ComSchemaName.h"
-extern const char *LocalLiteGetThreadDefaultSchema();
+extern const char *LiteGetThreadDefaultSchema();
 #endif
 
 
@@ -199,14 +199,14 @@ BindWA::BindWA(SchemaDB *schemaDB, CmpContext* cmpContext, NABoolean inDDL, NABo
   // get current default schema, using NAMETYPE NSK or ANSI rules
   defaultSchema_ = schemaDB_->getDefaultSchema(SchemaDB::APPLY_NAMETYPE_RULES);
 
-#ifdef TRAF_LOCAL_LITE
-  // Local-lite SQLCI handles SET SCHEMA without sending the statement through
+#ifdef TRAF_LITE
+  // Lite Storage SQLCI handles SET SCHEMA without sending the statement through
   // the service-stack executor.  Keep the embedded compiler's per-statement
   // default in sync with that SQLCI session state.
-  const char *localLiteSchema = LocalLiteGetThreadDefaultSchema();
-  if (localLiteSchema && localLiteSchema[0] != '\0')
+  const char *liteSchema = LiteGetThreadDefaultSchema();
+  if (liteSchema && liteSchema[0] != '\0')
     {
-      ComSchemaName configured((NAString(localLiteSchema)));
+      ComSchemaName configured((NAString(liteSchema)));
       if (!configured.getCatalogNamePart().isEmpty() &&
           !configured.getSchemaNamePart().isEmpty())
         {

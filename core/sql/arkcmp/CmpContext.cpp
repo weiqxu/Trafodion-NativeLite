@@ -70,7 +70,7 @@
 #include "hs_globals.h"
 
 #include "PCodeExprCache.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HBaseClient_JNI.h"
 #endif
 #include "CompException.h"

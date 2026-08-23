@@ -1,0 +1,72 @@
+>>SELECT CASE
++>         WHEN CURRENT_USER = SESSION_USER AND CURRENT_USER = USER
++>         THEN 'MATCH' ELSE 'DIFFERENT'
++>       END AS identity_state,
++>       CASE
++>         WHEN CHAR_LENGTH(CURRENT_USER) > 0
++>          AND CHAR_LENGTH(SESSION_USER) > 0
++>          AND CHAR_LENGTH(USER) > 0
++>         THEN 'NONEMPTY' ELSE 'EMPTY'
++>       END AS name_state
++>  FROM (VALUES (1)) AS v(n);
+IDENTITY_STATE  NAME_STATE
+--------------  ----------
+MATCH           NONEMPTY
+--- 1 row(s) selected.
+>>CREATE TABLE LITEREG021_IDENTITY
++>  (id INT PRIMARY KEY,
++>   current_name VARCHAR(128),
++>   session_name VARCHAR(128),
++>   user_name VARCHAR(128),
++>   prefixed_name VARCHAR(129));
+--- SQL operation complete.
+>>INSERT INTO LITEREG021_IDENTITY VALUES
++>  (1, CURRENT_USER, SESSION_USER, USER, 'Z' || CURRENT_USER);
+--- 1 row(s) inserted.
+>>INSERT INTO LITEREG021_IDENTITY
++>SELECT 2, CURRENT_USER, SESSION_USER, USER, 'Z' || SESSION_USER
++>  FROM (VALUES (1)) AS v(n);
+--- 1 row(s) inserted.
+>>SELECT id,
++>       CASE
++>         WHEN current_name = session_name AND current_name = user_name
++>         THEN 'MATCH' ELSE 'DIFFERENT'
++>       END AS stored_identity_state,
++>       CASE
++>         WHEN CHAR_LENGTH(current_name) > 0
++>          AND CHAR_LENGTH(session_name) > 0
++>          AND CHAR_LENGTH(user_name) > 0
++>         THEN 'NONEMPTY' ELSE 'EMPTY'
++>       END AS stored_name_state,
++>       CASE WHEN prefixed_name = 'Z' || current_name
++>            THEN 'MATCH' ELSE 'DIFFERENT' END AS prefix_state
++>  FROM LITEREG021_IDENTITY
++> ORDER BY id;
+ID           STORED_IDENTITY_STATE  STORED_NAME_STATE  PREFIX_STATE
+-----------  ---------------------  -----------------  ------------
+          1  MATCH                  NONEMPTY           MATCH
+          2  MATCH                  NONEMPTY           MATCH
+--- 2 row(s) selected.
+>>SELECT id
++>  FROM LITEREG021_IDENTITY
++> WHERE current_name = CURRENT_USER
++>   AND session_name = SESSION_USER
++>   AND user_name = USER
++> ORDER BY id;
+ID
+-----------
+          1
+          2
+--- 2 row(s) selected.
+>>SELECT id
++>  FROM LITEREG021_IDENTITY
++> WHERE prefixed_name = 'Z' || USER
++> ORDER BY id;
+ID
+-----------
+          1
+          2
+--- 2 row(s) selected.
+>>DROP TABLE LITEREG021_IDENTITY;
+--- SQL operation complete.
+>>exit;

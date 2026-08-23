@@ -160,7 +160,7 @@ public final class NativeLiteTpccConcurrency {
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     if (args.length == 2 && "capacity".equals(args[1])) {
       capacityProbe(args[0]);
-      System.out.println("LocalLite M21 session capacity probe passed");
+      System.out.println("Lite M21 session capacity probe passed");
       return;
     }
     sessionSchemaIsolation(args[0]);

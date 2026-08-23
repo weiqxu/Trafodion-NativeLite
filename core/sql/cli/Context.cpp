@@ -95,7 +95,7 @@
 #include "../../dbsecurity/auth/inc/dbUserAuth.h"
 #include "ComDistribution.h"
 #include "LmRoutine.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HiveClient_JNI.h"
 #endif
 
@@ -309,11 +309,11 @@ void ContextCli::deleteMe()
 {
   ComDiagsArea *diags = NULL;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   // Context deletion is the final session boundary. Discard pending writes
   // and release every statement/transaction snapshot before statement and
   // executor objects start tearing down.
-  transaction_->resetLocalLiteTransaction();
+  transaction_->resetLiteTransaction();
 #endif
 
   if (volatileSchemaCreated_)
@@ -431,7 +431,7 @@ void ContextCli::deleteMe()
   NADELETE(env_, IpcEnvironment, ipcHeap_);
   NAHeap *parentHeap = cliGlobals_->getProcessIpcHeap();
   NADELETE(ipcHeap_, NAHeap, parentHeap);
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   HiveClient_JNI::deleteInstance();
 #endif
   disconnectHdfsConnections();
@@ -2041,8 +2041,8 @@ UInt32 ContextCli::getTimeoutChangeCounter()
 
 void ContextCli::reset(void *contextMsg)
 {
-#ifdef TRAF_LOCAL_LITE
-  transaction_->resetLocalLiteTransaction();
+#ifdef TRAF_LITE
+  transaction_->resetLiteTransaction();
 #endif
   closeAllStatementsAndCursors();
 /*  retrieveContextInfo(contextMsg); */
@@ -2840,9 +2840,9 @@ void ContextCli::endSession(NABoolean cleanupEsps,
                             NABoolean cleanupOpens)
 {
   short rc = 0;
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if (NOT cleanupEspsOnly)
-    transaction_->resetLocalLiteTransaction();
+    transaction_->resetLiteTransaction();
 #endif
   if (NOT cleanupEspsOnly)
     {
@@ -2931,8 +2931,8 @@ void ContextCli::dropSession(NABoolean clearCmpCache)
 {
   short rc = 0;
   ComDiagsArea *diags = NULL;
-#ifdef TRAF_LOCAL_LITE
-  transaction_->resetLocalLiteTransaction();
+#ifdef TRAF_LITE
+  transaction_->resetLiteTransaction();
 #endif
   if (volatileSchemaCreated_)
     {
@@ -2970,7 +2970,7 @@ void ContextCli::dropSession(NABoolean clearCmpCache)
   // prevStmtStats_ is decremented so that it can be freed up when
   // GC happens in mxssmp
   setStatsArea(NULL, FALSE, FALSE, TRUE);
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   HiveClient_JNI::deleteInstance();
 #endif
   disconnectHdfsConnections();
@@ -4874,7 +4874,7 @@ void ContextCli::putTrustedRoutine(CollIndex ix)
 // gets cleaned up when the thread exits.
 hdfsFS ContextCli::getHdfsServerConnection(char * hdfs_server, Int32 port)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   return NULL;
 #else
   if (hdfs_server == NULL) // guard against NULL and use default value.
@@ -4912,7 +4912,7 @@ hdfsFS ContextCli::getHdfsServerConnection(char * hdfs_server, Int32 port)
 
 void ContextCli::disconnectHdfsConnections()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   return;
 #else
   if (hdfsHandleList_)

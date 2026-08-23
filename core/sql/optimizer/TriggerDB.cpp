@@ -36,8 +36,8 @@
 #include "Triggers.h"
 #include "TriggerDB.h"
 #include "BindWA.h"
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteRocksDBStore.h"
+#ifdef TRAF_LITE
+#include "LiteRocksDBStore.h"
 #endif
 
 //-----------------------------------------------------------------------------
@@ -169,15 +169,15 @@ TriggerDB::getTriggers(QualifiedName &subjectTable,
 {
   BeforeAndAfterTriggers *triggers = NULL;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   TableOp lookupKey(subjectTable, operation);
   triggers = getValidEntry(&lookupKey, bindWA);
   if (triggers)
     return triggers;
 
-  std::vector<LocalLiteTriggerDef> definitions;
+  std::vector<LiteTriggerDef> definitions;
   std::string error;
-  LocalLiteRocksDBStore store;
+  LiteRocksDBStore store;
   if (!store.listTriggers(subjectTable.getCatalogName().data(),
                           subjectTable.getSchemaName().data(),
                           subjectTable.getObjectName().data(),
@@ -198,7 +198,7 @@ TriggerDB::getTriggers(QualifiedName &subjectTable,
   ComTimestamp subjectTimestamp = 1;
   for (size_t i = 0; i < definitions.size(); i++)
     {
-      const LocalLiteTriggerDef &def = definitions[i];
+      const LiteTriggerDef &def = definitions[i];
       QualifiedName triggerName(def.name.c_str(), def.schema.c_str(),
                                 def.catalog.c_str(), heap);
       QualifiedName tableName(def.subjectTable.c_str(),

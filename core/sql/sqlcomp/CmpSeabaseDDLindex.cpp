@@ -66,9 +66,9 @@
 
 #include "PrivMgrCommands.h"
 
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteRocksDBStore.h"
-#include "LocalLiteRowCodec.h"
+#ifdef TRAF_LITE
+#include "LiteRocksDBStore.h"
+#include "LiteRowCodec.h"
 
 #include <stdlib.h>
 #include <time.h>
@@ -76,13 +76,13 @@
 
 #include <string>
 
-static void localLiteIndexDDLDiag(const std::string &reason)
+static void liteIndexDDLDiag(const std::string &reason)
 {
   *CmpCommon::diags() << DgSqlCode(-3242)
                       << DgString0((char *)reason.c_str());
 }
 
-static uint64_t localLiteNewIndexUid()
+static uint64_t liteNewIndexUid()
 {
   uint64_t uid = static_cast<uint64_t>(time(NULL));
   uid = (uid << 24) ^ static_cast<uint64_t>(getpid() & 0xffff);
@@ -90,7 +90,7 @@ static uint64_t localLiteNewIndexUid()
   return uid ? uid : 1;
 }
 
-static bool localLiteFindIndexColumn(const LocalLiteTableDef &table,
+static bool liteFindIndexColumn(const LiteTableDef &table,
                                      const NAString &name,
                                      size_t *column)
 {
@@ -103,32 +103,32 @@ static bool localLiteFindIndexColumn(const LocalLiteTableDef &table,
   return false;
 }
 
-static bool localLiteCreateIndex(StmtDDLCreateIndex *node,
+static bool liteCreateIndex(StmtDDLCreateIndex *node,
                                  const ComObjectName &tableName,
                                  const ComObjectName &indexName)
 {
   if (node->isVolatile())
     {
-      localLiteIndexDDLDiag(
-          "local-lite RocksDB indexes do not support volatile indexes");
+      liteIndexDDLDiag(
+          "lite RocksDB indexes do not support volatile indexes");
       return false;
     }
 
   // LOCATION, partitioning, HBase, and parallel clauses describe the native
-  // storage layout.  They are intentionally ignored by the local-lite
+  // storage layout.  They are intentionally ignored by the lite
   // logical index adapter; rejecting them prevents legacy DDL from reaching
   // the same key/backfill semantics that RocksDB can provide.
 
-  LocalLiteTableDef table;
+  LiteTableDef table;
   table.catalog = tableName.getCatalogNamePartAsAnsiString().data();
   table.schema = tableName.getSchemaNamePartAsAnsiString(TRUE).data();
   table.name = tableName.getObjectNamePartAsAnsiString(TRUE).data();
 
-  LocalLiteRocksDBStore store;
+  LiteRocksDBStore store;
   std::string error;
   if (!store.loadTable(table.catalog, table.schema, table.name, &table, &error))
     {
-      localLiteIndexDDLDiag(error);
+      liteIndexDDLDiag(error);
       return false;
     }
 
@@ -137,36 +137,36 @@ static bool localLiteCreateIndex(StmtDDLCreateIndex *node,
       indexName.getSchemaNamePartAsAnsiString(TRUE) !=
           tableName.getSchemaNamePartAsAnsiString(TRUE))
     {
-      localLiteIndexDDLDiag(
-          "local-lite index must be in the same catalog and schema as its table");
+      liteIndexDDLDiag(
+          "lite index must be in the same catalog and schema as its table");
       return false;
     }
 
-  LocalLiteIndexDef index;
+  LiteIndexDef index;
   index.name = indexName.getObjectNamePartAsAnsiString(TRUE).data();
-  index.objectUid = localLiteNewIndexUid();
+  index.objectUid = liteNewIndexUid();
   index.unique = node->isUniqueSpecified();
 
   ElemDDLColRefArray &columns = node->getColRefArray();
   if (columns.entries() == 0)
     {
-      localLiteIndexDDLDiag("CREATE INDEX requires at least one column");
+      liteIndexDDLDiag("CREATE INDEX requires at least one column");
       return false;
     }
   for (CollIndex i = 0; i < columns.entries(); i++)
     {
       size_t column = 0;
       if (!columns[i] ||
-          !localLiteFindIndexColumn(table, columns[i]->getColumnName(),
+          !liteFindIndexColumn(table, columns[i]->getColumnName(),
                                     &column))
         {
-          localLiteIndexDDLDiag("local-lite index column does not exist");
+          liteIndexDDLDiag("lite index column does not exist");
           return false;
         }
       for (size_t j = 0; j < index.keyColumns.size(); j++)
         if (index.keyColumns[j] == column)
           {
-            localLiteIndexDDLDiag("duplicate local-lite index column");
+            liteIndexDDLDiag("duplicate lite index column");
             return false;
           }
       index.keyColumns.push_back(column);
@@ -175,27 +175,27 @@ static bool localLiteCreateIndex(StmtDDLCreateIndex *node,
     }
 
   index.keyEncodingVersion =
-      LocalLiteSecondaryIndexSupportsOrderedKeys(table, index.keyColumns)
+      LiteSecondaryIndexSupportsOrderedKeys(table, index.keyColumns)
           ? 4 : 1;
 
   if (!store.createIndex(table, index, &error))
     {
-      localLiteIndexDDLDiag(error);
+      liteIndexDDLDiag(error);
       return false;
     }
   return true;
 }
 
-static bool localLiteDropIndex(const ComObjectName &indexName)
+static bool liteDropIndex(const ComObjectName &indexName)
 {
-  LocalLiteRocksDBStore store;
+  LiteRocksDBStore store;
   std::string error;
   if (!store.dropIndex(
           indexName.getCatalogNamePartAsAnsiString().data(),
           indexName.getSchemaNamePartAsAnsiString(TRUE).data(),
           indexName.getObjectNamePartAsAnsiString(TRUE).data(), false, &error))
     {
-      localLiteIndexDDLDiag(error);
+      liteIndexDDLDiag(error);
       return false;
     }
   return true;
@@ -565,11 +565,11 @@ void CmpSeabaseDDL::createSeabaseIndex( StmtDDLCreateIndex * createIndexNode,
   NAString extIndexName = indexName.getExternalName(TRUE);
   NAString extNameForHbase = catalogNamePart + "." + schemaNamePart + "." + objectNamePart;
 
-#ifdef TRAF_LOCAL_LITE
-  ExeCliInterface localLiteCliInterface(
+#ifdef TRAF_LITE
+  ExeCliInterface liteCliInterface(
       STMTHEAP, 0, NULL,
       CmpCommon::context()->sqlSession()->getParentQid());
-  if (!localLiteCreateIndex(createIndexNode, tableName, indexName))
+  if (!liteCreateIndex(createIndexNode, tableName, indexName))
     processReturn();
   return;
 #endif
@@ -1591,11 +1591,11 @@ void CmpSeabaseDDL::dropSeabaseIndex(
   NAString objectNamePart = indexName.getObjectNamePartAsAnsiString(TRUE);
   const NAString extIndexName = indexName.getExternalName(TRUE);
 
-#ifdef TRAF_LOCAL_LITE
-  ExeCliInterface localLiteCliInterface(
+#ifdef TRAF_LITE
+  ExeCliInterface liteCliInterface(
       STMTHEAP, 0, NULL,
       CmpCommon::context()->sqlSession()->getParentQid());
-  if (!localLiteDropIndex(indexName))
+  if (!liteDropIndex(indexName))
     processReturn();
   return;
 #endif

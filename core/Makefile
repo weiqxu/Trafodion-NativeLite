@@ -27,7 +27,7 @@
 include macros.gmk
 
 # Make Targets
-.PHONY: all local-lite local-lite-foundation dbsecurity foundation $(MPI_TARGET) ndcs ci jdbc_jar jdbc_type2_jar sqroot $(SEAMONSTER_TARGET) verhdr dcs rest odb
+.PHONY: all lite lite-foundation dbsecurity foundation $(MPI_TARGET) ndcs ci jdbc_jar jdbc_type2_jar sqroot $(SEAMONSTER_TARGET) verhdr dcs rest odb
 .PHONY: package package-all pkg-product pkg-sql-regress pkg-phx-tests pkg-dcs-tests check-copyrights pkg-installer
 
 ################
@@ -37,45 +37,45 @@ include macros.gmk
 # Default target (all components)
 all: $(MPI_TARGET) dbsecurity foundation jdbc_jar $(SEAMONSTER_TARGET) ndcs ci jdbc_type2_jar dcs rest odb lib_mgmt
 
-LOCAL_LITE_TRAF_HOME ?= $(CURDIR)/sqf
-LOCAL_LITE_ACTIVE_TRAF_HOME := $(or $(TRAF_HOME),$(LOCAL_LITE_TRAF_HOME))
-LOCAL_LITE_MPICH_ROOT ?= $(firstword $(wildcard $(LOCAL_LITE_ACTIVE_TRAF_HOME)/opt/local-lite-mpich /opt/home/tools/dest-mpich-3.0.4) /opt/home/tools/dest-mpich-3.0.4)
-LOCAL_LITE_SYSTEM_LIB_DIR ?= $(firstword $(wildcard /usr/lib/$(shell uname -m)-linux-gnu /usr/lib64 /usr/lib) /usr/lib)
-LOCAL_LITE_LOG4CXX_LIB_DIR ?= $(LOCAL_LITE_SYSTEM_LIB_DIR)
-LOCAL_LITE_LOG4CXX_INC_DIR ?= /usr/include/log4cxx
-LOCAL_LITE_THRIFT_LIB_DIR ?= $(LOCAL_LITE_SYSTEM_LIB_DIR)
-LOCAL_LITE_THRIFT_INC_DIR ?= /usr/include
+LITE_TRAF_HOME ?= $(CURDIR)/sqf
+LITE_ACTIVE_TRAF_HOME := $(or $(TRAF_HOME),$(LITE_TRAF_HOME))
+LITE_MPICH_ROOT ?= $(firstword $(wildcard $(LITE_ACTIVE_TRAF_HOME)/opt/lite-mpich /opt/home/tools/dest-mpich-3.0.4) /opt/home/tools/dest-mpich-3.0.4)
+LITE_SYSTEM_LIB_DIR ?= $(firstword $(wildcard /usr/lib/$(shell uname -m)-linux-gnu /usr/lib64 /usr/lib) /usr/lib)
+LITE_LOG4CXX_LIB_DIR ?= $(LITE_SYSTEM_LIB_DIR)
+LITE_LOG4CXX_INC_DIR ?= /usr/include/log4cxx
+LITE_THRIFT_LIB_DIR ?= $(LITE_SYSTEM_LIB_DIR)
+LITE_THRIFT_INC_DIR ?= /usr/include
 
-local-lite: SHELL := /bin/bash
-local-lite: export TRAF_LOCAL_LITE := 1
-local-lite: export TRAF_HOME := $(LOCAL_LITE_ACTIVE_TRAF_HOME)
-local-lite: export SQ_MTYPE := $(or $(SQ_MTYPE),64)
-local-lite: export SQ_MBTYPE := $(or $(SQ_MBTYPE),64d)
-local-lite: export MPI_ROOT := $(or $(MPI_ROOT),$(LOCAL_LITE_ACTIVE_TRAF_HOME)/opt/hpmpi)
-local-lite: export MPICH_ROOT := $(or $(MPICH_ROOT),$(LOCAL_LITE_MPICH_ROOT))
-local-lite: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LOCAL_LITE_LOG4CXX_LIB_DIR))
-local-lite: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LOCAL_LITE_LOG4CXX_INC_DIR))
-local-lite: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LOCAL_LITE_THRIFT_LIB_DIR))
-local-lite: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LOCAL_LITE_THRIFT_INC_DIR))
-local-lite: export SQ_PHANDLE_VERIFIER := $(or $(SQ_PHANDLE_VERIFIER),1)
-local-lite: export RH_MAJ_VERS := $(or $(RH_MAJ_VERS),7)
-local-lite: $(MPI_TARGET) dbsecurity local-lite-foundation $(SEAMONSTER_TARGET)
+lite: SHELL := /bin/bash
+lite: export TRAF_LITE := 1
+lite: export TRAF_HOME := $(LITE_ACTIVE_TRAF_HOME)
+lite: export SQ_MTYPE := $(or $(SQ_MTYPE),64)
+lite: export SQ_MBTYPE := $(or $(SQ_MBTYPE),64d)
+lite: export MPI_ROOT := $(or $(MPI_ROOT),$(LITE_ACTIVE_TRAF_HOME)/opt/hpmpi)
+lite: export MPICH_ROOT := $(or $(MPICH_ROOT),$(LITE_MPICH_ROOT))
+lite: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LITE_LOG4CXX_LIB_DIR))
+lite: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LITE_LOG4CXX_INC_DIR))
+lite: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LITE_THRIFT_LIB_DIR))
+lite: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LITE_THRIFT_INC_DIR))
+lite: export SQ_PHANDLE_VERIFIER := $(or $(SQ_PHANDLE_VERIFIER),1)
+lite: export RH_MAJ_VERS := $(or $(RH_MAJ_VERS),7)
+lite: $(MPI_TARGET) dbsecurity lite-foundation $(SEAMONSTER_TARGET)
 
-local-lite-foundation: SHELL := /bin/bash
-local-lite-foundation: export TRAF_LOCAL_LITE := 1
-local-lite-foundation: export TRAF_HOME := $(LOCAL_LITE_ACTIVE_TRAF_HOME)
-local-lite-foundation: export SQ_MTYPE := $(or $(SQ_MTYPE),64)
-local-lite-foundation: export SQ_MBTYPE := $(or $(SQ_MBTYPE),64d)
-local-lite-foundation: export MPI_ROOT := $(or $(MPI_ROOT),$(LOCAL_LITE_ACTIVE_TRAF_HOME)/opt/hpmpi)
-local-lite-foundation: export MPICH_ROOT := $(or $(MPICH_ROOT),$(LOCAL_LITE_MPICH_ROOT))
-local-lite-foundation: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LOCAL_LITE_LOG4CXX_LIB_DIR))
-local-lite-foundation: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LOCAL_LITE_LOG4CXX_INC_DIR))
-local-lite-foundation: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LOCAL_LITE_THRIFT_LIB_DIR))
-local-lite-foundation: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LOCAL_LITE_THRIFT_INC_DIR))
-local-lite-foundation: export SQ_PHANDLE_VERIFIER := $(or $(SQ_PHANDLE_VERIFIER),1)
-local-lite-foundation: export RH_MAJ_VERS := $(or $(RH_MAJ_VERS),7)
-local-lite-foundation: sqroot dbsecurity $(MPI_TARGET) $(SEAMONSTER_TARGET)
-	cd sqf && $(MAKE) local-lite TRAF_LOCAL_LITE=1
+lite-foundation: SHELL := /bin/bash
+lite-foundation: export TRAF_LITE := 1
+lite-foundation: export TRAF_HOME := $(LITE_ACTIVE_TRAF_HOME)
+lite-foundation: export SQ_MTYPE := $(or $(SQ_MTYPE),64)
+lite-foundation: export SQ_MBTYPE := $(or $(SQ_MBTYPE),64d)
+lite-foundation: export MPI_ROOT := $(or $(MPI_ROOT),$(LITE_ACTIVE_TRAF_HOME)/opt/hpmpi)
+lite-foundation: export MPICH_ROOT := $(or $(MPICH_ROOT),$(LITE_MPICH_ROOT))
+lite-foundation: export LOG4CXX_LIB_DIR := $(or $(LOG4CXX_LIB_DIR),$(LITE_LOG4CXX_LIB_DIR))
+lite-foundation: export LOG4CXX_INC_DIR := $(or $(LOG4CXX_INC_DIR),$(LITE_LOG4CXX_INC_DIR))
+lite-foundation: export THRIFT_LIB_DIR := $(or $(THRIFT_LIB_DIR),$(LITE_THRIFT_LIB_DIR))
+lite-foundation: export THRIFT_INC_DIR := $(or $(THRIFT_INC_DIR),$(LITE_THRIFT_INC_DIR))
+lite-foundation: export SQ_PHANDLE_VERIFIER := $(or $(SQ_PHANDLE_VERIFIER),1)
+lite-foundation: export RH_MAJ_VERS := $(or $(RH_MAJ_VERS),7)
+lite-foundation: sqroot dbsecurity $(MPI_TARGET) $(SEAMONSTER_TARGET)
+	cd sqf && $(MAKE) lite TRAF_LITE=1
 
 package: pkg-product pkg-client pkg-installer
 
@@ -199,8 +199,8 @@ version:
 # create links and files needed as prerequisite for the build
 sqroot: SHELL := /bin/bash
 sqroot:
-	if [ "$(TRAF_LOCAL_LITE)" = "1" ]; then \
-	  cd sqf && $(MAKE) setupdir TRAF_LOCAL_LITE=1 2>&1 | sed -e "s/$$/	##(setupdir)/"; exit $${PIPESTATUS[0]}; \
+	if [ "$(TRAF_LITE)" = "1" ]; then \
+	  cd sqf && $(MAKE) setupdir TRAF_LITE=1 2>&1 | sed -e "s/$$/	##(setupdir)/"; exit $${PIPESTATUS[0]}; \
 	else \
 	  ./bldenvchk.sh || exit $$?; \
 	  cd sqf && $(MAKE) setupdir 2>&1 | sed -e "s/$$/	##(setupdir)/"; exit $${PIPESTATUS[0]}; \

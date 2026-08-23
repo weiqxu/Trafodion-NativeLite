@@ -120,7 +120,7 @@ CPPSRC := Allocator.cpp \
         HiveClient_JNI.cpp \
         HBaseClient_JNI.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 CPPSRC := $(filter-out \
 	ExHbaseAccess.cpp \
 	ExHbaseDDL.cpp \
@@ -134,13 +134,13 @@ CPPSRC := $(filter-out \
 	HBaseClient_JNI.cpp \
 	SequenceFileReader.cpp \
 	OrcFileReader.cpp,$(CPPSRC))
-CPPSRC += LocalLiteStorageStubs.cpp \
-	LocalLiteHiveHookStubs.cpp \
-	LocalLiteRocksDBStore.cpp \
-	LocalLiteStorage.cpp \
-	LocalLiteUnifiedRocksDB.cpp \
-	LocalLiteRowCodec.cpp
-DEFS += -DTRAF_LOCAL_LITE
+CPPSRC += LiteStorageStubs.cpp \
+	LiteHiveHookStubs.cpp \
+	LiteRocksDBStore.cpp \
+	LiteStorage.cpp \
+	LiteUnifiedRocksDB.cpp \
+	LiteRowCodec.cpp
+DEFS += -DTRAF_LITE
 endif
 
 CPPSRC += vers_libexecutor.cpp \
@@ -159,8 +159,8 @@ CPPSRC += vers_libexecutor.cpp \
 	ExSMShortMessage.cpp \
 	ExSMReadyList.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-CPPSRC += LocalLiteFastTransportStubs.cpp
+ifeq ($(TRAF_LITE),1)
+CPPSRC += LiteFastTransportStubs.cpp
 else
 CPPSRC += \
 	ExFastTransport.cpp
@@ -168,6 +168,6 @@ endif
 
 SYS_LIBS := -lrt -lpthread
 SRCPATH := bin executor runtimestats porting_layer qmscommon
-ifeq ($(TRAF_LOCAL_LITE),1)
-SRCPATH += localstore
+ifeq ($(TRAF_LITE),1)
+SRCPATH += litestore
 endif

@@ -1,0 +1,124 @@
+>>CREATE TABLE LITEREG027_DELETE
++>  (id INT PRIMARY KEY,
++>   code VARCHAR(8),
++>   label VARCHAR(20),
++>   UNIQUE(code));
+--- SQL operation complete.
+>>INSERT INTO LITEREG027_DELETE VALUES
++>  (1, 'A', 'one'),
++>  (2, 'B', 'two'),
++>  (3, 'C', 'three'),
++>  (4, 'D', 'four');
+--- 4 row(s) inserted.
+>>DELETE FROM LITEREG027_DELETE WHERE id = 2;
+--- 1 row(s) deleted.
+>>INSERT INTO LITEREG027_DELETE VALUES (5, 'B', 'reused');
+--- 1 row(s) inserted.
+>>DELETE FROM LITEREG027_DELETE WHERE id IN (3, 4);
+--- 2 row(s) deleted.
+>>DELETE FROM LITEREG027_DELETE WHERE id = 99;
+--- 0 row(s) deleted.
+>>SELECT id, code, label
++>  FROM LITEREG027_DELETE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         one
+          5  B         reused
+--- 2 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>DELETE FROM LITEREG027_DELETE WHERE id = 1;
+--- 1 row(s) deleted.
+>>SELECT id, code, label
++>  FROM LITEREG027_DELETE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          5  B         reused
+--- 1 row(s) selected.
+>>ROLLBACK WORK;
+--- SQL operation complete.
+>>SELECT id, code, label
++>  FROM LITEREG027_DELETE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          1  A         one
+          5  B         reused
+--- 2 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>UPDATE LITEREG027_DELETE SET code = 'Z' WHERE id = 1;
+--- 1 row(s) updated.
+>>DELETE FROM LITEREG027_DELETE WHERE id = 1;
+--- 1 row(s) deleted.
+>>COMMIT WORK;
+--- SQL operation complete.
+>>SELECT id, code, label
++>  FROM LITEREG027_DELETE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          5  B         reused
+--- 1 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>INSERT INTO LITEREG027_DELETE VALUES (6, 'F', 'pending');
+--- 1 row(s) inserted.
+>>DELETE FROM LITEREG027_DELETE WHERE id = 6;
+--- 1 row(s) deleted.
+>>COMMIT WORK;
+--- SQL operation complete.
+>>SELECT id, code, label
++>  FROM LITEREG027_DELETE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          5  B         reused
+--- 1 row(s) selected.
+>>BEGIN WORK;
+--- SQL operation complete.
+>>DELETE FROM LITEREG027_DELETE WHERE id = 5;
+--- 1 row(s) deleted.
+>>INSERT INTO LITEREG027_DELETE VALUES (5, 'B', 'replacement');
+--- 1 row(s) inserted.
+>>SELECT id, code, label
++>  FROM LITEREG027_DELETE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          5  B         replacement
+--- 1 row(s) selected.
+>>COMMIT WORK;
+--- SQL operation complete.
+>>SELECT id, code, label
++>  FROM LITEREG027_DELETE
++> ORDER BY id;
+ID           CODE      LABEL
+-----------  --------  --------------------
+          5  B         replacement
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG027_DELETE;
+--- SQL operation complete.
+>>CREATE TABLE LITEREG027_KEYLESS
++>  (id INT,
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG027_KEYLESS VALUES
++>  (1, 'first'),
++>  (1, 'second'),
++>  (2, 'kept');
+--- 3 row(s) inserted.
+>>DELETE FROM LITEREG027_KEYLESS WHERE id = 1;
+--- 2 row(s) deleted.
+>>SELECT id, label
++>  FROM LITEREG027_KEYLESS
++> ORDER BY id, label;
+ID           LABEL
+-----------  --------------------
+          2  kept
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG027_KEYLESS;
+--- SQL operation complete.
+>>exit;

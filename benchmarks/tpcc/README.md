@@ -22,27 +22,27 @@ The repository-owned JDBC workload driver is implemented under `scripts/` and
 uses the reduced NativeLite T4 endpoint. It is intentionally inspectable and is
 not represented as a TPC-certified driver.
 
-Run `make local-lite-m14a` to validate these inputs and emit a machine-readable
-baseline report. Run `make local-lite-m14b` for the fast smoke-scale schema,
+Run `make lite-m14a` to validate these inputs and emit a machine-readable
+baseline report. Run `make lite-m14b` for the fast smoke-scale schema,
 loader, interruption/retry, restart, and backup/restore gate. Set
 `TPCC_M14_SCALE=qualification` to exercise the pinned one-warehouse scale:
 
 ```sh
-TPCC_M14_SCALE=qualification make local-lite-m14b
+TPCC_M14_SCALE=qualification make lite-m14b
 ```
 
 The loader is deterministic and restartable at bounded commit boundaries. It
 uses the real reduced T4 JDBC endpoint; its report contains the exact generated
 cardinalities and post-load consistency result.
 
-Run `make local-lite-m14c` for the five deterministic transaction profiles,
+Run `make lite-m14c` for the five deterministic transaction profiles,
 first in isolation and then as a two-terminal mix. The gate records classified
 retries, negative diagnostics, rollback/disconnect cleanup, final consistency,
 and restart persistence. This is a functional profile gate; the normative
 random transaction mix, terminal pacing, and multi-warehouse scale belong to
 M14F.
 
-Run `make local-lite-m14d` for the versioned two-session Level 3 isolation and
+Run `make lite-m14d` for the versioned two-session Level 3 isolation and
 durability matrix. The selected serializability mechanism combines stable
 TransactionDB snapshots with optimistic validation of the database sequence at
 commit. This prevents write skew and predicate phantoms but conservatively
@@ -52,7 +52,7 @@ lock waits or deadlock cycles. The gate also terminates the server before and
 after the durable journal decision for New-Order, Payment, and Delivery and
 checks atomic effects after restart.
 
-Run `make local-lite-m14e` to prove that independent connection threads enter
+Run `make lite-m14e` to prove that independent connection threads enter
 the real compiler/executor region concurrently. The gate records a minimum
 observed depth of two for five repeated races, checks per-session schema and
 diagnostic isolation, and reruns the T4 cancellation, disconnect rollback,
@@ -61,7 +61,7 @@ versioned in `m14e-runtime-inventory.tsv`. DDL/catalog changes and SQLCI
 compatibility utilities remain narrowly serialized; requests do not use the
 engine initialization queue.
 
-Run `make local-lite-m14f` for the fixed two-warehouse operations scale: two
+Run `make lite-m14f` for the fixed two-warehouse operations scale: two
 districts and 100 customers/orders per warehouse, 1,000 shared items, two
 terminal sessions, 5 warmup and 20 measured transactions per terminal, and two
 repetitions with a maximum throughput variance ratio of 0.75. The deterministic
@@ -83,9 +83,9 @@ rejection. Queue, compile, WAL/fsync, compaction, write-stall, and cache metrics
 are marked unavailable rather than inferred from the reduced server or RocksDB
 C API.
 
-Run `make local-lite-m14` for the aggregate M14G gate. It keeps M10-M13 and
+Run `make lite-m14` for the aggregate M14G gate. It keeps M10-M13 and
 M14A-M14F as explicit prerequisites, retains the M14F artifacts under
-`M14_REPORT_DIR` (default `/tmp/traf-local-lite-m14-report`), and writes
+`M14_REPORT_DIR` (default `/tmp/traf-lite-m14-report`), and writes
 `qualification-report.json` there. `m14-regression-inputs.tsv` is the required
 gate inventory; `claim-checklist.tsv` independently records functional support,
 repeatable TPC-C-like support, and failed formal-compliance requirements. The
@@ -105,14 +105,14 @@ reads for conflict purposes, matching `TrxTransactionState` write ordering.
 `occ-metrics.tsv` fixes the counters required in the M15 qualification report.
 This design is not SSCC and does not select RocksDB OptimisticTransactionDB;
 TransactionDB remains the snapshot and atomic persistence layer. Run
-`make local-lite-m15a` to validate the contract against the retained Trafodion
+`make lite-m15a` to validate the contract against the retained Trafodion
 reference implementation.
 
 M15A-M15G are complete. The phases add the contract and metrics, one unified
 transaction snapshot, OCC read/write sets, post-start validation, transactional
 secondary-index reads, atomic delta publication, and Release qualification.
-Run `make local-lite-m15g`; artifacts are written to
-`/tmp/traf-local-lite-m15-report` by default. The deterministic qualification
+Run `make lite-m15g`; artifacts are written to
+`/tmp/traf-lite-m15-report` by default. The deterministic qualification
 scale is 32 warehouses and 32 independently offset terminals over 10 districts,
 100 customers and orders per district, 30 new orders per district, and 1,000
 items. It is deliberately a repeatable TPC-C-like engineering scale, not the
@@ -143,7 +143,7 @@ Stock-Level full scans. New-Order remained the main latency bottleneck at
 
 ## M17 New-Order and OCC validation optimization
 
-M17 is specified in `plan/local-lite-tpcc-m17-design.md`. New-Order now reads
+M17 is specified in `plan/lite-tpcc-m17-design.md`. New-Order now reads
 the district sequence, warehouse tax, and customer discount through one
 prepared join, and coalesces the ITEM/STOCK batch reads into a second prepared
 join in the same transaction snapshot. The OCC coordinator also maintains an
@@ -151,7 +151,7 @@ object-UID history index and validates only writes that can overlap the current
 transaction's point/range read set; cleanup and history-overflow behavior stay
 in lockstep with the existing committed history.
 
-The staged implementation gate is `make local-lite-m17` (A: source/design
+The staged implementation gate is `make lite-m17` (A: source/design
 contract, B: T4 and five-profile correctness, C: Release performance). The
 2026-08-17 M17 run passed all gates at 21.332 TPS and 1.479 s New-Order p95
 after coalescing the ITEM/STOCK batch reads, with zero conflicts, retries,

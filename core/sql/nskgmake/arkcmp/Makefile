@@ -23,7 +23,7 @@
 
 CPPSRC := arkcmp.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 EARLY_DLLS :=
 else
 EARLY_DLLS := -ljsig

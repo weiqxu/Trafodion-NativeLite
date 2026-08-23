@@ -22,7 +22,7 @@
 #ifndef TM_HBASETM_WRAPPER_H_
 #define TM_HBASETM_WRAPPER_H_
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #include "hbasetm_stub.h"
 #else
 #include "../seatrans/tm/hbasetmlib2/hbasetm.h"

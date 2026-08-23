@@ -151,9 +151,9 @@ CPPSRC := \
 	HbaseSearchSpec.cpp \
 	vers_liboptimizer.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-CPPSRC += LocalLiteRocksDBStore.cpp \
-	LocalLiteStorage.cpp \
-	LocalLiteUnifiedRocksDB.cpp
-SRCPATH += localstore
+ifeq ($(TRAF_LITE),1)
+CPPSRC += LiteRocksDBStore.cpp \
+	LiteStorage.cpp \
+	LiteUnifiedRocksDB.cpp
+SRCPATH += litestore
 endif

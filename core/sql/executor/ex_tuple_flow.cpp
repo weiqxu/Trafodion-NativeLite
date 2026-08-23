@@ -47,16 +47,16 @@
 #include "ExpError.h"
 #include "cli_stdh.h"
 
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteRocksDBStore.h"
+#ifdef TRAF_LITE
+#include "LiteRocksDBStore.h"
 
-static LocalLiteTxnContext *localLiteTxnContext(ex_globals *globals)
+static LiteTxnContext *liteTxnContext(ex_globals *globals)
 {
   if (!globals)
     return NULL;
   ExExeStmtGlobals *statementGlobals = globals->castToExExeStmtGlobals();
   return statementGlobals && statementGlobals->getContext()
-      ? statementGlobals->getContext()->getLocalLiteTxnContext() : NULL;
+      ? statementGlobals->getContext()->getLiteTxnContext() : NULL;
 }
 #endif
 
@@ -109,9 +109,9 @@ ExTupleFlowTcb::ExTupleFlowTcb(const ExTupleFlowTdb &  tuple_flow_tdb,
   qSrc_  = src_tcb.getParentQueue();
   qTgt_  = tgt_tcb.getParentQueue();
 
-#ifdef TRAF_LOCAL_LITE
-  localLiteAutocommitTxnStarted_ = FALSE;
-  localLiteRowsAffectedBefore_ = 0;
+#ifdef TRAF_LITE
+  liteAutocommitTxnStarted_ = FALSE;
+  liteRowsAffectedBefore_ = 0;
 #endif
 
   ex_cri_desc * from_parent_cri = tuple_flow_tdb.criDescDown_;  
@@ -154,12 +154,12 @@ ExTupleFlowTcb::~ExTupleFlowTcb()
  
 void ExTupleFlowTcb::freeResources()
 {
-#ifdef TRAF_LOCAL_LITE
-  if (localLiteAutocommitTxnStarted_)
+#ifdef TRAF_LITE
+  if (liteAutocommitTxnStarted_)
     {
       std::string error;
-      LocalLiteTxnManager::rollback(localLiteTxnContext(getGlobals()), &error);
-      localLiteAutocommitTxnStarted_ = FALSE;
+      LiteTxnManager::rollback(liteTxnContext(getGlobals()), &error);
+      liteAutocommitTxnStarted_ = FALSE;
     }
 #endif
   delete pool_;
@@ -219,22 +219,22 @@ short ExTupleFlowTcb::work()
 	    if (qSrc_.down->isFull())
 	      return WORK_OK;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
             // The target receives one request per source row. Keep those rows
             // pending until the complete source/target flow reaches EOD.
-            if ((tcbTgt_->isLocalLiteInsert() ||
-                 tcbTgt_->isLocalLiteUpdate() ||
-                 tcbTgt_->isLocalLiteDelete()) &&
-                !LocalLiteTxnManager::active(
-                    localLiteTxnContext(getGlobals())))
+            if ((tcbTgt_->isLiteInsert() ||
+                 tcbTgt_->isLiteUpdate() ||
+                 tcbTgt_->isLiteDelete()) &&
+                !LiteTxnManager::active(
+                    liteTxnContext(getGlobals())))
               {
                 ExMasterStmtGlobals *master = getGlobals()->
                   castToExExeStmtGlobals()->castToExMasterStmtGlobals();
-                localLiteRowsAffectedBefore_ =
+                liteRowsAffectedBefore_ =
                   master ? master->getRowsAffected() : 0;
                 std::string error;
-                if (!LocalLiteTxnManager::begin(
-                        localLiteTxnContext(getGlobals()), &error))
+                if (!LiteTxnManager::begin(
+                        liteTxnContext(getGlobals()), &error))
                   {
                     if (qParent_.up->isFull())
                       return WORK_OK;
@@ -257,7 +257,7 @@ short ExTupleFlowTcb::work()
                     pstate.step_ = DONE_;
                     return WORK_CALL_AGAIN;
                   }
-                localLiteAutocommitTxnStarted_ = TRUE;
+                liteAutocommitTxnStarted_ = TRUE;
               }
 #endif
 
@@ -763,19 +763,19 @@ short ExTupleFlowTcb::work()
             // insert Q_SQLERROR into the parent up queue
             if ((pstate.srcEOD_ == TRUE)  &&  !pstate.tgtRequests_)
               {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
                 // An error or cancellation has drained both children. Discard
                 // every row staged by this implicit statement transaction.
-                if (localLiteAutocommitTxnStarted_)
+                if (liteAutocommitTxnStarted_)
                   {
                     std::string error;
-                    LocalLiteTxnManager::rollback(
-                        localLiteTxnContext(getGlobals()), &error);
-                    localLiteAutocommitTxnStarted_ = FALSE;
+                    LiteTxnManager::rollback(
+                        liteTxnContext(getGlobals()), &error);
+                    liteAutocommitTxnStarted_ = FALSE;
                     ExMasterStmtGlobals *master = getGlobals()->
                       castToExExeStmtGlobals()->castToExMasterStmtGlobals();
                     if (master)
-                      master->setRowsAffected(localLiteRowsAffectedBefore_);
+                      master->setRowsAffected(liteRowsAffectedBefore_);
                   }
 #endif
 	        pstate.step_ = DONE_; 
@@ -790,19 +790,19 @@ short ExTupleFlowTcb::work()
 	    if (qParent_.up->isFull())
 	      return WORK_OK;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
             // Publish only after all source rows and target replies completed.
-            if (localLiteAutocommitTxnStarted_)
+            if (liteAutocommitTxnStarted_)
               {
                 std::string error;
-                if (!LocalLiteTxnManager::commit(
-                        localLiteTxnContext(getGlobals()), &error))
+                if (!LiteTxnManager::commit(
+                        liteTxnContext(getGlobals()), &error))
                   {
-                    localLiteAutocommitTxnStarted_ = FALSE;
+                    liteAutocommitTxnStarted_ = FALSE;
                     ExMasterStmtGlobals *master = getGlobals()->
                       castToExExeStmtGlobals()->castToExMasterStmtGlobals();
                     if (master)
-                      master->setRowsAffected(localLiteRowsAffectedBefore_);
+                      master->setRowsAffected(liteRowsAffectedBefore_);
 
                     ex_queue_entry *upEntry = qParent_.up->getTailEntry();
                     upEntry->copyAtp(pentry_down);
@@ -826,7 +826,7 @@ short ExTupleFlowTcb::work()
                     qParent_.up->insert();
                     return WORK_CALL_AGAIN;
                   }
-                localLiteAutocommitTxnStarted_ = FALSE;
+                liteAutocommitTxnStarted_ = FALSE;
               }
 #endif
 	    

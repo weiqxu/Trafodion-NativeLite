@@ -79,7 +79,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #define NA_LINUX_LLVMJIT
 #endif
 #undef  NA_LINUX_LIBJIT

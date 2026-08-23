@@ -858,7 +858,7 @@ short sqInit()
 
     try
     {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
       short retcode = my_mpi_setup(&largc, &largv);
 #endif
       QRLogger::initLog4cxx(QRLogger::QRL_MXEXE);

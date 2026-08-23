@@ -24,7 +24,7 @@
 #include "Platform.h"
 #include "ExpPCodeOptimizations.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 
 void PCodeCfg::NExLog(const char *)
 {
@@ -46,8 +46,8 @@ void PCodeCfg::layoutNativeCode(Space *showplanSpace)
 
   if (showplanSpace)
     showplanSpace->allocateAndCopyToAlignedSpace(
-        "Native Expression is disabled in local-lite.\n",
-        sizeof("Native Expression is disabled in local-lite.\n"),
+        "Native Expression is disabled in lite.\n",
+        sizeof("Native Expression is disabled in lite.\n"),
         sizeof(short));
 }
 

@@ -3474,7 +3474,7 @@ void IpcGuardianServer::stop()
     
     if (!guaRetcode)
     {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
       msg_mon_stop_process_name(phandle.getPhandleString());
 #endif
     }
@@ -4216,7 +4216,7 @@ NABoolean IpcGuardianServer::serverDied()
   Int32 pnameLen = ph.toAscii(pname, PhandleStringLen);
   pname[pnameLen] = '\0';
   int nid, pid;
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   SB_Verif_Type verifier;
   int rc = msg_mon_get_process_info2(pname, &nid, &pid, &verifier);
   return rc != 0 ;

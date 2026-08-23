@@ -84,7 +84,7 @@
 #include "arkcmp_proc.h"
 #include "CmpContext.h"
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HiveClient_JNI.h"
 #endif
 
@@ -2028,7 +2028,7 @@ RETCODE Statement::doHiveTableSimCheck(TrafSimilarityTableInfo *si,
   if ((si->hdfsRootDir() == NULL) || (si->modTS() == -1))
     return SUCCESS;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   return SUCCESS;
 #else
  

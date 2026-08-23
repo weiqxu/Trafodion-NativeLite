@@ -1,0 +1,97 @@
+>>CREATE TABLE LITEREG019_HEX_SOURCE
++>  (id INT PRIMARY KEY,
++>   hex_txt VARCHAR(16));
+--- SQL operation complete.
+>>INSERT INTO LITEREG019_HEX_SOURCE VALUES
++>  (1, '616263'),
++>  (2, ''),
++>  (3, '4120'),
++>  (4, NULL);
+--- 4 row(s) inserted.
+>>SELECT CONVERTTOHEX(CONVERTFROMHEX('416230')) AS literal_roundtrip,
++>       CONVERTTOHEX(CONVERTFROMHEX('007F80FFA0')) AS boundary_roundtrip
++>  FROM (VALUES (1)) AS v(n);
+LITERAL_ROUNDTRIP  BOUNDARY_ROUNDTRIP
+-----------------  ------------------
+416230             007F80FFA0
+--- 1 row(s) selected.
+>>SELECT id,
++>       CONVERTTOHEX(CONVERTFROMHEX(hex_txt)) AS roundtrip_hex,
++>       CHAR_LENGTH(CONVERTFROMHEX(hex_txt)) AS decoded_len
++>  FROM LITEREG019_HEX_SOURCE
++> ORDER BY id;
+ID           ROUNDTRIP_HEX     DECODED_LEN
+-----------  ----------------  -----------
+          1  616263                      3
+          2                              0
+          3  4120                        2
+          4  ?                           ?
+--- 4 row(s) selected.
+>>CREATE TABLE LITEREG019_DECODED
++>  (id INT PRIMARY KEY,
++>   decoded VARCHAR(8));
+--- SQL operation complete.
+>>INSERT INTO LITEREG019_DECODED
++>SELECT id, CONVERTFROMHEX(hex_txt)
++>  FROM LITEREG019_HEX_SOURCE;
+--- 4 row(s) inserted.
+>>SELECT id,
++>       CONVERTTOHEX(decoded) AS decoded_hex,
++>       CHAR_LENGTH(decoded) AS decoded_len
++>  FROM LITEREG019_DECODED
++> ORDER BY id;
+ID           DECODED_HEX       DECODED_LEN
+-----------  ----------------  -----------
+          1  616263                      3
+          2                              0
+          3  4120                        2
+          4  ?                           ?
+--- 4 row(s) selected.
+>>SELECT id
++>  FROM LITEREG019_HEX_SOURCE
++> WHERE CONVERTFROMHEX(hex_txt) = 'abc'
++> ORDER BY id;
+ID
+-----------
+          1
+--- 1 row(s) selected.
+>>SELECT CONVERTTOHEX(CONVERTFROMHEX(hex_txt)) AS bad_second_digit
++>  FROM (VALUES ('0G')) AS bad_hex(hex_txt);
+*** ERROR[8428]
+*** ERROR[16001] No message found for SQLCODE -8428. CONVERTFROMHEX <MXID>
+--- 0 row(s) selected.
+>>SELECT CONVERTTOHEX(CONVERTFROMHEX(hex_txt)) AS bad_first_digit
++>  FROM (VALUES ('G0')) AS bad_hex(hex_txt);
+*** ERROR[8428]
+*** ERROR[16001] No message found for SQLCODE -8428. CONVERTFROMHEX <MXID>
+--- 0 row(s) selected.
+>>SELECT CONVERTTOHEX(CONVERTFROMHEX(CAST('ABC' AS VARCHAR(4))))
++>         AS odd_runtime_length
++>  FROM (VALUES (1)) AS v(n);
+*** ERROR[8428]
+*** ERROR[16001] No message found for SQLCODE -8428. CONVERTFROMHEX <MXID>
+--- 0 row(s) selected.
+>>SELECT CONVERTFROMHEX(CAST('ABC' AS CHAR(3))) AS odd_declared_length
++>  FROM (VALUES (1)) AS v(n);
+*** ERROR[4068]
+*** ERROR[16001] No message found for SQLCODE -4068. CONVERTFROMHEX <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT CONVERTFROMHEX(id) AS non_character_operand
++>  FROM LITEREG019_HEX_SOURCE
++> WHERE id = 1;
+*** ERROR[4043]
+*** ERROR[16001] No message found for SQLCODE -4043. CONVERTFROMHEX <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT COUNT(*) AS recovered_rows
++>  FROM LITEREG019_HEX_SOURCE;
+RECOVERED_ROWS
+--------------------
+                   4
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG019_DECODED;
+--- SQL operation complete.
+>>DROP TABLE LITEREG019_HEX_SOURCE;
+--- SQL operation complete.
+>>exit;

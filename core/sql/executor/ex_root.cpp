@@ -67,8 +67,8 @@
 #include "ExSMCommon.h"
 #include "ExpHbaseInterface.h"
 
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteRocksDBStore.h"
+#ifdef TRAF_LITE
+#include "LiteRocksDBStore.h"
 #endif
 
 ////////////////////////////////////////////////////////////////////////
@@ -336,11 +336,11 @@ ex_root_tcb::ex_root_tcb(
      cbCommStatus_(0),
       mayPinAudit_(false),
       mayLock_(false)
-#ifdef TRAF_LOCAL_LITE
-      , localLiteTxnContext_(NULL),
-      localLiteStatementOwner_(NULL),
-      localLiteStatementExecutionId_(0),
-      localLiteStatementActive_(FALSE)
+#ifdef TRAF_LITE
+      , liteTxnContext_(NULL),
+      liteStatementOwner_(NULL),
+      liteStatementExecutionId_(0),
+      liteStatementActive_(FALSE)
 #endif
 {
   tcbChild_ = &child_tcb;
@@ -451,31 +451,31 @@ ex_root_tcb::ex_root_tcb(
 
 }
 
-#ifdef TRAF_LOCAL_LITE
-void ex_root_tcb::beginLocalLiteStatement(ExExeStmtGlobals *glob)
+#ifdef TRAF_LITE
+void ex_root_tcb::beginLiteStatement(ExExeStmtGlobals *glob)
 {
-  endLocalLiteStatement();
-  localLiteTxnContext_ = glob->getContext()->getLocalLiteTxnContext();
-  localLiteStatementOwner_ = glob;
-  localLiteStatementExecutionId_ = glob->getExecutionCount();
-  LocalLiteTxnManager::beginStatement(localLiteTxnContext_,
-                                      localLiteStatementOwner_,
-                                      localLiteStatementExecutionId_);
-  localLiteStatementActive_ = TRUE;
+  endLiteStatement();
+  liteTxnContext_ = glob->getContext()->getLiteTxnContext();
+  liteStatementOwner_ = glob;
+  liteStatementExecutionId_ = glob->getExecutionCount();
+  LiteTxnManager::beginStatement(liteTxnContext_,
+                                      liteStatementOwner_,
+                                      liteStatementExecutionId_);
+  liteStatementActive_ = TRUE;
 }
 
-void ex_root_tcb::endLocalLiteStatement()
+void ex_root_tcb::endLiteStatement()
 {
-  if (!localLiteStatementActive_)
+  if (!liteStatementActive_)
     return;
 
-  LocalLiteTxnManager::endStatement(localLiteTxnContext_,
-                                    localLiteStatementOwner_,
-                                    localLiteStatementExecutionId_);
-  localLiteTxnContext_ = NULL;
-  localLiteStatementOwner_ = NULL;
-  localLiteStatementExecutionId_ = 0;
-  localLiteStatementActive_ = FALSE;
+  LiteTxnManager::endStatement(liteTxnContext_,
+                                    liteStatementOwner_,
+                                    liteStatementExecutionId_);
+  liteTxnContext_ = NULL;
+  liteStatementOwner_ = NULL;
+  liteStatementExecutionId_ = 0;
+  liteStatementActive_ = FALSE;
 }
 #endif
 
@@ -486,8 +486,8 @@ ex_root_tcb::~ex_root_tcb()
 
 void ex_root_tcb::freeResources()
 {
-#ifdef TRAF_LOCAL_LITE
-  endLocalLiteStatement();
+#ifdef TRAF_LITE
+  endLiteStatement();
 #endif
 
   if (workAtp_)
@@ -684,8 +684,8 @@ Int32 ex_root_tcb::execute(CliGlobals *cliGlobals,
 {
   Int32 jmpRc = 0;
 
-#ifdef TRAF_LOCAL_LITE
-  endLocalLiteStatement();
+#ifdef TRAF_LITE
+  endLiteStatement();
 #endif
 
   ExMasterStmtGlobals *master_glob = glob->castToExMasterStmtGlobals();
@@ -919,10 +919,10 @@ Int32 ex_root_tcb::execute(CliGlobals *cliGlobals,
 	  ExecuteId *uniqueExecuteId = (ExecuteId *)
 		  (entry->getAtp()->getTupp(2).getDataPointer() + root_tdb().getUniqueExecuteIdOffset());
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
           // There is no Guardian process handle in the standalone runtime.
           // PID plus root TCB address is sufficient to distinguish concurrent
-          // local executions within the single local-lite node.
+          // local executions within the single lite node.
           uniqueExecuteId->cpuNum = 0;
 #else
 	  uniqueExecuteId->cpuNum = glob->castToExExeStmtGlobals()->getIpcEnvironment()->getMyOwnProcessId(IPC_DOM_GUA_PHANDLE).getCpuNum();
@@ -967,8 +967,8 @@ Int32 ex_root_tcb::execute(CliGlobals *cliGlobals,
 
   master_glob->incExecutionCount();
 
-#ifdef TRAF_LOCAL_LITE
-  beginLocalLiteStatement(master_glob);
+#ifdef TRAF_LITE
+  beginLiteStatement(master_glob);
 #endif
 
   if (root_tdb().getQueryUsesSM() && cliGlobals->getEnvironment()->smEnabled())
@@ -1687,8 +1687,8 @@ Int32 ex_root_tcb::fetch(CliGlobals *cliGlobals,
 	  {
 	  completeOutstandingCancelMsgs();
 	  glob->testAllQueues();
-#ifdef TRAF_LOCAL_LITE
-          endLocalLiteStatement();
+#ifdef TRAF_LITE
+          endLiteStatement();
 #endif
 	  }
 
@@ -1978,8 +1978,8 @@ Int32 ex_root_tcb::oltExecute(ExExeStmtGlobals * glob,
 			    Descriptor * output_desc,
 			    ComDiagsArea*& diagsArea)
 {
-#ifdef TRAF_LOCAL_LITE
-  endLocalLiteStatement();
+#ifdef TRAF_LITE
+  endLiteStatement();
 #endif
 
   ExMasterStmtGlobals *master_glob = getGlobals()->
@@ -2043,9 +2043,9 @@ Int32 ex_root_tcb::oltExecute(ExExeStmtGlobals * glob,
           mStats, diagsArea) )
     return -1;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   master_glob->incExecutionCount();
-  beginLocalLiteStatement(master_glob);
+  beginLiteStatement(master_glob);
 #endif
 
   qchild.down->insert();
@@ -2205,8 +2205,8 @@ Int32 ex_root_tcb::oltExecute(ExExeStmtGlobals * glob,
 		  retcode = (Int32) diagsArea->mainSQLCODE();
 		}
 	    }
-#ifdef TRAF_LOCAL_LITE
-          endLocalLiteStatement();
+#ifdef TRAF_LITE
+          endLiteStatement();
 #endif
 	  return retcode;
 	}
@@ -2382,8 +2382,8 @@ Int32 ex_root_tcb::cancel(ExExeStmtGlobals * glob, ComDiagsArea *&diagsArea,
   {
     snapshotScanCleanup(diagsArea);
   }
-#ifdef TRAF_LOCAL_LITE
-  endLocalLiteStatement();
+#ifdef TRAF_LITE
+  endLiteStatement();
 #endif
   return 0;
 }
@@ -2531,8 +2531,8 @@ Int32 ex_root_tcb::fatal_error( ExExeStmtGlobals * glob,
                               ComDiagsArea*& diagsArea,
                               NABoolean noFatalDiags)
 {
-#ifdef TRAF_LOCAL_LITE
-  endLocalLiteStatement();
+#ifdef TRAF_LITE
+  endLiteStatement();
 #endif
 
   if (diagsArea)

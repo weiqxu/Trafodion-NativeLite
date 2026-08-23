@@ -1,0 +1,106 @@
+>>CREATE TABLE LITEREG020_HEX_ALIAS_SOURCE
++>  (id INT PRIMARY KEY,
++>   txt VARCHAR(8),
++>   hex_txt VARCHAR(16));
+--- SQL operation complete.
+>>INSERT INTO LITEREG020_HEX_ALIAS_SOURCE VALUES
++>  (1, 'Ab0', '416230'),
++>  (2, '', ''),
++>  (3, 'A ', '4120'),
++>  (4, NULL, NULL);
+--- 4 row(s) inserted.
+>>SELECT TO_HEX(CHAR(0) || CHAR(127) || CHAR(128) || CHAR(255) || CHAR(160))
++>         AS to_hex_boundary,
++>       HEX(CHAR(0) || CHAR(127) || CHAR(128) || CHAR(255) || CHAR(160))
++>         AS hex_boundary,
++>       CONVERTTOHEX(UNHEX('007F80FFA0')) AS unhex_boundary,
++>       CONVERTTOHEX(FROM_HEX('007F80FFA0')) AS from_hex_boundary
++>  FROM (VALUES (1)) AS v(n);
+TO_HEX_BOUNDARY  HEX_BOUNDARY  UNHEX_BOUNDARY  FROM_HEX_BOUNDARY
+---------------  ------------  --------------  -----------------
+007F80FFA0       007F80FFA0    007F80FFA0      007F80FFA0
+--- 1 row(s) selected.
+>>SELECT id,
++>       TO_HEX(txt) AS to_hex_value,
++>       HEX(txt) AS hex_value,
++>       CONVERTTOHEX(UNHEX(hex_txt)) AS unhex_value,
++>       CONVERTTOHEX(FROM_HEX(hex_txt)) AS from_hex_value
++>  FROM LITEREG020_HEX_ALIAS_SOURCE
++> ORDER BY id;
+ID           TO_HEX_VALUE      HEX_VALUE         UNHEX_VALUE       FROM_HEX_VALUE
+-----------  ----------------  ----------------  ----------------  ----------------
+          1  416230            416230            416230            416230
+          2
+          3  4120              4120              4120              4120
+          4  ?                 ?                 ?                 ?
+--- 4 row(s) selected.
+>>CREATE TABLE LITEREG020_HEX_ALIAS_TARGET
++>  (id INT PRIMARY KEY,
++>   to_hex_value VARCHAR(16),
++>   hex_value VARCHAR(16),
++>   unhex_value VARCHAR(8),
++>   from_hex_value VARCHAR(8));
+--- SQL operation complete.
+>>INSERT INTO LITEREG020_HEX_ALIAS_TARGET
++>SELECT id, TO_HEX(txt), HEX(txt), UNHEX(hex_txt), FROM_HEX(hex_txt)
++>  FROM LITEREG020_HEX_ALIAS_SOURCE;
+--- 4 row(s) inserted.
+>>SELECT id,
++>       to_hex_value,
++>       hex_value,
++>       CONVERTTOHEX(unhex_value) AS unhex_value,
++>       CONVERTTOHEX(from_hex_value) AS from_hex_value
++>  FROM LITEREG020_HEX_ALIAS_TARGET
++> ORDER BY id;
+ID           TO_HEX_VALUE      HEX_VALUE         UNHEX_VALUE       FROM_HEX_VALUE
+-----------  ----------------  ----------------  ----------------  ----------------
+          1  416230            416230            416230            416230
+          2
+          3  4120              4120              4120              4120
+          4  ?                 ?                 ?                 ?
+--- 4 row(s) selected.
+>>SELECT id
++>  FROM LITEREG020_HEX_ALIAS_SOURCE
++> WHERE TO_HEX(txt) = hex_txt
++> ORDER BY id;
+ID
+-----------
+          1
+          2
+          3
+--- 3 row(s) selected.
+>>SELECT id
++>  FROM LITEREG020_HEX_ALIAS_SOURCE
++> WHERE HEX(txt) = hex_txt
++> ORDER BY id;
+ID
+-----------
+          1
+          2
+          3
+--- 3 row(s) selected.
+>>SELECT id
++>  FROM LITEREG020_HEX_ALIAS_SOURCE
++> WHERE UNHEX(hex_txt) = txt
++> ORDER BY id;
+ID
+-----------
+          1
+          2
+          3
+--- 3 row(s) selected.
+>>SELECT id
++>  FROM LITEREG020_HEX_ALIAS_SOURCE
++> WHERE FROM_HEX(hex_txt) = txt
++> ORDER BY id;
+ID
+-----------
+          1
+          2
+          3
+--- 3 row(s) selected.
+>>DROP TABLE LITEREG020_HEX_ALIAS_TARGET;
+--- SQL operation complete.
+>>DROP TABLE LITEREG020_HEX_ALIAS_SOURCE;
+--- SQL operation complete.
+>>exit;

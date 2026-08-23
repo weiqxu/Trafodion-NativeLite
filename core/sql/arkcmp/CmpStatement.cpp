@@ -765,16 +765,16 @@ CmpStatement::process (const CmpMessageDDL& statement)
     }
 
   ReturnStatus status = CmpStatement_SUCCESS;
-  NABoolean localLiteStatsDDL = FALSE;
-#ifdef TRAF_LOCAL_LITE
+  NABoolean liteStatsDDL = FALSE;
+#ifdef TRAF_LITE
   if (statement.data())
     {
       const char *p = statement.data();
       while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-      localLiteStatsDDL = (strncasecmp(p, "UPDATE STATISTICS", 17) == 0);
+      liteStatsDDL = (strncasecmp(p, "UPDATE STATISTICS", 17) == 0);
     }
 #endif
-  if (statement.getCmpCompileInfo()->isHbaseDDL() || localLiteStatsDDL)
+  if (statement.getCmpCompileInfo()->isHbaseDDL() || liteStatsDDL)
     {
       CmpMain::ReturnStatus rs = CmpMain::SUCCESS;
       
@@ -806,25 +806,25 @@ CmpStatement::process (const CmpMessageDDL& statement)
 	}
       
       CMPASSERT(rRoot);
-#ifdef TRAF_LOCAL_LITE
-      DDLExpr *localLiteDDLExpr = NULL;
-      ExprNode *localLiteDDLNode = NULL;
+#ifdef TRAF_LITE
+      DDLExpr *liteDDLExpr = NULL;
+      ExprNode *liteDDLNode = NULL;
       if (rRoot->getChild(0))
         {
-          localLiteDDLExpr = (DDLExpr *)rRoot->getChild(0);
-          localLiteDDLNode = localLiteDDLExpr->getDDLNode();
+          liteDDLExpr = (DDLExpr *)rRoot->getChild(0);
+          liteDDLNode = liteDDLExpr->getDDLNode();
         }
-      if (localLiteDDLNode &&
-          (((localLiteDDLNode->castToStmtDDLNode() != NULL) &&
-            (localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLCreateTable() ||
-             localLiteDDLNode->castToStmtDDLNode()->castToStmtDDLDropTable())) ||
-           (localLiteDDLExpr && localLiteDDLExpr->isUstat())))
+      if (liteDDLNode &&
+          (((liteDDLNode->castToStmtDDLNode() != NULL) &&
+            (liteDDLNode->castToStmtDDLNode()->castToStmtDDLCreateTable() ||
+             liteDDLNode->castToStmtDDLNode()->castToStmtDDLDropTable())) ||
+           (liteDDLExpr && liteDDLExpr->isUstat())))
         {
-#ifdef TRAF_LOCAL_LITE
-          if (localLiteDDLExpr && localLiteDDLExpr->isUstat())
+#ifdef TRAF_LITE
+          if (liteDDLExpr && liteDDLExpr->isUstat())
             {
-              short localLiteStatsRC = CmpUpdateLocalLiteStatsText(statement.data());
-              if (localLiteStatsRC <= 0)
+              short liteStatsRC = CmpUpdateLiteStatsText(statement.data());
+              if (liteStatsRC <= 0)
                 {
                   Set_SqlParser_Flags(0);
                   return CmpStatement_SUCCESS;
@@ -832,19 +832,19 @@ CmpStatement::process (const CmpMessageDDL& statement)
             }
 #endif
           ExprNode *boundLocalDDL =
-            localLiteDDLNode->castToStmtDDLNode()->bindNode(&bindWA);
+            liteDDLNode->castToStmtDDLNode()->bindNode(&bindWA);
           CMPASSERT(boundLocalDDL);
           if (CmpCommon::diags()->getNumber(DgSqlCode::ERROR_))
             return CmpStatement_ERROR;
 
           CmpSeabaseDDL cmpSBD(heap_);
-          short localLiteDDLRC =
-            cmpSBD.executeSeabaseDDL(localLiteDDLExpr, boundLocalDDL,
+          short liteDDLRC =
+            cmpSBD.executeSeabaseDDL(liteDDLExpr, boundLocalDDL,
                                      currCatName, currSchName);
           // ExDDLTcb preserves embedded compiler diagnostics on the SUCCESS
-          // path. Returning ERROR here masks local-lite DDL diagnostics with a
+          // path. Returning ERROR here masks lite DDL diagnostics with a
           // generic compiler-server failure before SQLCI can display them.
-          if (localLiteDDLRC)
+          if (liteDDLRC)
             {
               Set_SqlParser_Flags(0);
               return CmpStatement_SUCCESS;
@@ -1119,11 +1119,11 @@ CmpStatement::process (const CmpMessageDescribe& statement)
 
   sqlTextStr_ = userStr;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   // SHOWDDL/SHOWSTATS normally bind through the Seabase catalog before
-  // CmpDescribe is called.  local-lite has no _MD_ catalog, so handle its
+  // CmpDescribe is called.  lite has no _MD_ catalog, so handle its
   // RocksDB metadata directly and keep the normal path for other objects.
-  if (CmpDescribeLocalLiteText(statement.data(), reply_->data(),
+  if (CmpDescribeLiteText(statement.data(), reply_->data(),
                                reply_->size(), reply_->outHeap()) == 0)
     {
       sqlTextStr_ = NULL;

@@ -1,0 +1,76 @@
+>>VALUES
++>  (DATE '2026-07-03', TIME '12:34:56',
++>   TIMESTAMP '2026-07-03 12:34:56.123456');
+(EXPR)      (EXPR)    (EXPR)
+----------  --------  --------------------------
+2026-07-03  12:34:56  2026-07-03 12:34:56.123456
+--- 1 row(s) selected.
+>>CREATE TABLE LITEREG004_MIXED
++>  (id INT PRIMARY KEY,
++>   v1 VARCHAR(12),
++>   n1 NUMERIC(9,2),
++>   d DATE,
++>   v2 VARCHAR(20),
++>   dec1 DECIMAL(7,3),
++>   ts TIMESTAMP,
++>   big1 NUMERIC(30,2),
++>   uq VARCHAR(16),
++>   tm TIME,
++>   v3 VARCHAR(8),
++>   UNIQUE(uq));
+--- SQL operation complete.
+>>INSERT INTO LITEREG004_MIXED VALUES
++>  (1, NULL, 12.34, DATE '2026-07-11', 'middle-one', -45.678,
++>   TIMESTAMP '2026-07-11 01:02:03',
++>   1234567890123456789012345678.90, 'unique-one', TIME '01:02:03', 'tail-1'),
++>  (2, 'front-two', -0.50, DATE '2026-07-12', NULL, 0.125,
++>   TIMESTAMP '2026-07-12 12:34:56',
++>   -1234567890123456789012345678.90, 'unique-two', TIME '12:34:56', NULL),
++>  (3, '', NULL, NULL, 'middle-three', NULL,
++>   NULL, NULL, NULL, NULL, 'tail-3');
+--- 3 row(s) inserted.
+>>SELECT id, v3, v2, v1
++>  FROM LITEREG004_MIXED
++>  ORDER BY id;
+ID           V3        V2                    V1
+-----------  --------  --------------------  ------------
+          1  tail-1    middle-one            ?
+          2  ?         ?                     front-two
+          3  tail-3    middle-three
+--- 3 row(s) selected.
+>>SELECT id, v1, n1, d, v2
++>  FROM LITEREG004_MIXED
++>  WHERE id = 2;
+ID           V1            N1            D           V2
+-----------  ------------  ------------  ----------  --------------------
+          2  front-two             -.50  2026-07-12  ?
+--- 1 row(s) selected.
+>>SELECT id, v3, dec1, ts
++>  FROM LITEREG004_MIXED
++>  WHERE uq = 'unique-one';
+ID           V3        DEC1       TS
+-----------  --------  ---------  --------------------------
+          1  tail-1      -45.678  2026-07-11 01:02:03.000000
+--- 1 row(s) selected.
+>>SELECT id, big1, tm
++>  FROM LITEREG004_MIXED
++>  ORDER BY id;
+ID           BIG1                              TM
+-----------  --------------------------------  --------
+          1   1234567890123456789012345678.90  01:02:03
+          2  -1234567890123456789012345678.90  12:34:56
+          3                                 ?  ?
+--- 3 row(s) selected.
+>>SELECT id, v2
++>  FROM LITEREG004_MIXED
++>  WHERE n1 BETWEEN -1.00 AND 20.00
++>    AND (v1 IS NULL OR v2 IS NULL)
++>  ORDER BY id;
+ID           V2
+-----------  --------------------
+          1  middle-one
+          2  ?
+--- 2 row(s) selected.
+>>DROP TABLE LITEREG004_MIXED;
+--- SQL operation complete.
+>>exit;

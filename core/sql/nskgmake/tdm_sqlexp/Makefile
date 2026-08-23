@@ -73,10 +73,10 @@ CPPSRC := BigNumHelper.cpp \
 	ExpSqlTupp.cpp \
 	Hbase_types.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 CPPSRC := $(filter-out ExpPCodeOptsNativeExpr.cpp ExpHbaseInterface.cpp,$(CPPSRC))
 CPPSRC += ExpPCodeOptsNativeExprStubs.cpp \
-	ExpHbaseInterfaceLocalLite.cpp
+	ExpHbaseInterfaceLite.cpp
 endif
 
 CPPSRC += exp_ieee.cpp
@@ -85,7 +85,7 @@ CPPSRC += exp_ieee.cpp
 CPPSRC += vers_libtdm_sqlexp.cpp
 DEFS := -D_IEEE_FLOAT -DHAVE_INTTYPES_H -DHAVE_NETINET_IN_H -D__STDC_CONSTANT_MACROS 
 
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 #
 LLVM_OBJ_DIR := $(LLVM)/$(SQ_BUILD_TYPE)/lib
 #

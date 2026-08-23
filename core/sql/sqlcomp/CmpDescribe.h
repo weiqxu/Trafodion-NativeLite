@@ -56,15 +56,15 @@ void sendParserFlag (ULng32 flag);
 
 short setParentQidAtSession(NAHeap *heap, const char *parentQid);
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 // Handles SHOWDDL/SHOWSTATS before the normal catalog binder is entered.
-// Returns 0 when the request was handled, 1 when it is not a local-lite
-// object, and -1 on a local-lite metadata error.
-short CmpDescribeLocalLiteText(const char *query,
+// Returns 0 when the request was handled, 1 when it is not a lite
+// object, and -1 on a lite metadata error.
+short CmpDescribeLiteText(const char *query,
                                char *&outbuf,
                                ULng32 &outbuflen,
                                CollHeap *heap);
-short CmpUpdateLocalLiteStatsText(const char *query);
+short CmpUpdateLiteStatsText(const char *query);
 #endif
 
 extern short CmpDescribeSeabaseTable ( 

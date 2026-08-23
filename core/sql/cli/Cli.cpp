@@ -91,8 +91,8 @@
 #include "LmRoutine.h"
 #include "CmpDDLCatErrorCodes.h"
 #include "ExpLOBaccess.h"
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteRocksDBStore.h"
+#ifdef TRAF_LITE
+#include "LiteRocksDBStore.h"
 #endif
 
 #define DISPLAY_DONE_WARNING 1032
@@ -10602,11 +10602,11 @@ Lng32 SQLCLI_SeqGenCliInterface
  void * seqGenAttrs
  )
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   SequenceGeneratorAttributes *localSga =
       static_cast<SequenceGeneratorAttributes *>(seqGenAttrs);
-  LocalLiteRocksDBStore localStore;
-  std::string localError;
+  LiteRocksDBStore liteStore;
+  std::string liteError;
   Int64 localNext = 0;
   Int64 localEnd = 0;
   // The legacy sequence contract persists one allocation per cache range, not
@@ -10614,12 +10614,12 @@ Lng32 SQLCLI_SeqGenCliInterface
   // persisted boundary through SHOWDDL and _MD_.SEQUENCES_VIEW.
   Int64 localCount = localSga->getSGCache() > 0
       ? localSga->getSGCache() : 1;
-    if (!localStore.allocateSequence(
+    if (!liteStore.allocateSequence(
           static_cast<uint64_t>(localSga->getSGObjectUID().get_value()),
           localCount, &localNext, &localEnd,
-          cliGlobals->currContext()->getLocalLiteTxnContext(), &localError))
+          cliGlobals->currContext()->getLiteTxnContext(), &liteError))
     {
-      Lng32 localCode = localError.find("MAXVALUE") != std::string::npos
+      Lng32 localCode = liteError.find("MAXVALUE") != std::string::npos
           ? 1579 : 1583;
       // ExFunctionSequenceValue raises the returned code at the expression
       // boundary.  Do not add a second diagnostic here.

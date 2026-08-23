@@ -769,7 +769,7 @@ short ExExeUtilCleanupVolatileTablesTcb::dropHiveTempTablesForCSEs()
           NAString dropHiveTable("drop table ");
 
           dropHiveTable += origTableName;
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
           if (HiveClient_JNI::executeHiveSQL(dropHiveTable.data()) != HVC_OK)
             ; // ignore errors for now
 #endif

@@ -1,0 +1,67 @@
+>>CREATE USER LITEREG041_BOB;
+>>CREATE ROLE LITEREG041_ROLE;
+>>CREATE TABLE LITEREG041_T (id INT PRIMARY KEY, v INT);
+--- SQL operation complete.
+>>INSERT INTO LITEREG041_T VALUES (1, 10);
+--- 1 row(s) inserted.
+>>GRANT SELECT, INSERT ON LITEREG041_T TO LITEREG041_ROLE;
+>>GRANT LITEREG041_ROLE TO LITEREG041_BOB;
+>>SET SESSION AUTHORIZATION LITEREG041_BOB;
+>>VALUES (CURRENT_USER, SESSION_USER, USER);
+(EXPR)                                                                                                                             (EXPR)                                                                                                                             (EXPR)
+---------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------
+LITEREG041_BOB                                                                                                                       LITEREG041_BOB                                                                                                                       LITEREG041_BOB
+--- 1 row(s) selected.
+>>SELECT id, v FROM LITEREG041_T;
+ID           V
+-----------  -----------
+          1           10
+--- 1 row(s) selected.
+>>INSERT INTO LITEREG041_T VALUES (2, 20);
+--- 1 row(s) inserted.
+>>PREPARE LITEREG041_P FROM SELECT id FROM LITEREG041_T ORDER BY id;
+--- SQL command prepared.
+>>EXECUTE LITEREG041_P;
+ID
+-----------
+          1
+          2
+--- 2 row(s) selected.
+>>SET SESSION AUTHORIZATION DB__ROOT;
+>>CREATE USER LITEREG041_OWNER;
+>>CREATE USER LITEREG041_OTHER;
+>>SET SESSION AUTHORIZATION LITEREG041_OWNER;
+>>CREATE TABLE LITEREG041_OWNED (id INT);
+--- SQL operation complete.
+>>INSERT INTO LITEREG041_OWNED VALUES (7);
+--- 1 row(s) inserted.
+>>SET SESSION AUTHORIZATION LITEREG041_OTHER;
+>>SELECT id FROM LITEREG041_OWNED;
+*** ERROR[lite] authorization denied for LITEREG041_OWNED
+>>DROP TABLE LITEREG041_OWNED;
+*** ERROR[lite] authorization denied for LITEREG041_OWNED
+>>SET SESSION AUTHORIZATION LITEREG041_OWNER;
+>>GRANT SELECT ON LITEREG041_OWNED TO LITEREG041_OTHER;
+>>SET SESSION AUTHORIZATION LITEREG041_OTHER;
+>>SELECT id FROM LITEREG041_OWNED;
+ID
+-----------
+          7
+--- 1 row(s) selected.
+>>SET SESSION AUTHORIZATION DB__ROOT;
+>>REVOKE SELECT ON LITEREG041_T FROM LITEREG041_ROLE;
+>>SET SESSION AUTHORIZATION LITEREG041_BOB;
+>>SELECT id FROM LITEREG041_T ORDER BY id;
+*** ERROR[lite] authorization denied for LITEREG041_T
+>>EXECUTE LITEREG041_P;
+*** ERROR[lite] authorization denied for LITEREG041_T
+>>SET SESSION AUTHORIZATION DB__ROOT;
+>>DROP TABLE LITEREG041_T;
+--- SQL operation complete.
+>>DROP TABLE LITEREG041_OWNED;
+--- SQL operation complete.
+>>DROP ROLE LITEREG041_ROLE;
+>>DROP USER LITEREG041_BOB;
+>>DROP USER LITEREG041_OWNER;
+>>DROP USER LITEREG041_OTHER;
+>>exit;

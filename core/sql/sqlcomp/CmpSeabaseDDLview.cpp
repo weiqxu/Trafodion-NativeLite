@@ -55,9 +55,9 @@
 #include "ExExeUtilCli.h"
 #include "Generator.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #include "Context.h"
-#include "LocalLiteRocksDBStore.h"
+#include "LiteRocksDBStore.h"
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -78,8 +78,8 @@ static bool checkAccessPrivileges(
    PrivMgrBitmap & privilegesBitmap,
    PrivMgrBitmap & grantableBitmap);
 
-#ifdef TRAF_LOCAL_LITE
-static uint64_t localLiteViewUid()
+#ifdef TRAF_LITE
+static uint64_t liteViewUid()
 {
   uint64_t uid = static_cast<uint64_t>(time(NULL));
   uid = (uid << 24) ^ static_cast<uint64_t>(getpid() & 0xffff);
@@ -87,18 +87,18 @@ static uint64_t localLiteViewUid()
   return uid ? uid : 1;
 }
 
-static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
+static bool liteCreateViewDefinition(StmtDDLCreateView *node,
                                           const NAString &catalog,
                                           const NAString &schema,
                                           const NAString &object,
                                           const NAString &viewText,
                                           const ElemDDLColDefArray &columns)
 {
-  LocalLiteTableDef view;
+  LiteTableDef view;
   view.catalog = catalog.data();
   view.schema = schema.data();
   view.name = object.data();
-  view.objectUid = localLiteViewUid();
+  view.objectUid = liteViewUid();
   view.view = true;
 
   view.viewText = viewText.data();
@@ -129,7 +129,7 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
       ComObjectName usedName(
           usedTables[i].getQualifiedNameObj().getQualifiedNameAsAnsiString(),
           usedTables[i].getAnsiNameSpace());
-      LocalLiteObjectRef dependency;
+      LiteObjectRef dependency;
       dependency.catalog =
           usedName.getCatalogNamePartAsAnsiString().data();
       dependency.schema =
@@ -145,7 +145,7 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
       ElemDDLColDef *column = columns[i];
       if (!column || !column->getColumnDataType())
         return false;
-      LocalLiteColumnDef localColumn;
+      LiteColumnDef localColumn;
       localColumn.name = column->getColumnName().data();
       NAString typeText;
       column->getColumnDataType()->getMyTypeAsText(&typeText, FALSE);
@@ -156,7 +156,7 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
       view.columns.push_back(localColumn);
     }
 
-  LocalLiteRocksDBStore store;
+  LiteRocksDBStore store;
   std::string error;
   bool exists = false;
   if (!store.tableExists(view.catalog, view.schema, view.name, &exists, &error))
@@ -171,7 +171,7 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
                               << DgString0(node->getViewName());
           return false;
         }
-      LocalLiteTableDef oldView;
+      LiteTableDef oldView;
       if (!store.loadTable(view.catalog, view.schema, view.name,
                            &oldView, &error) || !oldView.view)
         return false;
@@ -180,7 +180,7 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
       std::vector<std::string> added(view.columns.size());
       if (!store.alterTable(
               oldView, view, mapping, added,
-              GetCliGlobals()->currContext()->getLocalLiteTxnContext(),
+              GetCliGlobals()->currContext()->getLiteTxnContext(),
               &error))
         {
           *CmpCommon::diags() << DgSqlCode(-3242)
@@ -194,7 +194,7 @@ static bool localLiteCreateViewDefinition(StmtDDLCreateView *node,
   if (!store.createTable(
           view, &error,
           ComUser::getCurrentUsername(),
-          GetCliGlobals()->currContext()->getLocalLiteTxnContext()))
+          GetCliGlobals()->currContext()->getLiteTxnContext()))
     {
       *CmpCommon::diags() << DgSqlCode(-3242)
                           << DgString0((char *)error.c_str());
@@ -836,13 +836,13 @@ void CmpSeabaseDDL::createSeabaseView(
   const NAString extViewName = viewName.getExternalName(TRUE);
   const NAString extNameForHbase = catalogNamePart + "." + schemaNamePart + "." + objectNamePart;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   CmpCommon::diags()->clear();
   NAString localViewText;
   ElemDDLColDefArray localColumns(STMTHEAP);
   if (buildViewText(createViewNode, localViewText) == 0 &&
       buildViewColInfo(createViewNode, &localColumns) == 0)
-    localLiteCreateViewDefinition(createViewNode, catalogNamePart,
+    liteCreateViewDefinition(createViewNode, catalogNamePart,
                                   schemaNamePart, objectNamePart,
                                   localViewText, localColumns);
   return;
@@ -1288,36 +1288,36 @@ void CmpSeabaseDDL::dropSeabaseView(
 				    StmtDDLDropView * dropViewNode,
 				    NAString &currCatName, NAString &currSchName)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   CmpCommon::diags()->clear();
   ComObjectName localName(dropViewNode->getViewName());
   ComAnsiNamePart localCatalog(currCatName);
   ComAnsiNamePart localSchema(currSchName);
   localName.applyDefaults(localCatalog, localSchema);
-  LocalLiteRocksDBStore localStore;
-  std::string localError;
-  bool localExists = false;
+  LiteRocksDBStore liteStore;
+  std::string liteError;
+  bool liteExists = false;
   const std::string catalog = localName.getCatalogNamePartAsAnsiString().data();
   const std::string schema = localName.getSchemaNamePartAsAnsiString(TRUE).data();
   const std::string object = localName.getObjectNamePartAsAnsiString(TRUE).data();
-  if (!localStore.tableExists(catalog, schema, object, &localExists, &localError))
+  if (!liteStore.tableExists(catalog, schema, object, &liteExists, &liteError))
     *CmpCommon::diags() << DgSqlCode(-3242)
-                        << DgString0((char *)localError.c_str());
-  else if (!localExists && !dropViewNode->dropIfExists())
+                        << DgString0((char *)liteError.c_str());
+  else if (!liteExists && !dropViewNode->dropIfExists())
     *CmpCommon::diags() << DgSqlCode(-1389)
                         << DgString0(dropViewNode->getViewName());
-  else if (localExists)
+  else if (liteExists)
     {
-      std::vector<LocalLiteTableDef> tables;
-      if (!localStore.listTables("", "", &tables, &localError))
+      std::vector<LiteTableDef> tables;
+      if (!liteStore.listTables("", "", &tables, &liteError))
         {
           *CmpCommon::diags() << DgSqlCode(-3242)
-                              << DgString0((char *)localError.c_str());
+                              << DgString0((char *)liteError.c_str());
           return;
         }
-      std::vector<LocalLiteObjectRef> targets;
+      std::vector<LiteObjectRef> targets;
       std::vector<size_t> dependents;
-      LocalLiteObjectRef root;
+      LiteObjectRef root;
       root.catalog = catalog;
       root.schema = schema;
       root.name = object;
@@ -1338,15 +1338,15 @@ void CmpSeabaseDDL::dropSeabaseView(
                   if (dropViewNode->getDropBehavior() !=
                       COM_CASCADE_DROP_BEHAVIOR)
                     {
-                      localError = "local-lite view is referenced by " +
+                      liteError = "lite view is referenced by " +
                           tables[i].catalog + "." + tables[i].schema + "." +
                           tables[i].name;
                       *CmpCommon::diags() << DgSqlCode(-3242)
-                          << DgString0((char *)localError.c_str());
+                          << DgString0((char *)liteError.c_str());
                       return;
                     }
                   dependents.push_back(i);
-                  LocalLiteObjectRef next;
+                  LiteObjectRef next;
                   next.catalog = tables[i].catalog;
                   next.schema = tables[i].schema;
                   next.name = tables[i].name;
@@ -1355,19 +1355,19 @@ void CmpSeabaseDDL::dropSeabaseView(
                 }
           }
       for (size_t d = dependents.size(); d > 0; d--)
-        if (!localStore.dropTable(tables[dependents[d - 1]].catalog,
+        if (!liteStore.dropTable(tables[dependents[d - 1]].catalog,
                                   tables[dependents[d - 1]].schema,
                                   tables[dependents[d - 1]].name,
-                                  &localError))
+                                  &liteError))
           {
             *CmpCommon::diags() << DgSqlCode(-3242)
-                                << DgString0((char *)localError.c_str());
+                                << DgString0((char *)liteError.c_str());
             return;
           }
-      if (!localStore.dropTable(catalog, schema, object, &localError))
+      if (!liteStore.dropTable(catalog, schema, object, &liteError))
         {
           *CmpCommon::diags() << DgSqlCode(-3242)
-                              << DgString0((char *)localError.c_str());
+                              << DgString0((char *)liteError.c_str());
           return;
         }
       ActiveSchemaDB()->getNATableDB()->setCachingOFF();

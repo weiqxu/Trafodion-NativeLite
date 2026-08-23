@@ -1,0 +1,75 @@
+>>CREATE TABLE LITEREG008_DIAG
++>  (id INT PRIMARY KEY,
++>   grp INT,
++>   text_val VARCHAR(20),
++>   divisor INT);
+--- SQL operation complete.
+>>INSERT INTO LITEREG008_DIAG VALUES
++>  (1, 10, '12', 2),
++>  (2, 20, 'bad-number', 0),
++>  (3, 30, '40000', 5);
+--- 3 row(s) inserted.
+>>SELECT (SELECT id, grp FROM LITEREG008_DIAG WHERE id = 1) AS pair
++>  FROM (VALUES(1)) AS one_row(x);
+*** ERROR[4477]
+*** ERROR[16001] No message found for SQLCODE -4477. <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT id, MAX(grp)
++>  FROM LITEREG008_DIAG;
+*** ERROR[4021]
+*** ERROR[16001] No message found for SQLCODE -4021.      TRAFODION.SEABASE.LITEREG008_DIAG.ID <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT id
++>  FROM LITEREG008_DIAG
++>  WHERE MAX(grp) > 1;
+*** ERROR[4015]
+*** ERROR[16001] No message found for SQLCODE -4015. MAX(GRP) <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT (SELECT i.id
++>          FROM LITEREG008_DIAG AS i
++>         WHERE MAX(o.grp + i.grp) > 1)
++>  FROM LITEREG008_DIAG AS o;
+*** ERROR[4006]
+*** ERROR[16001] No message found for SQLCODE -4006. <MXID>
+*** ERROR[8822]
+*** ERROR[16001] No message found for SQLCODE -8822. <MXID>
+>>SELECT CAST(text_val AS INT) AS converted
++>  FROM LITEREG008_DIAG
++>  WHERE id = 1;
+CONVERTED
+-----------
+         12
+--- 1 row(s) selected.
+>>SELECT CAST(text_val AS INT) AS converted
++>  FROM LITEREG008_DIAG
++>  WHERE id = 2;
+*** ERROR[8413]
+*** ERROR[16001] No message found for SQLCODE -8413. 6261642d6e756d626572 <MXID>
+--- 0 row(s) selected.
+>>SELECT CAST(text_val AS SMALLINT) AS narrow_val
++>  FROM LITEREG008_DIAG
++>  WHERE id = 3;
+*** ERROR[8411]
+*** ERROR[16001] No message found for SQLCODE -8411.  Conversion of Source Type:VARCHAR(REC_BYTE_V_ASCII,5 BYTES,ISO88591) Source Value:40000 to Target Type:SMALLINT SIGNED(REC_BIN16_SIGNED). <MXID>
+--- 0 row(s) selected.
+>>SELECT grp / divisor AS quotient
++>  FROM LITEREG008_DIAG
++>  WHERE id = 2;
+*** ERROR[8419]
+*** ERROR[16001] No message found for SQLCODE -8419. <MXID>
+--- 0 row(s) selected.
+>>SELECT id, grp, text_val, divisor
++>  FROM LITEREG008_DIAG
++>  ORDER BY id;
+ID           GRP          TEXT_VAL              DIVISOR
+-----------  -----------  --------------------  -----------
+          1           10  12                              2
+          2           20  bad-number                      0
+          3           30  40000                           5
+--- 3 row(s) selected.
+>>DROP TABLE LITEREG008_DIAG;
+--- SQL operation complete.
+>>exit;

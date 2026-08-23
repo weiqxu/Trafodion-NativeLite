@@ -1,7 +1,7 @@
-#ifndef LOCAL_LITE_ZOOKEEPER_H_
-#define LOCAL_LITE_ZOOKEEPER_H_
+#ifndef LITE_ZOOKEEPER_H_
+#define LITE_ZOOKEEPER_H_
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 
 #include <stdint.h>
 
@@ -53,7 +53,7 @@ struct String_vector {
 
 static inline const char *zerror(int)
 {
-    return "ZooKeeper disabled in local-lite";
+    return "ZooKeeper disabled in lite";
 }
 
 #else

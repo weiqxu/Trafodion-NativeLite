@@ -247,7 +247,7 @@ short ExDDLTcb::work()
  	    }
 	}
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       if (!currContext->isEmbeddedArkcmpInitialized())
         {
           Int32 embeddedArkcmpSetup = currContext->switchToCmpContext((Int32)0);
@@ -288,7 +288,7 @@ short ExDDLTcb::work()
             currContext->exHeap()->deallocateMemory((void*)dummyReply);
           if (cpStatus == ExSqlComp::SUCCESS)
             {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
               if (currContext->getDiagsArea())
                 currContext->getDiagsArea()->clear();
               if (cpDiagsArea &&

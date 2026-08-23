@@ -24,15 +24,15 @@
 #include "ComTdbHbaseAccess.h"
 #include "ComTdbCommon.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 namespace {
 // The compiler still emits the legacy row-list objects for generic HBase
 // paths.  NativeLite treats their wire image as a private, layout-compatible
 // descriptor so the local TDB/TCB never depends on ComTdbHbaseAccess types.
-class LocalLiteScanRowsImage : public NAVersionedObject
+class LiteScanRowsImage : public NAVersionedObject
 {
 public:
-  LocalLiteScanRowsImage() : NAVersionedObject(-1) {}
+  LiteScanRowsImage() : NAVersionedObject(-1) {}
   NABasicPtr beginRowId_;
   NABasicPtr endRowId_;
   Lng32 beginKeyExclusive_;
@@ -40,10 +40,10 @@ public:
   QueuePtr colNames_;
   Int64 colTS_;
 };
-class LocalLiteGetRowsImage : public NAVersionedObject
+class LiteGetRowsImage : public NAVersionedObject
 {
 public:
-  LocalLiteGetRowsImage() : NAVersionedObject(-1) {}
+  LiteGetRowsImage() : NAVersionedObject(-1) {}
   QueuePtr rowIds_;
   QueuePtr colNames_;
   Int64 colTS_;
@@ -55,26 +55,26 @@ public:
 ComTdbHbaseAccess::ComTdbHbaseAccess():
  ComTdb(ComTdb::ex_HBASE_ACCESS, eye_HBASE_ACCESS)
 {
-#ifdef TRAF_LOCAL_LITE
-  localLiteBoundKeyInputCount_ = 0;
-  localLiteBoundKeyInputReserved_ = 0;
-  localLiteBoundUpdateInputCount_ = 0;
-  localLiteBoundUpdateInputReserved_ = 0;
-  for (UInt16 i = 0; i < MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
+#ifdef TRAF_LITE
+  liteBoundKeyInputCount_ = 0;
+  liteBoundKeyInputReserved_ = 0;
+  liteBoundUpdateInputCount_ = 0;
+  liteBoundUpdateInputReserved_ = 0;
+  for (UInt16 i = 0; i < MAX_LITE_BOUND_KEY_COLUMNS; i++)
     {
-      localLiteBoundKeyInputTuppIndex_[i] = 0;
-      localLiteBoundKeyInputOffset_[i] = 0;
-      localLiteBoundKeyInputLength_[i] = 0;
-      localLiteBoundUpdateInputTuppIndex_[i] = 0;
-      localLiteBoundUpdateInputOffset_[i] = 0;
-      localLiteBoundUpdateInputLength_[i] = 0;
+      liteBoundKeyInputTuppIndex_[i] = 0;
+      liteBoundKeyInputOffset_[i] = 0;
+      liteBoundKeyInputLength_[i] = 0;
+      liteBoundUpdateInputTuppIndex_[i] = 0;
+      liteBoundUpdateInputOffset_[i] = 0;
+      liteBoundUpdateInputLength_[i] = 0;
     }
 #endif
 };
 
-#ifdef TRAF_LOCAL_LITE
-ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan()
-  : ComTdb(ComTdb::ex_LOCAL_LITE_ROCKSDB_SCAN, eye_LOCAL_LITE_ROCKSDB_SCAN),
+#ifdef TRAF_LITE
+ComTdbLiteRocksdbScan::ComTdbLiteRocksdbScan()
+  : ComTdb(ComTdb::ex_LITE_ROCKSDB_SCAN, eye_LITE_ROCKSDB_SCAN),
     convertExpr_(NULL), scanExpr_(NULL), rowIdExpr_(NULL),
     workCriDesc_(NULL), tableName_(NULL), listOfScanRows_(NULL),
     listOfGetRows_(NULL), listOfFetchedColNames_(NULL),
@@ -91,7 +91,7 @@ ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan()
     }
 }
 
-ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan(
+ComTdbLiteRocksdbScan::ComTdbLiteRocksdbScan(
     char *tableName, ex_expr *convertExpr, ex_expr *scanExpr,
     ex_expr *rowIdExpr, UInt32 asciiRowLen, UInt32 convertRowLen,
     UInt32 rowIdLen, UInt32 rowIdAsciiRowLen, UInt16 asciiTuppIndex,
@@ -102,7 +102,7 @@ ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan(
     ex_cri_desc *criDescParentDown, ex_cri_desc *criDescParentUp,
     queue_index queueSizeDown, queue_index queueSizeUp,
     Cardinality expectedRows, Lng32 numBuffers, ULng32 bufferSize)
-  : ComTdb(ComTdb::ex_LOCAL_LITE_ROCKSDB_SCAN, eye_LOCAL_LITE_ROCKSDB_SCAN,
+  : ComTdb(ComTdb::ex_LITE_ROCKSDB_SCAN, eye_LITE_ROCKSDB_SCAN,
            expectedRows, criDescParentDown, criDescParentUp,
            queueSizeDown, queueSizeUp, numBuffers, bufferSize),
     convertExpr_(convertExpr), scanExpr_(scanExpr), rowIdExpr_(rowIdExpr),
@@ -125,7 +125,7 @@ ComTdbLocalLiteRocksdbScan::ComTdbLocalLiteRocksdbScan(
     }
 }
 
-const char *ComTdbLocalLiteRocksdbScan::getExpressionName(Int32 pos) const
+const char *ComTdbLiteRocksdbScan::getExpressionName(Int32 pos) const
 {
   switch (pos)
     {
@@ -136,7 +136,7 @@ const char *ComTdbLocalLiteRocksdbScan::getExpressionName(Int32 pos) const
     }
 }
 
-ex_expr *ComTdbLocalLiteRocksdbScan::getExpressionNode(Int32 pos)
+ex_expr *ComTdbLiteRocksdbScan::getExpressionNode(Int32 pos)
 {
   switch (pos)
     {
@@ -147,7 +147,7 @@ ex_expr *ComTdbLocalLiteRocksdbScan::getExpressionNode(Int32 pos)
     }
 }
 
-Long ComTdbLocalLiteRocksdbScan::pack(void *space)
+Long ComTdbLiteRocksdbScan::pack(void *space)
 {
   tableName_.pack(space);
   convertExpr_.pack(space);
@@ -161,8 +161,8 @@ Long ComTdbLocalLiteRocksdbScan::pack(void *space)
       listOfScanRows_->position();
       for (Lng32 i = 0; i < listOfScanRows_->numEntries(); i++)
         {
-          LocalLiteScanRowsImage *row =
-            static_cast<LocalLiteScanRowsImage *>(listOfScanRows_->getNext());
+          LiteScanRowsImage *row =
+            static_cast<LiteScanRowsImage *>(listOfScanRows_->getNext());
           row->beginRowId_.pack(space);
           row->endRowId_.pack(space);
           row->colNames_.pack(space);
@@ -175,8 +175,8 @@ Long ComTdbLocalLiteRocksdbScan::pack(void *space)
       listOfGetRows_->position();
       for (Lng32 i = 0; i < listOfGetRows_->numEntries(); i++)
         {
-          LocalLiteGetRowsImage *row =
-            static_cast<LocalLiteGetRowsImage *>(listOfGetRows_->getNext());
+          LiteGetRowsImage *row =
+            static_cast<LiteGetRowsImage *>(listOfGetRows_->getNext());
           row->rowIds_.pack(space);
           row->colNames_.pack(space);
         }
@@ -185,7 +185,7 @@ Long ComTdbLocalLiteRocksdbScan::pack(void *space)
   return ComTdb::pack(space);
 }
 
-Lng32 ComTdbLocalLiteRocksdbScan::unpack(void *base, void *reallocator)
+Lng32 ComTdbLiteRocksdbScan::unpack(void *base, void *reallocator)
 {
   if (tableName_.unpack(base)) return -1;
   if (convertExpr_.unpack(base, reallocator)) return -1;
@@ -199,8 +199,8 @@ Lng32 ComTdbLocalLiteRocksdbScan::unpack(void *base, void *reallocator)
       listOfScanRows_->position();
       for (Lng32 i = 0; i < listOfScanRows_->numEntries(); i++)
         {
-          LocalLiteScanRowsImage *row =
-            static_cast<LocalLiteScanRowsImage *>(listOfScanRows_->getNext());
+          LiteScanRowsImage *row =
+            static_cast<LiteScanRowsImage *>(listOfScanRows_->getNext());
           if (row->beginRowId_.unpack(base)) return -1;
           if (row->endRowId_.unpack(base)) return -1;
           if (row->colNames_.unpack(base, reallocator)) return -1;
@@ -212,8 +212,8 @@ Lng32 ComTdbLocalLiteRocksdbScan::unpack(void *base, void *reallocator)
       listOfGetRows_->position();
       for (Lng32 i = 0; i < listOfGetRows_->numEntries(); i++)
         {
-          LocalLiteGetRowsImage *row =
-            static_cast<LocalLiteGetRowsImage *>(listOfGetRows_->getNext());
+          LiteGetRowsImage *row =
+            static_cast<LiteGetRowsImage *>(listOfGetRows_->getNext());
           if (row->rowIds_.unpack(base, reallocator)) return -1;
           if (row->colNames_.unpack(base, reallocator)) return -1;
         }
@@ -396,19 +396,19 @@ ComTdbHbaseAccess::ComTdbHbaseAccess(
 
   pkeyColName_(pkeyColName)
 {
-#ifdef TRAF_LOCAL_LITE
-  localLiteBoundKeyInputCount_ = 0;
-  localLiteBoundKeyInputReserved_ = 0;
-  localLiteBoundUpdateInputCount_ = 0;
-  localLiteBoundUpdateInputReserved_ = 0;
-  for (UInt16 i = 0; i < MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
+#ifdef TRAF_LITE
+  liteBoundKeyInputCount_ = 0;
+  liteBoundKeyInputReserved_ = 0;
+  liteBoundUpdateInputCount_ = 0;
+  liteBoundUpdateInputReserved_ = 0;
+  for (UInt16 i = 0; i < MAX_LITE_BOUND_KEY_COLUMNS; i++)
     {
-      localLiteBoundKeyInputTuppIndex_[i] = 0;
-      localLiteBoundKeyInputOffset_[i] = 0;
-      localLiteBoundKeyInputLength_[i] = 0;
-      localLiteBoundUpdateInputTuppIndex_[i] = 0;
-      localLiteBoundUpdateInputOffset_[i] = 0;
-      localLiteBoundUpdateInputLength_[i] = 0;
+      liteBoundKeyInputTuppIndex_[i] = 0;
+      liteBoundKeyInputOffset_[i] = 0;
+      liteBoundKeyInputLength_[i] = 0;
+      liteBoundUpdateInputTuppIndex_[i] = 0;
+      liteBoundUpdateInputOffset_[i] = 0;
+      liteBoundUpdateInputLength_[i] = 0;
     }
 #endif
 };
@@ -526,19 +526,19 @@ ComTdbHbaseAccess::ComTdbHbaseAccess(
 
   pkeyColName_(NULL)
 {
-#ifdef TRAF_LOCAL_LITE
-  localLiteBoundKeyInputCount_ = 0;
-  localLiteBoundKeyInputReserved_ = 0;
-  localLiteBoundUpdateInputCount_ = 0;
-  localLiteBoundUpdateInputReserved_ = 0;
-  for (UInt16 i = 0; i < MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
+#ifdef TRAF_LITE
+  liteBoundKeyInputCount_ = 0;
+  liteBoundKeyInputReserved_ = 0;
+  liteBoundUpdateInputCount_ = 0;
+  liteBoundUpdateInputReserved_ = 0;
+  for (UInt16 i = 0; i < MAX_LITE_BOUND_KEY_COLUMNS; i++)
     {
-      localLiteBoundKeyInputTuppIndex_[i] = 0;
-      localLiteBoundKeyInputOffset_[i] = 0;
-      localLiteBoundKeyInputLength_[i] = 0;
-      localLiteBoundUpdateInputTuppIndex_[i] = 0;
-      localLiteBoundUpdateInputOffset_[i] = 0;
-      localLiteBoundUpdateInputLength_[i] = 0;
+      liteBoundKeyInputTuppIndex_[i] = 0;
+      liteBoundKeyInputOffset_[i] = 0;
+      liteBoundKeyInputLength_[i] = 0;
+      liteBoundUpdateInputTuppIndex_[i] = 0;
+      liteBoundUpdateInputOffset_[i] = 0;
+      liteBoundUpdateInputLength_[i] = 0;
     }
 #endif
 }

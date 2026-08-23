@@ -84,10 +84,10 @@
 #include "TrafDDLdesc.h"
 #include "CmpSeabaseDDL.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 #include "BigNumHelper.h"
 #include "IntervalType.h"
-#include "LocalLiteRocksDBStore.h"
+#include "LiteRocksDBStore.h"
 #include <ctype.h>
 #include <stdlib.h>
 #endif
@@ -95,7 +95,7 @@
 #define MAX_NODE_NAME 9
 
 #include "SqlParserGlobals.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HdfsClient_JNI.h"
 #endif
 
@@ -2851,15 +2851,15 @@ static NAString makeColumnName(const NATable *table,
   return nam;
 }
 
-#ifdef TRAF_LOCAL_LITE
-static char *localLiteCopyToHeap(const std::string &s, NAMemory *heap)
+#ifdef TRAF_LITE
+static char *liteCopyToHeap(const std::string &s, NAMemory *heap)
 {
   char *out = new (heap) char[s.size() + 1];
   strcpy(out, s.c_str());
   return out;
 }
 
-static TrafDesc *localLiteMakeKeyDesc(size_t keySeqNumber,
+static TrafDesc *liteMakeKeyDesc(size_t keySeqNumber,
                                       size_t tableColNumber,
                                       const std::string &columnName,
                                       size_t storageColumnNumber,
@@ -2870,19 +2870,19 @@ static TrafDesc *localLiteMakeKeyDesc(size_t keySeqNumber,
   keyDesc->keysDesc()->keyseqnumber = static_cast<Lng32>(keySeqNumber);
   keyDesc->keysDesc()->tablecolnumber = static_cast<Lng32>(tableColNumber);
   keyDesc->keysDesc()->setDescending(descending ? TRUE : FALSE);
-  keyDesc->keysDesc()->keyname = localLiteCopyToHeap(columnName, heap);
+  keyDesc->keysDesc()->keyname = liteCopyToHeap(columnName, heap);
   keyDesc->keysDesc()->hbaseColFam =
-      localLiteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
+      liteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
   char qual[32];
   snprintf(qual, sizeof(qual), "%lu",
            static_cast<unsigned long>(storageColumnNumber + 1));
-  keyDesc->keysDesc()->hbaseColQual = localLiteCopyToHeap(qual, heap);
+  keyDesc->keysDesc()->hbaseColQual = liteCopyToHeap(qual, heap);
   return keyDesc;
 }
 
-static bool localLiteAppendKeyDesc(TrafDesc **firstKeyDesc,
+static bool liteAppendKeyDesc(TrafDesc **firstKeyDesc,
                                    TrafDesc **lastKeyDesc,
-                                   const LocalLiteTableDef &table,
+                                   const LiteTableDef &table,
                                    size_t keySeqNumber,
                                    size_t tableColNumber,
                                    bool descending,
@@ -2891,14 +2891,14 @@ static bool localLiteAppendKeyDesc(TrafDesc **firstKeyDesc,
 {
   if (tableColNumber >= table.columns.size())
     {
-      *error = "invalid local-lite key metadata";
+      *error = "invalid lite key metadata";
       return false;
     }
 
   size_t descriptorColNumber =
       tableColNumber + ((!table.noSyskey &&
                          table.primaryKeyColumns.empty()) ? 1 : 0);
-  TrafDesc *keyDesc = localLiteMakeKeyDesc(
+  TrafDesc *keyDesc = liteMakeKeyDesc(
       keySeqNumber, descriptorColNumber, table.columns[tableColNumber].name,
       tableColNumber, descending, heap);
   if (!*firstKeyDesc)
@@ -2909,7 +2909,7 @@ static bool localLiteAppendKeyDesc(TrafDesc **firstKeyDesc,
   return true;
 }
 
-static std::string localLiteUpper(const std::string &s)
+static std::string liteUpper(const std::string &s)
 {
   std::string out = s;
   for (size_t i = 0; i < out.size(); i++)
@@ -2917,7 +2917,7 @@ static std::string localLiteUpper(const std::string &s)
   return out;
 }
 
-static bool localLiteStartsWithWord(const std::string &s, const char *word)
+static bool liteStartsWithWord(const std::string &s, const char *word)
 {
   size_t len = strlen(word);
   return s.size() >= len &&
@@ -2925,7 +2925,7 @@ static bool localLiteStartsWithWord(const std::string &s, const char *word)
          (s.size() == len || !isalnum(static_cast<unsigned char>(s[len])));
 }
 
-static Lng32 localLiteTypeArg(const std::string &type, Lng32 defaultValue)
+static Lng32 liteTypeArg(const std::string &type, Lng32 defaultValue)
 {
   size_t lparen = type.find('(');
   if (lparen == std::string::npos)
@@ -2936,7 +2936,7 @@ static Lng32 localLiteTypeArg(const std::string &type, Lng32 defaultValue)
   return value > 0 ? static_cast<Lng32>(value) : defaultValue;
 }
 
-static Lng32 localLiteSecondTypeArg(const std::string &type,
+static Lng32 liteSecondTypeArg(const std::string &type,
                                     Lng32 defaultValue)
 {
   size_t lparen = type.find('(');
@@ -2951,7 +2951,7 @@ static Lng32 localLiteSecondTypeArg(const std::string &type,
   return value >= 0 ? static_cast<Lng32>(value) : defaultValue;
 }
 
-static Lng32 localLiteNumericStorageSize(Lng32 precision)
+static Lng32 liteNumericStorageSize(Lng32 precision)
 {
   if (precision <= 2)
     return 1;
@@ -2962,12 +2962,12 @@ static Lng32 localLiteNumericStorageSize(Lng32 precision)
   return 8;
 }
 
-static bool localLiteTypeIsUnsigned(const std::string &type)
+static bool liteTypeIsUnsigned(const std::string &type)
 {
   return type.find("UNSIGNED") != std::string::npos;
 }
 
-static bool localLiteMapType(const std::string &typeText,
+static bool liteMapType(const std::string &typeText,
                              Int32 *datatype,
                              Lng32 *length,
                              Lng32 *precision,
@@ -2978,7 +2978,7 @@ static bool localLiteMapType(const std::string &typeText,
                              SQLCHARSET_CODE *charset,
                              Int16 *intervalLeadingPrec)
 {
-  std::string type = localLiteUpper(typeText);
+  std::string type = liteUpper(typeText);
   *precision = 0;
   *scale = 0;
   *dtStart = REC_DATE_UNKNOWN;
@@ -2992,69 +2992,69 @@ static bool localLiteMapType(const std::string &typeText,
   else if (type.find("CHARACTER SET UCS2") != std::string::npos)
     *charset = SQLCHARSETCODE_UCS2;
 
-  bool isUnsigned = localLiteTypeIsUnsigned(type);
+  bool isUnsigned = liteTypeIsUnsigned(type);
 
-  if (localLiteStartsWithWord(type, "TINYINT"))
+  if (liteStartsWithWord(type, "TINYINT"))
     {
       *datatype = isUnsigned ? REC_BIN8_UNSIGNED : REC_BIN8_SIGNED;
       *length = 1;
       return true;
     }
-  if (localLiteStartsWithWord(type, "SMALLINT"))
+  if (liteStartsWithWord(type, "SMALLINT"))
     {
       *datatype = isUnsigned ? REC_BIN16_UNSIGNED : REC_BIN16_SIGNED;
       *length = 2;
       return true;
     }
-  if (localLiteStartsWithWord(type, "INT") ||
-      localLiteStartsWithWord(type, "INTEGER"))
+  if (liteStartsWithWord(type, "INT") ||
+      liteStartsWithWord(type, "INTEGER"))
     {
       *datatype = isUnsigned ? REC_BIN32_UNSIGNED : REC_BIN32_SIGNED;
       *length = 4;
       return true;
     }
-  if (localLiteStartsWithWord(type, "LARGEINT") ||
-      localLiteStartsWithWord(type, "BIGINT"))
+  if (liteStartsWithWord(type, "LARGEINT") ||
+      liteStartsWithWord(type, "BIGINT"))
     {
       *datatype = isUnsigned ? REC_BIN64_UNSIGNED : REC_BIN64_SIGNED;
       *length = 8;
       return true;
     }
-  if (localLiteStartsWithWord(type, "REAL"))
+  if (liteStartsWithWord(type, "REAL"))
     {
       *datatype = REC_FLOAT32;
       *length = 4;
       return true;
     }
-  if (localLiteStartsWithWord(type, "FLOAT"))
+  if (liteStartsWithWord(type, "FLOAT"))
     {
-      *precision = localLiteTypeArg(type, 54);
+      *precision = liteTypeArg(type, 54);
       if (*precision < 1 || *precision > 54)
         return false;
       *datatype = *precision <= 22 ? REC_FLOAT32 : REC_FLOAT64;
       *length = *precision <= 22 ? 4 : 8;
       return true;
     }
-  if (localLiteStartsWithWord(type, "DOUBLE"))
+  if (liteStartsWithWord(type, "DOUBLE"))
     {
       *datatype = REC_FLOAT64;
       *length = 8;
       return true;
     }
-  if (localLiteStartsWithWord(type, "NUMERIC"))
+  if (liteStartsWithWord(type, "NUMERIC"))
     {
-      *precision = localLiteTypeArg(type, 18);
-      *scale = localLiteSecondTypeArg(type, 0);
+      *precision = liteTypeArg(type, 18);
+      *scale = liteSecondTypeArg(type, 0);
       if (*precision < 1 || *scale < 0 || *scale > *precision)
         return false;
-      bool isUnsigned = localLiteTypeIsUnsigned(type);
+      bool isUnsigned = liteTypeIsUnsigned(type);
       if (*precision > 18)
         {
           *datatype = isUnsigned ? REC_NUM_BIG_UNSIGNED : REC_NUM_BIG_SIGNED;
           *length = BigNumHelper::ConvPrecisionToStorageLengthHelper(*precision);
           return *length > 0;
         }
-      *length = localLiteNumericStorageSize(*precision);
+      *length = liteNumericStorageSize(*precision);
       switch (*length)
         {
         case 1:
@@ -3074,21 +3074,21 @@ static bool localLiteMapType(const std::string &typeText,
         }
       return true;
     }
-  if (localLiteStartsWithWord(type, "DECIMAL"))
+  if (liteStartsWithWord(type, "DECIMAL"))
     {
-      *precision = localLiteTypeArg(type, 18);
-      *scale = localLiteSecondTypeArg(type, 0);
+      *precision = liteTypeArg(type, 18);
+      *scale = liteSecondTypeArg(type, 0);
       if (*precision < 1 || *scale < 0 || *scale > *precision)
         return false;
-      *datatype = localLiteTypeIsUnsigned(type) ? REC_DECIMAL_UNSIGNED
+      *datatype = liteTypeIsUnsigned(type) ? REC_DECIMAL_UNSIGNED
                                                 : REC_DECIMAL_LSE;
       *length = *precision;
       return true;
     }
-  if (localLiteStartsWithWord(type, "VARCHAR") ||
-      localLiteStartsWithWord(type, "CHARACTER VARYING"))
+  if (liteStartsWithWord(type, "VARCHAR") ||
+      liteStartsWithWord(type, "CHARACTER VARYING"))
     {
-      Lng32 chars = localLiteTypeArg(type, 1);
+      Lng32 chars = liteTypeArg(type, 1);
       *datatype = *charset == SQLCHARSETCODE_UCS2
           ? REC_BYTE_V_DOUBLE : REC_BYTE_V_ASCII;
       *length = chars * (*charset == SQLCHARSETCODE_UTF8 ? 4 :
@@ -3096,10 +3096,10 @@ static bool localLiteMapType(const std::string &typeText,
       *precision = chars;
       return true;
     }
-  if (localLiteStartsWithWord(type, "CHAR") ||
-      localLiteStartsWithWord(type, "CHARACTER"))
+  if (liteStartsWithWord(type, "CHAR") ||
+      liteStartsWithWord(type, "CHARACTER"))
     {
-      Lng32 chars = localLiteTypeArg(type, 1);
+      Lng32 chars = liteTypeArg(type, 1);
       *datatype = *charset == SQLCHARSETCODE_UCS2
           ? REC_BYTE_F_DOUBLE : REC_BYTE_F_ASCII;
       *length = chars * (*charset == SQLCHARSETCODE_UTF8 ? 4 :
@@ -3107,36 +3107,36 @@ static bool localLiteMapType(const std::string &typeText,
       *precision = chars;
       return true;
     }
-  if (localLiteStartsWithWord(type, "LONG VARCHAR"))
+  if (liteStartsWithWord(type, "LONG VARCHAR"))
     {
       *datatype = REC_BYTE_V_ASCII_LONG;
-      *length = localLiteTypeArg(type, 2000);
+      *length = liteTypeArg(type, 2000);
       *precision = *length;
       return true;
     }
-  if (localLiteStartsWithWord(type, "BINARY"))
+  if (liteStartsWithWord(type, "BINARY"))
     {
       *datatype = REC_BINARY_STRING;
-      *length = localLiteTypeArg(type, 1);
+      *length = liteTypeArg(type, 1);
       *precision = *length;
       *charset = SQLCHARSETCODE_ISO88591;
       return true;
     }
-  if (localLiteStartsWithWord(type, "VARBINARY"))
+  if (liteStartsWithWord(type, "VARBINARY"))
     {
       *datatype = REC_VARBINARY_STRING;
-      *length = localLiteTypeArg(type, 1);
+      *length = liteTypeArg(type, 1);
       *precision = *length;
       *charset = SQLCHARSETCODE_ISO88591;
       return true;
     }
-  if (localLiteStartsWithWord(type, "BOOLEAN"))
+  if (liteStartsWithWord(type, "BOOLEAN"))
     {
       *datatype = REC_BOOLEAN;
       *length = 1;
       return true;
     }
-  if (localLiteStartsWithWord(type, "INTERVAL"))
+  if (liteStartsWithWord(type, "INTERVAL"))
     {
       struct IntervalPart { const char *word; rec_datetime_field field; };
       static const IntervalPart parts[] = {
@@ -3181,7 +3181,7 @@ static bool localLiteMapType(const std::string &typeText,
                                               *dtEnd, *dtFractPrec);
       return *length > 0;
     }
-  if (localLiteStartsWithWord(type, "DATE"))
+  if (liteStartsWithWord(type, "DATE"))
     {
       *datatype = REC_DATETIME;
       *length = 4;
@@ -3189,41 +3189,41 @@ static bool localLiteMapType(const std::string &typeText,
       *dtEnd = REC_DATE_DAY;
       return true;
     }
-  if (localLiteStartsWithWord(type, "TIME"))
+  if (liteStartsWithWord(type, "TIME"))
     {
       *datatype = REC_DATETIME;
       *length = 8;
       *dtStart = REC_DATE_HOUR;
       *dtEnd = REC_DATE_SECOND;
-      *dtFractPrec = static_cast<Int16>(localLiteTypeArg(type, 0));
+      *dtFractPrec = static_cast<Int16>(liteTypeArg(type, 0));
       return true;
     }
-  if (localLiteStartsWithWord(type, "TIMESTAMP"))
+  if (liteStartsWithWord(type, "TIMESTAMP"))
     {
       *datatype = REC_DATETIME;
       *length = 11;
       *dtStart = REC_DATE_YEAR;
       *dtEnd = REC_DATE_SECOND;
-      *dtFractPrec = static_cast<Int16>(localLiteTypeArg(type, 6));
+      *dtFractPrec = static_cast<Int16>(liteTypeArg(type, 6));
       return true;
     }
 
   return false;
 }
 
-static std::string localLiteFullName(const LocalLiteTableDef &table)
+static std::string liteFullName(const LiteTableDef &table)
 {
   return table.catalog + "." + table.schema + "." + table.name;
 }
 
-static std::string localLiteConstraintName(const LocalLiteTableDef &table,
+static std::string liteConstraintName(const LiteTableDef &table,
                                            const std::string &suffix)
 {
-  return localLiteFullName(table) + suffix;
+  return liteFullName(table) + suffix;
 }
 
-static TrafDesc *localLiteConstraintKeys(
-    const LocalLiteTableDef &table, const std::vector<size_t> &columns,
+static TrafDesc *liteConstraintKeys(
+    const LiteTableDef &table, const std::vector<size_t> &columns,
     NAMemory *heap, std::string *error)
 {
   TrafDesc *first = NULL;
@@ -3232,13 +3232,13 @@ static TrafDesc *localLiteConstraintKeys(
     {
       if (columns[i] >= table.columns.size())
         {
-          *error = "invalid local-lite constraint column metadata";
+          *error = "invalid lite constraint column metadata";
           return NULL;
         }
       TrafDesc *key =
           TrafAllocateDDLdesc(DESC_CONSTRNT_KEY_COLS_TYPE, heap);
       key->constrntKeyColsDesc()->colname =
-          localLiteCopyToHeap(table.columns[columns[i]].name, heap);
+          liteCopyToHeap(table.columns[columns[i]].name, heap);
       // TrafConstrntKeyColsDesc::position is the zero-based position in the
       // base table, not the ordinal position within the constraint.
       key->constrntKeyColsDesc()->position =
@@ -3250,18 +3250,18 @@ static TrafDesc *localLiteConstraintKeys(
   return first;
 }
 
-static TrafDesc *localLiteRefDesc(const std::string &constraint,
+static TrafDesc *liteRefDesc(const std::string &constraint,
                                   const std::string &table,
                                   NAMemory *heap)
 {
   TrafDesc *ref = TrafAllocateDDLdesc(DESC_REF_CONSTRNTS_TYPE, heap);
   ref->refConstrntsDesc()->constrntname =
-      localLiteCopyToHeap(constraint, heap);
-  ref->refConstrntsDesc()->tablename = localLiteCopyToHeap(table, heap);
+      liteCopyToHeap(constraint, heap);
+  ref->refConstrntsDesc()->tablename = liteCopyToHeap(table, heap);
   return ref;
 }
 
-static void localLiteAppendConstraint(TrafDesc **first, TrafDesc **last,
+static void liteAppendConstraint(TrafDesc **first, TrafDesc **last,
                                       TrafDesc *constraint)
 {
   if (!*first) *first = constraint;
@@ -3269,7 +3269,7 @@ static void localLiteAppendConstraint(TrafDesc **first, TrafDesc **last,
   *last = constraint;
 }
 
-static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
+static TrafDesc *liteCreateTableDescFromCatalog(const CorrName &corrName,
                                                      NAMemory *heap,
                                                      bool *found,
                                                      std::string *error)
@@ -3280,7 +3280,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   std::string catalog(qn.getCatalogName().data());
   std::string schema(qn.getSchemaName().data());
   std::string object(qn.getObjectName().data());
-  LocalLiteRocksDBStore store;
+  LiteRocksDBStore store;
   bool exists = false;
   if (!store.tableExists(catalog, schema, object, &exists, error))
     return NULL;
@@ -3297,7 +3297,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
         {
           // A standalone sequence is not a table descriptor, but the binder
           // still needs its generator descriptor for SEQNUM(sequence).
-          LocalLiteSequenceDef sequence;
+          LiteSequenceDef sequence;
           bool sequenceFound = false;
           if (!store.loadSequence(catalog, schema, object, &sequence,
                                   &sequenceFound, error))
@@ -3307,7 +3307,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
               TrafDesc *tableDesc =
                   TrafAllocateDDLdesc(DESC_TABLE_TYPE, heap);
               tableDesc->tableDesc()->tablename =
-                  localLiteCopyToHeap(object, heap);
+                  liteCopyToHeap(object, heap);
               tableDesc->tableDesc()->objectUID =
                   static_cast<Int64>(sequence.objectUid);
               tableDesc->tableDesc()->setObjectType(
@@ -3340,13 +3340,13 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       object = targetObject;
     }
 
-  LocalLiteTableDef table;
+  LiteTableDef table;
   if (!store.loadTable(catalog, schema, object, &table, error))
     return NULL;
   *found = true;
 
   TrafDesc *tableDesc = TrafAllocateDDLdesc(DESC_TABLE_TYPE, heap);
-  tableDesc->tableDesc()->tablename = localLiteCopyToHeap(table.name, heap);
+  tableDesc->tableDesc()->tablename = liteCopyToHeap(table.name, heap);
   tableDesc->tableDesc()->createTime = 0;
   tableDesc->tableDesc()->redefTime = 0;
   tableDesc->tableDesc()->cacheTime = 0;
@@ -3374,7 +3374,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
     {
       TrafDesc *syskeyDesc = TrafMakeColumnDesc(
           tableDesc->tableDesc()->tablename,
-          localLiteCopyToHeap("SYSKEY", heap),
+          liteCopyToHeap("SYSKEY", heap),
           colNumber,
           REC_BIN64_SIGNED,
           sizeof(Int64),
@@ -3384,12 +3384,12 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           heap);
       syskeyDesc->columnsDesc()->colclass = 'S';
       syskeyDesc->columnsDesc()->hbaseColFam =
-        localLiteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
+        liteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
       char syskeyQual[32];
       snprintf(syskeyQual, sizeof(syskeyQual), "%lu",
                static_cast<unsigned long>(table.columns.size() + 1));
       syskeyDesc->columnsDesc()->hbaseColQual =
-        localLiteCopyToHeap(syskeyQual, heap);
+        liteCopyToHeap(syskeyQual, heap);
       firstColumnDesc = syskeyDesc;
       lastColumnDesc = syskeyDesc;
     }
@@ -3405,16 +3405,16 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       Int16 dtFractPrec = 0;
       SQLCHARSET_CODE charset = SQLCHARSETCODE_ISO88591;
       Int16 intervalLeadingPrec = 0;
-      if (!localLiteMapType(table.columns[i].type, &datatype, &length,
+      if (!liteMapType(table.columns[i].type, &datatype, &length,
                             &precision, &scale, &dtStart, &dtEnd,
                             &dtFractPrec, &charset, &intervalLeadingPrec))
         {
-          *error = "unsupported local-lite column type in catalog: " +
+          *error = "unsupported lite column type in catalog: " +
                    table.columns[i].type;
           return NULL;
         }
 
-      char *columnName = localLiteCopyToHeap(table.columns[i].name, heap);
+      char *columnName = liteCopyToHeap(table.columns[i].name, heap);
       bool nullableForOptimizer = table.columns[i].nullable;
       for (size_t keyIndex = 0; keyIndex < table.primaryKeyColumns.size();
            keyIndex++)
@@ -3449,7 +3449,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           static_cast<ComColumnDefaultClass>(table.columns[i].defaultClass));
       if (!table.columns[i].division && !table.columns[i].defaultValue.empty())
         columnDesc->columnsDesc()->defaultvalue =
-          localLiteCopyToHeap(table.columns[i].defaultValue, heap);
+          liteCopyToHeap(table.columns[i].defaultValue, heap);
       if (table.columns[i].division)
         {
           columnDesc->columnsDesc()->colclass = 'S';
@@ -3458,15 +3458,15 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
             ? table.columns[i].defaultValue : table.columns[i].computedText;
           if (!computed.empty())
             columnDesc->columnsDesc()->computed_column_text =
-              localLiteCopyToHeap(computed, heap);
+              liteCopyToHeap(computed, heap);
         }
       columnDesc->columnsDesc()->setAdded(table.columns[i].added);
       columnDesc->columnsDesc()->hbaseColFam =
-        localLiteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
+        liteCopyToHeap(SEABASE_DEFAULT_COL_FAMILY, heap);
       char qual[32];
       snprintf(qual, sizeof(qual), "%lu", static_cast<unsigned long>(i + 1));
       columnDesc->columnsDesc()->hbaseColQual =
-        localLiteCopyToHeap(qual, heap);
+        liteCopyToHeap(qual, heap);
 
       if (!firstColumnDesc)
         firstColumnDesc = columnDesc;
@@ -3487,7 +3487,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
         SequenceGeneratorAttributes::genSequenceName(
             table.catalog.c_str(), table.schema.c_str(), table.name.c_str(),
             table.columns[i].name.c_str(), sequenceName);
-        LocalLiteSequenceDef sequence;
+        LiteSequenceDef sequence;
         bool sequenceFound = false;
         if (!store.loadSequence(table.catalog, table.schema,
                                 sequenceName.data(), &sequence,
@@ -3495,7 +3495,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           return NULL;
         if (!sequenceFound)
           {
-            *error = "missing local-lite identity sequence: " +
+            *error = "missing lite identity sequence: " +
                      table.catalog + "." + table.schema + "." +
                      sequenceName.data();
             return NULL;
@@ -3524,10 +3524,10 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       TrafDesc *viewDesc = TrafAllocateDDLdesc(DESC_VIEW_TYPE, heap);
       viewDesc->viewDesc()->viewname = tableDesc->tableDesc()->tablename;
       viewDesc->viewDesc()->viewfilename = tableDesc->tableDesc()->tablename;
-      viewDesc->viewDesc()->viewtext = localLiteCopyToHeap(table.viewText, heap);
+      viewDesc->viewDesc()->viewtext = liteCopyToHeap(table.viewText, heap);
       viewDesc->viewDesc()->viewtextcharset = CharInfo::UTF8;
       viewDesc->viewDesc()->viewchecktext = table.viewCheckText.empty()
-        ? NULL : localLiteCopyToHeap(table.viewCheckText, heap);
+        ? NULL : liteCopyToHeap(table.viewCheckText, heap);
       viewDesc->viewDesc()->setUpdatable(table.viewUpdatable ? TRUE : FALSE);
       viewDesc->viewDesc()->setInsertable(table.viewInsertable ? TRUE : FALSE);
       tableDesc->tableDesc()->views_desc = viewDesc;
@@ -3554,14 +3554,14 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
     {
       if (!table.noSyskey)
         {
-          firstKeyDesc = localLiteMakeKeyDesc(
+          firstKeyDesc = liteMakeKeyDesc(
               1, 0, "SYSKEY", table.columns.size(), false, heap);
           lastKeyDesc = firstKeyDesc;
           keyCount = 1;
         }
       for (size_t i = 0; i < table.storeByColumns.size(); i++)
         {
-          if (!localLiteAppendKeyDesc(&firstKeyDesc, &lastKeyDesc, table,
+          if (!liteAppendKeyDesc(&firstKeyDesc, &lastKeyDesc, table,
                                       i + (table.noSyskey ? 1 : 2),
                                       table.storeByColumns[i], false,
                                       heap, error))
@@ -3576,11 +3576,11 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           size_t tableColNumber = table.primaryKeyColumns[i];
           if (tableColNumber >= table.columns.size())
             {
-              *error = "invalid local-lite primary key metadata";
+              *error = "invalid lite primary key metadata";
               return NULL;
             }
 
-          if (!localLiteAppendKeyDesc(&firstKeyDesc,
+          if (!liteAppendKeyDesc(&firstKeyDesc,
                                       &lastKeyDesc,
                                       table,
                                       i + 1,
@@ -3602,7 +3602,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
         table.uniqueKeyColumns[uniqueIndex];
       if (uniqueColumns.empty())
         {
-          *error = "invalid local-lite unique key metadata";
+          *error = "invalid lite unique key metadata";
           return NULL;
         }
 
@@ -3631,7 +3631,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       std::vector<bool> keyColumnSeen(table.columns.size(), false);
       for (size_t i = 0; i < uniqueColumns.size(); i++, keySeq++)
         {
-          if (!localLiteAppendKeyDesc(&firstUniqueKeyDesc,
+          if (!liteAppendKeyDesc(&firstUniqueKeyDesc,
                                       &lastUniqueKeyDesc,
                                       table,
                                       keySeq,
@@ -3644,7 +3644,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
         }
       if (!table.noSyskey && table.primaryKeyColumns.empty())
         {
-          TrafDesc *syskeyKeyDesc = localLiteMakeKeyDesc(
+          TrafDesc *syskeyKeyDesc = liteMakeKeyDesc(
               keySeq, 0, "SYSKEY", table.columns.size(), false, heap);
           if (!firstUniqueKeyDesc)
             firstUniqueKeyDesc = syskeyKeyDesc;
@@ -3660,7 +3660,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
               size_t tableColNumber = table.primaryKeyColumns[i];
               if (keyColumnSeen[tableColNumber])
                 continue;
-              if (!localLiteAppendKeyDesc(&firstUniqueKeyDesc,
+              if (!liteAppendKeyDesc(&firstUniqueKeyDesc,
                                           &lastUniqueKeyDesc,
                                           table,
                                           keySeq,
@@ -3683,7 +3683,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
         {
           if (keyColumnSeen[i])
             continue;
-          if (!localLiteAppendKeyDesc(&firstNonKeyDesc,
+          if (!liteAppendKeyDesc(&firstNonKeyDesc,
                                       &lastNonKeyDesc,
                                       table,
                                       nonKeySeq++,
@@ -3702,11 +3702,11 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
   for (size_t secondaryIndex = 0;
        secondaryIndex < table.secondaryIndexes.size(); secondaryIndex++)
     {
-      const LocalLiteIndexDef &localIndex =
+      const LiteIndexDef &localIndex =
           table.secondaryIndexes[secondaryIndex];
       if (localIndex.keyColumns.empty())
         {
-          *error = "invalid local-lite secondary index metadata";
+          *error = "invalid lite secondary index metadata";
           return NULL;
         }
 
@@ -3714,7 +3714,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       secondaryDesc->indexesDesc()->tablename =
           tableDesc->tableDesc()->tablename;
       secondaryDesc->indexesDesc()->indexname =
-          localLiteCopyToHeap(localIndex.name, heap);
+          liteCopyToHeap(localIndex.name, heap);
       secondaryDesc->indexesDesc()->keytag = static_cast<Int32>(
           table.uniqueKeyColumns.size() + secondaryIndex + 1);
       secondaryDesc->indexesDesc()->indexUID =
@@ -3724,11 +3724,11 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       secondaryDesc->indexesDesc()->colcount =
           tableDesc->tableDesc()->colcount;
       secondaryDesc->indexesDesc()->blocksize = 4096;
-      // Local-lite enforces secondary-index uniqueness in the RocksDB
+      // Lite Storage enforces secondary-index uniqueness in the RocksDB
       // mutation path. Keep the optimizer descriptor non-unique so the
       // legacy HBase UPDATE code does not enter its delete/insert index-key
       // maintenance path; SELECT planning still reads the authoritative
-      // LocalLiteIndexDef metadata in GenPreCode.
+      // LiteIndexDef metadata in GenPreCode.
       secondaryDesc->indexesDesc()->setUnique(FALSE);
       secondaryDesc->indexesDesc()->setExplicit(TRUE);
       secondaryDesc->indexesDesc()->setRowFormat(COM_ALIGNED_FORMAT_TYPE);
@@ -3746,7 +3746,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       for (size_t i = 0; i < localIndex.keyColumns.size(); i++, keySeq++)
         {
           size_t tableColNumber = localIndex.keyColumns[i];
-          if (!localLiteAppendKeyDesc(
+          if (!liteAppendKeyDesc(
                   &firstSecondaryKeyDesc, &lastSecondaryKeyDesc, table,
                   keySeq, tableColNumber,
                   i < localIndex.descending.size() &&
@@ -3758,7 +3758,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
 
       if (!table.noSyskey && table.primaryKeyColumns.empty())
         {
-          TrafDesc *syskeyKeyDesc = localLiteMakeKeyDesc(
+          TrafDesc *syskeyKeyDesc = liteMakeKeyDesc(
               keySeq++, 0, "SYSKEY", table.columns.size(), false, heap);
           if (!firstSecondaryKeyDesc)
             firstSecondaryKeyDesc = syskeyKeyDesc;
@@ -3772,7 +3772,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
             size_t tableColNumber = table.primaryKeyColumns[i];
             if (keyColumnSeen[tableColNumber])
               continue;
-            if (!localLiteAppendKeyDesc(
+            if (!liteAppendKeyDesc(
                     &firstSecondaryKeyDesc, &lastSecondaryKeyDesc, table,
                     keySeq++, tableColNumber, false, heap, error))
               return NULL;
@@ -3787,7 +3787,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
         {
           if (keyColumnSeen[i])
             continue;
-          if (!localLiteAppendKeyDesc(&firstNonKeyDesc, &lastNonKeyDesc,
+          if (!liteAppendKeyDesc(&firstNonKeyDesc, &lastNonKeyDesc,
                                       table, nonKeySeq++, i, false, heap,
                                       error))
             return NULL;
@@ -3800,7 +3800,7 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
 
   TrafDesc *firstConstraintDesc = NULL;
   TrafDesc *lastConstraintDesc = NULL;
-  std::vector<LocalLiteTableDef> allTables;
+  std::vector<LiteTableDef> allTables;
   if ((table.objectUid < 1000000000000ULL ||
        table.objectUid >= 1000000000010ULL) &&
       !store.listTables("", "", &allTables, error))
@@ -3815,16 +3815,16 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
        table.objectUid >= 1000000000010ULL))
     {
       std::string constraintName = table.primaryKeyName.empty()
-          ? localLiteConstraintName(table, "_PK") : table.primaryKeyName;
+          ? liteConstraintName(table, "_PK") : table.primaryKeyName;
       TrafDesc *constraintDesc =
           TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
       TrafConstrntsDesc *constraint = constraintDesc->constrntsDesc();
-      constraint->constrntname = localLiteCopyToHeap(constraintName, heap);
-      constraint->tablename = localLiteCopyToHeap(localLiteFullName(table), heap);
+      constraint->constrntname = liteCopyToHeap(constraintName, heap);
+      constraint->tablename = liteCopyToHeap(liteFullName(table), heap);
       constraint->type = PRIMARY_KEY_CONSTRAINT;
       constraint->setEnforced(TRUE);
       constraint->colcount = static_cast<Int32>(table.primaryKeyColumns.size());
-      constraint->constr_key_cols_desc = localLiteConstraintKeys(
+      constraint->constr_key_cols_desc = liteConstraintKeys(
           table, table.primaryKeyColumns, heap, error);
       TrafDesc *lastRef = NULL;
       for (size_t t = 0; t < allTables.size(); t++)
@@ -3832,16 +3832,16 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           if (allTables[t].riConstraints[r].referencedConstraint ==
               constraintName)
             {
-              TrafDesc *ref = localLiteRefDesc(
+              TrafDesc *ref = liteRefDesc(
                   allTables[t].riConstraints[r].name,
-                  localLiteFullName(allTables[t]), heap);
+                  liteFullName(allTables[t]), heap);
               if (!constraint->referencing_constrnts_desc)
                 constraint->referencing_constrnts_desc = ref;
               else
                 lastRef->next = ref;
               lastRef = ref;
             }
-      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+      liteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
                                 constraintDesc);
     }
 
@@ -3849,18 +3849,18 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
     {
       std::string constraintName = u < table.uniqueKeyNames.size()
           ? table.uniqueKeyNames[u]
-          : localLiteConstraintName(
+          : liteConstraintName(
                 table, "_UK_" + std::to_string(u + 1));
       TrafDesc *constraintDesc =
           TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
       TrafConstrntsDesc *constraint = constraintDesc->constrntsDesc();
-      constraint->constrntname = localLiteCopyToHeap(constraintName, heap);
-      constraint->tablename = localLiteCopyToHeap(localLiteFullName(table), heap);
+      constraint->constrntname = liteCopyToHeap(constraintName, heap);
+      constraint->tablename = liteCopyToHeap(liteFullName(table), heap);
       constraint->type = UNIQUE_CONSTRAINT;
       constraint->setEnforced(TRUE);
       constraint->colcount =
           static_cast<Int32>(table.uniqueKeyColumns[u].size());
-      constraint->constr_key_cols_desc = localLiteConstraintKeys(
+      constraint->constr_key_cols_desc = liteConstraintKeys(
           table, table.uniqueKeyColumns[u], heap, error);
       TrafDesc *lastRef = NULL;
       for (size_t t = 0; t < allTables.size(); t++)
@@ -3868,31 +3868,31 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
           if (allTables[t].riConstraints[r].referencedConstraint ==
               constraintName)
             {
-              TrafDesc *ref = localLiteRefDesc(
+              TrafDesc *ref = liteRefDesc(
                   allTables[t].riConstraints[r].name,
-                  localLiteFullName(allTables[t]), heap);
+                  liteFullName(allTables[t]), heap);
               if (!constraint->referencing_constrnts_desc)
                 constraint->referencing_constrnts_desc = ref;
               else
                 lastRef->next = ref;
               lastRef = ref;
             }
-      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+      liteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
                                 constraintDesc);
     }
 
   for (size_t i = 0; i < table.checkConstraints.size(); i++)
     {
-      const LocalLiteCheckDef &localCheck = table.checkConstraints[i];
+      const LiteCheckDef &localCheck = table.checkConstraints[i];
       if (localCheck.name.empty() || localCheck.expression.empty())
         {
-          *error = "invalid local-lite check constraint metadata";
+          *error = "invalid lite check constraint metadata";
           return NULL;
         }
       TrafDesc *constraintDesc =
         TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
       constraintDesc->constrntsDesc()->constrntname =
-        localLiteCopyToHeap(localCheck.name, heap);
+        liteCopyToHeap(localCheck.name, heap);
       constraintDesc->constrntsDesc()->tablename =
         tableDesc->tableDesc()->tablename;
       constraintDesc->constrntsDesc()->type = CHECK_CONSTRAINT;
@@ -3901,32 +3901,32 @@ static TrafDesc *localLiteCreateTableDescFromCatalog(const CorrName &corrName,
       TrafDesc *checkDesc =
         TrafAllocateDDLdesc(DESC_CHECK_CONSTRNTS_TYPE, heap);
       checkDesc->checkConstrntsDesc()->constrnt_text =
-        localLiteCopyToHeap(localCheck.expression, heap);
+        liteCopyToHeap(localCheck.expression, heap);
       constraintDesc->constrntsDesc()->check_constrnts_desc = checkDesc;
 
-      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+      liteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
                                 constraintDesc);
     }
   for (size_t i = 0; i < table.riConstraints.size(); i++)
     {
-      const LocalLiteRIDef &ri = table.riConstraints[i];
+      const LiteRIDef &ri = table.riConstraints[i];
       TrafDesc *constraintDesc =
           TrafAllocateDDLdesc(DESC_CONSTRNTS_TYPE, heap);
       TrafConstrntsDesc *constraint = constraintDesc->constrntsDesc();
-      constraint->constrntname = localLiteCopyToHeap(ri.name, heap);
-      constraint->tablename = localLiteCopyToHeap(localLiteFullName(table), heap);
+      constraint->constrntname = liteCopyToHeap(ri.name, heap);
+      constraint->tablename = liteCopyToHeap(liteFullName(table), heap);
       constraint->type = REF_CONSTRAINT;
       constraint->setEnforced(TRUE);
       constraint->colcount = static_cast<Int32>(ri.referencingColumns.size());
-      constraint->constr_key_cols_desc = localLiteConstraintKeys(
+      constraint->constr_key_cols_desc = liteConstraintKeys(
           table, ri.referencingColumns, heap, error);
-      LocalLiteTableDef parent;
+      LiteTableDef parent;
       if (!store.loadTable(ri.referencedCatalog, ri.referencedSchema,
                            ri.referencedTable, &parent, error))
         return NULL;
-      constraint->referenced_constrnts_desc = localLiteRefDesc(
-          ri.referencedConstraint, localLiteFullName(parent), heap);
-      localLiteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
+      constraint->referenced_constrnts_desc = liteRefDesc(
+          ri.referencedConstraint, liteFullName(parent), heap);
+      liteAppendConstraint(&firstConstraintDesc, &lastConstraintDesc,
                                 constraintDesc);
     }
   tableDesc->tableDesc()->constrnts_desc = firstConstraintDesc;
@@ -5781,11 +5781,11 @@ NABoolean createNAFileSets(TrafDesc * table_desc       /*IN*/,
          break;
          case CHECK_CONSTRAINT:
            {
-#ifdef TRAF_LOCAL_LITE
-             // Local-lite keeps the original CHECK text in its RocksDB
+#ifdef TRAF_LITE
+             // Lite Storage keeps the original CHECK text in its RocksDB
              // catalog and evaluates it at the storage boundary.  Feeding
              // the text back through the native HBase CheckConstraint
-             // binder makes DATE predicates fail before local-lite DML is
+             // binder makes DATE predicates fail before lite DML is
              // entered, and also recreates the stale-tuple-offset problem
              // after ALTER ADD COLUMN.
              break;
@@ -6159,7 +6159,7 @@ NABoolean NATable::fetchObjectUIDForNativeTable(const CorrName& corrName,
        setIsSeabaseTable(corrName.isSeabase());
        setIsHbaseCellTable(corrName.isHbaseCell());
        setIsHbaseRowTable(corrName.isHbaseRow());
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
        setIsSeabaseMDTable(corrName.isSeabaseMD() &&
                            (table_desc->tableDesc()->objectUID <
                             1000000000000LL ||
@@ -9426,20 +9426,20 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
 	}
       else if (corrName.isSeabaseMD())
 	{
-#ifdef TRAF_LOCAL_LITE
-          bool localLiteFound = false;
-          std::string localLiteError;
-          tableDesc = localLiteCreateTableDescFromCatalog(
-              corrName, naTableHeap, &localLiteFound, &localLiteError);
-          if (!localLiteError.empty())
+#ifdef TRAF_LITE
+          bool liteFound = false;
+          std::string liteError;
+          tableDesc = liteCreateTableDescFromCatalog(
+              corrName, naTableHeap, &liteFound, &liteError);
+          if (!liteError.empty())
             {
               *CmpCommon::diags()
                 << DgSqlCode(-3242)
-                << DgString0((char *)localLiteError.c_str());
+                << DgString0((char *)liteError.c_str());
               bindWA->setErrStatus();
               return NULL;
             }
-          if (localLiteFound)
+          if (liteFound)
             {
               isSeabase = TRUE;
               isSeabaseMD = FALSE;
@@ -9483,23 +9483,23 @@ NATable * NATableDB::get(CorrName& corrName, BindWA * bindWA,
         {
           ComObjectType objectType = COM_BASE_TABLE_OBJECT;
           isSeabase = TRUE;
-#ifdef TRAF_LOCAL_LITE
-          bool localLiteFound = false;
-          std::string localLiteError;
+#ifdef TRAF_LITE
+          bool liteFound = false;
+          std::string liteError;
           if (!corrName.isSpecialTable() ||
               corrName.getSpecialType() == ExtendedQualName::TRIGTEMP_TABLE ||
               corrName.getSpecialType() == ExtendedQualName::SG_TABLE)
-            tableDesc = localLiteCreateTableDescFromCatalog(
-                corrName, naTableHeap, &localLiteFound, &localLiteError);
-          if (!tableDesc && !localLiteError.empty())
+            tableDesc = liteCreateTableDescFromCatalog(
+                corrName, naTableHeap, &liteFound, &liteError);
+          if (!tableDesc && !liteError.empty())
             {
               *CmpCommon::diags()
                 << DgSqlCode(-3242)
-                << DgString0((char *)localLiteError.c_str());
+                << DgString0((char *)liteError.c_str());
               bindWA->setErrStatus();
               return NULL;
             }
-          if (!localLiteFound)
+          if (!liteFound)
             {
 #else
           if (corrName.isSpecialTable())

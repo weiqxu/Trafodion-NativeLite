@@ -30,7 +30,7 @@
 #include "seabed/fs.h"
 #include "seabed/trace.h"
 #include "seabed/thread.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "javaobjectinterfacetm.h"
 #endif
 
@@ -46,11 +46,11 @@
 
 //==== For the JNI call to RMInterface.cleartransaction - begin
 #include <iostream>
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "jni.h"
 #endif
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 __thread JNIEnv* _tlp_jenv = NULL;
 __thread bool _tlv_jenv_set = false;
 #endif
@@ -2856,7 +2856,7 @@ void TMLIB::initialize()
 // -------------------------------------------------------------------
 int TMLIB::initJNI()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
     return JOI_ERROR_INIT_JNI;
 #else
     int lv_err = 0;
@@ -3194,7 +3194,7 @@ unsigned int TMLIB::new_tag()
 
 short TMLIB::setupJNI()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
    return JOI_ERROR_INIT_JNI;
 #else
    jclass lv_javaClass;
@@ -3248,7 +3248,7 @@ short TMLIB::setupJNI()
 ///////////////////////////////////////////////
 short TMLIB::initConnection(short pv_nid)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   (void) pv_nid;
   return JOI_ERROR_INIT_JNI;
 #else
@@ -3267,7 +3267,7 @@ short TMLIB::initConnection(short pv_nid)
 
 void TMLIB::cleanupTransactionLocal(long transactionID)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   (void) transactionID;
   return;
 #else
@@ -3288,7 +3288,7 @@ void TMLIB::cleanupTransactionLocal(long transactionID)
 
 short TMLIB::endTransactionLocal(long transactionID)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   (void) transactionID;
   return RET_EXCEPTION;
 #else
@@ -3315,7 +3315,7 @@ short TMLIB::endTransactionLocal(long transactionID)
 
 short TMLIB::abortTransactionLocal(long transactionID)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   (void) transactionID;
   return RET_EXCEPTION;
 #else

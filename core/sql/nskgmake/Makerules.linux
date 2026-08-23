@@ -141,7 +141,7 @@ LOG4CXX_INC=-I$(LOG4CXX_INC_DIR) -I$(LOG4CXX_INC_DIR)/log4cxx
 LOG4CXX_LIB=-llog4cxx
 LOG4CXX_SO=liblog4cxx*.so
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 ROCKSDB_INC_DIR ?= /usr/include
 ROCKSDB_LIB_DIR ?=
 ROCKSDB_INC := -I$(ROCKSDB_INC_DIR)
@@ -150,12 +150,12 @@ ROCKSDB_HEADER := $(firstword \
 	$(wildcard $(ROCKSDB_INC_DIR)/rocksdb/c.h) \
 	$(wildcard /usr/local/include/rocksdb/c.h))
 ifeq ($(ROCKSDB_HEADER),)
-$(error TRAF_LOCAL_LITE RocksDB local store requires RocksDB development headers. Install librocksdb-dev/rocksdb-devel or set ROCKSDB_INC_DIR=/path/to/include)
+$(error TRAF_LITE requires RocksDB development headers for Lite Storage. Install librocksdb-dev/rocksdb-devel or set ROCKSDB_INC_DIR=/path/to/include)
 endif
 endif
 
 # for now, include these libs (copied to our local lib dir) everywhere
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 # Internal SQL libraries included so BIND_NOW can resolve transitive
 # symbols in executables.  Not used in DLL links (see EXTERN_SYS_LIBS).
 GLOBAL_SYS_LIBS := $(THRIFT_LIB) $(LIBCURL_LIB) $(LOG4CXX_LIB) $(ROCKSDB_LIB) \
@@ -175,7 +175,7 @@ endif
 # EXECUTABLES defines the executables that are built for release and debug
 # builds.  Any flavor-specific targets can be added later in this makefile.
 EXECUTABLES= arkcmp sqlci arkesp tdm_udrserv mxlobsrvr sscp ssmp clitestdriver
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 EXECUTABLES := arkcmp sqlci nativelite_server nativelite_bulk_loader nativelite_client
 endif
 	# mxCompileUserModule mxsqlcfe mxsqlcofe sqlfe
@@ -215,8 +215,8 @@ SYS_DEFS := -DNA_LINUX -DSQ_LINUX -DNGG -D_M_DG -D_NSKFS_ -D_FULL_BUILD \
 
 SYS_DEFS += -DSQ_CPP_INTF
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-SYS_DEFS += -DTRAF_LOCAL_LITE
+ifeq ($(TRAF_LITE),1)
+SYS_DEFS += -DTRAF_LITE
 endif
 
 ifdef SQ_NEW_PHANDLE
@@ -239,11 +239,11 @@ SYS_INCLUDES += -I$(TRAF_HOME)/inc \
 	-I$(PROTOBUFS_INC) \
 	$(THRIFT_INC) $(LOG4CXX_INC) $(LIBCURL_INC)
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 SYS_INCLUDES += $(ROCKSDB_INC)
 endif
 
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 SYS_INCLUDES += -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux
 endif
 
@@ -293,7 +293,7 @@ endif
 
 # -short-wchar: Have the compiler treat wchar_t as a 2-byte character. 
 SYS_CXXFLAGS += -fshort-wchar -std=c++0x
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 SYS_CXXFLAGS += -Xlinker --copy-dt-needed-entries
 endif
 SYS_CXXFLAGS += -Wno-conversion-null
@@ -333,7 +333,7 @@ ifndef SQL_COMPILATION_WARNING_ACCEPTABLE
 SYS_WARNING_FLAG += -Werror
 endif
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 SYS_WARNING_FLAG += -Wno-format-overflow -Wno-format-truncation -Wno-stringop-overread
 SYS_WARNING_FLAG += -Wno-deprecated-declarations -Wno-format-security -Wno-pointer-arith
 endif
@@ -398,10 +398,10 @@ build_c_rule = $(compile_c_rule)
 
 ALL_EXE_LDFLAGS = $(ALL_CXXFLAGS) $(OPT_EXE_LDFLAGS)
 
-LOCAL_LITE_EARLY_DLLS = $(EARLY_DLLS)
+LITE_EARLY_DLLS = $(EARLY_DLLS)
 
 # link_exe defines how to link an executable for OSS
-link_exe = $(CXX) $(ALL_EXE_LDFLAGS) $(LOCAL_LITE_EARLY_DLLS) $(OBJ_PATHS) \
+link_exe = $(CXX) $(ALL_EXE_LDFLAGS) $(LITE_EARLY_DLLS) $(OBJ_PATHS) \
 	$(LOC_LIBS) $(EXTRA_LIBS) $(DEP_DLL_NAMES:%=-l%) \
 	$(DEP_LIB_NAMES:%=-l%) $(EXTERN_OBJS) $(SYS_LIBS) \
 	$(if $(NO_GLOBAL_SYS_LIBS),,$(GLOBAL_SYS_LIBS)) $(LINK_EXTERN_LIB) \
@@ -488,7 +488,7 @@ copytoolslibs:
 	cp -Pf $(LOG4CXX_LIB_DIR)/$(LOG4CXX_SO)* $(LIBROOT)
 	cp -Pf $(THRIFT_LIB_DIR)/$(THRIFT_SO)* $(LIBROOT)
 	cp -Pf $(THRIFT_LIB_DIR)/libthrift.so $(LIBROOT)
-ifneq ($(TRAF_LOCAL_LITE),1)
+ifneq ($(TRAF_LITE),1)
 	# if these are not found, then...
 	-cp -Pf $(HADOOP_BLD_LIB)/$(LIBHDFS_SO)* $(LIBROOT)
 	-cp -Pf $(HADOOP_BLD_LIB)/$(LIBHADOOP_SO)* $(LIBROOT)

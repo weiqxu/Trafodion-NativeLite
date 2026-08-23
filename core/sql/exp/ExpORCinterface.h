@@ -44,7 +44,7 @@
 #include "Collections.h"
 #include "NABasicObject.h"
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "OrcFileReader.h"
 #else
 class OrcFileReader;

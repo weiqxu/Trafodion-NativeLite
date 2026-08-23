@@ -62,9 +62,9 @@
 #include "SqlciError.h"
 #include "SQLCLIdev.h"
 #include "sqlcmd.h"
-#ifdef TRAF_LOCAL_LITE
-#include "LocalLiteSqlTable.h"
-#include "LocalLiteUdr.h"
+#ifdef TRAF_LITE
+#include "LiteSqlTable.h"
+#include "LiteUdr.h"
 #endif
 #include "sql_id.h"
 #include "ComSqlId.h"
@@ -2989,12 +2989,12 @@ short DML::process(SqlciEnv * sqlci_env)
   if (!isResultSet)
     HandleCLIErrorInit();
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if (!isResultSet)
     {
-      short localLiteRetcode = 0;
-      if (LocalLiteSqlTable_process(get_sql_stmt(), sqlci_env, &localLiteRetcode))
-        return localLiteRetcode;
+      short liteRetcode = 0;
+      if (LiteSqlTable_process(get_sql_stmt(), sqlci_env, &liteRetcode))
+        return liteRetcode;
     }
 #endif
 
@@ -3148,18 +3148,18 @@ short Prepare::process(SqlciEnv * sqlci_env)
   HandleCLIErrorInit();
   PrepStmt * prep_stmt;
 
-#ifdef TRAF_LOCAL_LITE
-  short localLiteUdrRetcode = 0;
-  if (LocalLiteUdr_prepare(get_sql_stmt(), this_stmt_name, sqlci_env,
-                           &localLiteUdrRetcode))
-    return localLiteUdrRetcode;
+#ifdef TRAF_LITE
+  short liteUdrRetcode = 0;
+  if (LiteUdr_prepare(get_sql_stmt(), this_stmt_name, sqlci_env,
+                           &liteUdrRetcode))
+    return liteUdrRetcode;
 #endif
 
-#ifdef TRAF_LOCAL_LITE
-  short localLiteAuthRetcode = 0;
-  if (!LocalLiteSqlTable_checkAuthorization(get_sql_stmt(), sqlci_env,
-                                            &localLiteAuthRetcode))
-    return localLiteAuthRetcode;
+#ifdef TRAF_LITE
+  short liteAuthRetcode = 0;
+  if (!LiteSqlTable_checkAuthorization(get_sql_stmt(), sqlci_env,
+                                            &liteAuthRetcode))
+    return liteAuthRetcode;
 #endif
 
   if (prep_stmt = sqlci_env->get_prep_stmts()->get(this_stmt_name))
@@ -3487,11 +3487,11 @@ short Execute::process(SqlciEnv * sqlci_env)
   HandleCLIErrorInit();
   PrepStmt * prep_stmt;
 
-#ifdef TRAF_LOCAL_LITE
-  short localLiteUdrRetcode = 0;
-  if (LocalLiteUdr_executePrepared(this_stmt_name, sqlci_env,
-                                   &localLiteUdrRetcode))
-    return localLiteUdrRetcode;
+#ifdef TRAF_LITE
+  short liteUdrRetcode = 0;
+  if (LiteUdr_executePrepared(this_stmt_name, sqlci_env,
+                                   &liteUdrRetcode))
+    return liteUdrRetcode;
 #endif
 
   if (!(prep_stmt = sqlci_env->get_prep_stmts()->get(this_stmt_name)))
@@ -3501,11 +3501,11 @@ short Execute::process(SqlciEnv * sqlci_env)
       return 0;
     }
 
-#ifdef TRAF_LOCAL_LITE
-  short localLiteAuthRetcode = 0;
-  if (!LocalLiteSqlTable_checkAuthorization(prep_stmt->getStr(), sqlci_env,
-                                            &localLiteAuthRetcode))
-    return localLiteAuthRetcode;
+#ifdef TRAF_LITE
+  short liteAuthRetcode = 0;
+  if (!LiteSqlTable_checkAuthorization(prep_stmt->getStr(), sqlci_env,
+                                            &liteAuthRetcode))
+    return liteAuthRetcode;
 #endif
 
   sqlci_env->getStats()->startStats(prep_stmt);

@@ -142,7 +142,7 @@ private:
    int setAndGetNid();
    static short unavailable(char *pp_errstr, int &pv_errstrlen)
    {
-      static const char lc_msg[] = "storage unavailable in local-lite";
+      static const char lc_msg[] = "storage unavailable in lite";
       int lv_copy_len = static_cast<int>(sizeof(lc_msg));
       if (pp_errstr && pv_errstrlen > 0)
       {

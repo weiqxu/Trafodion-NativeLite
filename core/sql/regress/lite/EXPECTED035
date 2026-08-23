@@ -1,0 +1,127 @@
+>>CREATE TABLE LITEREG035_DT
++>  (id INT NOT NULL PRIMARY KEY, d DATE, tm TIME, ts TIMESTAMP,
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG035_DT VALUES
++>  (1, DATE '1999-12-31', TIME '23:59:59',
++>      TIMESTAMP '1999-12-31 23:59:59.000000', 'old'),
++>  (2, DATE '2025-01-01', TIME '00:00:01',
++>      TIMESTAMP '2025-01-01 00:00:01.100000', 'new-year'),
++>  (3, DATE '2025-06-15', TIME '12:30:45',
++>      TIMESTAMP '2025-06-15 12:30:45.250000', 'summer'),
++>  (4, NULL, NULL, NULL, 'null-value');
+--- 4 row(s) inserted.
+>>CREATE INDEX LITEREG035_D_IX ON LITEREG035_DT(d);
+--- SQL operation complete.
+>>CREATE INDEX LITEREG035_TM_IX ON LITEREG035_DT(tm DESC);
+--- SQL operation complete.
+>>CREATE INDEX LITEREG035_TS_IX ON LITEREG035_DT(ts);
+--- SQL operation complete.
+>>SELECT id, label FROM LITEREG035_DT
++> WHERE d >= DATE '2025-01-01' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  new-year
+          3  summer
+--- 2 row(s) selected.
+>>SELECT id, label FROM LITEREG035_DT
++> WHERE tm < TIME '12:30:45' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  new-year
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG035_DT
++> WHERE ts = TIMESTAMP '2025-06-15 12:30:45.250000' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          3  summer
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG035_DT WHERE d IS NULL ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          4  null-value
+--- 1 row(s) selected.
+>>UPDATE LITEREG035_DT SET label = 'covered-update'
++> WHERE d = DATE '2025-01-01';
+--- 1 row(s) updated.
+>>SELECT id, label FROM LITEREG035_DT
++> WHERE d = DATE '2025-01-01' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  covered-update
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG035_DT;
+--- SQL operation complete.
+>>CREATE TABLE LITEREG035_NUM
++>  (id INT NOT NULL PRIMARY KEY, decv DECIMAL(8,2),
++>   bigv NUMERIC(30,2), label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG035_NUM VALUES
++>  (1, -100.25, -9999999999999999999999999999.99, 'negative'),
++>  (2, 0.00, 0.00, 'zero'),
++>  (3, 10.50, 1234567890123456789012345678.90, 'positive'),
++>  (4, NULL, NULL, 'null-value');
+--- 4 row(s) inserted.
+>>CREATE INDEX LITEREG035_DEC_IX ON LITEREG035_NUM(decv);
+--- SQL operation complete.
+>>CREATE INDEX LITEREG035_BIG_IX ON LITEREG035_NUM(bigv DESC);
+--- SQL operation complete.
+>>SELECT id, label FROM LITEREG035_NUM WHERE decv >= 0 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  zero
+          3  positive
+--- 2 row(s) selected.
+>>SELECT id, label FROM LITEREG035_NUM WHERE bigv < 0 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          1  negative
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG035_NUM
++> WHERE bigv = 1234567890123456789012345678.90 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          3  positive
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG035_NUM WHERE bigv IS NULL ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          4  null-value
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG035_NUM;
+--- SQL operation complete.
+>>CREATE TABLE LITEREG035_NULLS
++>  (id INT NOT NULL PRIMARY KEY, a INT, b INT, c INT,
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG035_NULLS VALUES
++>  (1, NULL, NULL, 1, 'both-null'),
++>  (2, NULL, 5, 10, 'null-range-low'),
++>  (3, NULL, 5, 20, 'null-range-high'),
++>  (4, 1, 5, 20, 'not-null');
+--- 4 row(s) inserted.
+>>CREATE INDEX LITEREG035_NULL_IX ON LITEREG035_NULLS(a, b, c);
+--- SQL operation complete.
+>>CREATE INDEX LITEREG035_A_IX ON LITEREG035_NULLS(a);
+--- SQL operation complete.
+>>SELECT id, label FROM LITEREG035_NULLS
++> WHERE a IS NULL AND b IS NULL ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          1  both-null
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG035_NULLS
++> WHERE a IS NULL AND b = 5 AND c > 10 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          3  null-range-high
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG035_NULLS
++> WHERE a IS NULL AND b = 5 AND c = 20 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          3  null-range-high
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG035_NULLS;
+--- SQL operation complete.
+>>exit;

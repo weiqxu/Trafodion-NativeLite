@@ -61,7 +61,7 @@
 #include "ExStats.h"
 #include "ExpSeqGen.h"
 #include "ssmpipc.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "hdfs.h"
 #include "HdfsClient_JNI.h"
 #else
@@ -822,9 +822,9 @@ public:
                             const char *delimiters, ULng32 delimsLen);
 
   ExTransaction * getTransaction()	{ return transaction_; }
-#ifdef TRAF_LOCAL_LITE
-  LocalLiteTxnContext *getLocalLiteTxnContext() const
-    { return transaction_->getLocalLiteTxnContext(); }
+#ifdef TRAF_LITE
+  LiteTxnContext *getLiteTxnContext() const
+    { return transaction_->getLiteTxnContext(); }
 #endif
 
   NABoolean &ddlStmtsExecuted() { return ddlStmtsExecuted_; }

@@ -53,7 +53,7 @@ CPPSRC := \
 	LmRoutineCppObj.cpp \
 	vers_libtdm_sqllangman.cpp
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 CPPSRC := $(filter-out \
 	JavaSplitter.cpp \
 	LmConnection.cpp \

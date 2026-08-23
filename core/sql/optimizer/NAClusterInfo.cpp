@@ -213,7 +213,7 @@ NAClusterInfo::NAClusterInfo(CollHeap * heap)
       Int32 nodeMax = 0;
       MS_Mon_Node_Info_Entry_Type *nodeInfo = NULL;
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       // Single-node cluster: node 0 is both aggregation and storage.
       cpuArray_.insertAt(0, 0);
       {

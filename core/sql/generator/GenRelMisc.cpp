@@ -499,14 +499,14 @@ short DDLExpr::codeGen(Generator * generator)
         ddl_tdb->setHbaseDDLNoUserXn(TRUE);
     }
 
-#ifdef TRAF_LOCAL_LITE
-  ExprNode * localLiteDDLNode = getDDLNode();
-  if (localLiteDDLNode &&
-      ((localLiteDDLNode->getOperatorType() == DDL_CREATE_TABLE) ||
-       (localLiteDDLNode->getOperatorType() == DDL_DROP_TABLE)))
+#ifdef TRAF_LITE
+  ExprNode * liteDDLNode = getDDLNode();
+  if (liteDDLNode &&
+      ((liteDDLNode->getOperatorType() == DDL_CREATE_TABLE) ||
+       (liteDDLNode->getOperatorType() == DDL_DROP_TABLE)))
     {
       ddl_tdb->setHbaseDDL(TRUE);
-      // Local-lite catalog DDL has its own bounded metadata boundary and was
+      // Lite Storage catalog DDL has its own bounded metadata boundary and was
       // already supported between BEGIN/COMMIT by the M10 CTAS contract.
       // Now that M11 keeps ExTransaction::xnInProgress() authoritative, do
       // not let the inherited HBase no-user-transaction flag reject it.
@@ -2641,7 +2641,7 @@ short RelRoot::codeGen(Generator * generator)
   // at runtime.
   // After parser support for REPEATABLE ACCESS, etc, is in, this
   // information will come from the parse tree for scans.
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   root_tdb->setTransactionNotReqd();
 #else
   if (generator->isTransactionNeeded())

@@ -1,0 +1,80 @@
+-- @@@ START COPYRIGHT @@@
+-- Licensed to the Apache Software Foundation (ASF) under one or more contributor
+-- license agreements. See the NOTICE file distributed with this work for
+-- additional information regarding copyright ownership. The ASF licenses this
+-- file to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+-- http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+-- WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+-- License for the specific language governing permissions and limitations under
+-- the License.
+-- @@@ END COPYRIGHT @@@
+
+-- Portable datetime-to-string coverage adapted from charsets/TEST313.
+CREATE TABLE LITEREG017_DATES
+  (id INT PRIMARY KEY,
+   d DATE);
+
+INSERT INTO LITEREG017_DATES VALUES
+  (1, DATE '2009-04-15'),
+  (2, DATE '2024-02-29'),
+  (3, DATE '2026-01-01'),
+  (4, NULL);
+
+-- Preserve all three deterministic DATEFORMAT styles.
+SELECT DATEFORMAT(DATE '2009-04-15', DEFAULT) AS default_fmt,
+       DATEFORMAT(DATE '2009-04-15', USA) AS usa_fmt,
+       DATEFORMAT(DATE '2009-04-15', EUROPEAN) AS european_fmt
+  FROM (VALUES (1)) AS v(n);
+
+-- Exercise persisted DATE values, a leap day, a year boundary, and NULL.
+SELECT id,
+       DATEFORMAT(d, USA) AS usa_fmt,
+       DAYNAME(d) AS day_name,
+       MONTHNAME(d) AS month_name
+  FROM LITEREG017_DATES
+ ORDER BY id;
+
+-- Assignment from generated CHAR values into persisted VARCHAR columns keeps
+-- the rendered values and NULL state.
+CREATE TABLE LITEREG017_DATE_TEXT
+  (id INT PRIMARY KEY,
+   formatted VARCHAR(20),
+   day_name VARCHAR(12),
+   month_name VARCHAR(12));
+
+INSERT INTO LITEREG017_DATE_TEXT
+SELECT id,
+       DATEFORMAT(d, EUROPEAN),
+       DAYNAME(d),
+       MONTHNAME(d)
+  FROM LITEREG017_DATES;
+
+SELECT id, formatted, day_name, month_name
+  FROM LITEREG017_DATE_TEXT
+ ORDER BY id;
+
+-- Each datetime-to-string function remains usable in a local-table predicate.
+SELECT id
+  FROM LITEREG017_DATES
+ WHERE DATEFORMAT(d, USA) = '04/15/2009'
+ ORDER BY id;
+
+SELECT id
+  FROM LITEREG017_DATES
+ WHERE DAYNAME(d) = 'Thursday'
+ ORDER BY id;
+
+SELECT id
+  FROM LITEREG017_DATES
+ WHERE MONTHNAME(d) = 'February'
+ ORDER BY id;
+
+DROP TABLE LITEREG017_DATE_TEXT;
+DROP TABLE LITEREG017_DATES;
+exit;

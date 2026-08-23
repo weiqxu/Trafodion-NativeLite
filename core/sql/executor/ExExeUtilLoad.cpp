@@ -69,7 +69,7 @@ using std::ofstream;
 #include "ExHbaseAccess.h"
 #include "ExpErrorEnums.h"
 #include "ExpLOBaccess.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "HdfsClient_JNI.h"
 #endif
 
@@ -137,11 +137,11 @@ short ExExeUtilCreateTableAsTcb::work()
 	  {
 	    NABoolean xnAlreadyStarted = ta->xnInProgress();
 
-	    // Native CTAS rejects LOAD under a user transaction. Local-lite
+	    // Native CTAS rejects LOAD under a user transaction. Lite Storage
 	    // always uses the regular INSERT ... SELECT path below and its M10
 	    // compatibility contract explicitly permits CTAS between
 	    // BEGIN/COMMIT, so the inherited sidetree restriction does not apply.
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 	    if (xnAlreadyStarted && !ctaTdb().noLoad())
 	      {
 		ExRaiseSqlError(getHeap(), &diagsArea_, -20123,
@@ -152,8 +152,8 @@ short ExExeUtilCreateTableAsTcb::work()
 #endif
 
 	    doSidetreeInsert_ = TRUE;
-#ifdef TRAF_LOCAL_LITE
-            // Local-lite tables are backed by RocksDB. The sidetree path
+#ifdef TRAF_LITE
+            // Lite Storage tables are backed by RocksDB. The sidetree path
             // compiles an UPSERT USING LOAD HBase access operator, so CTAS
             // must use its regular INSERT ... SELECT statement instead.
             doSidetreeInsert_ = FALSE;
@@ -1863,8 +1863,8 @@ ex_tcb * ExExeUtilHBaseBulkUnLoadTdb::build(ex_globals * glob)
 void ExExeUtilHBaseBulkUnLoadTcb::createHdfsFileError(Int32 hdfsClientRetCode)
 {
   ComDiagsArea * diagsArea = NULL;
-#ifdef TRAF_LOCAL_LITE
-  char *errorMsg = (char *)"HDFS bulk unload is not supported in local-lite builds";
+#ifdef TRAF_LITE
+  char *errorMsg = (char *)"HDFS bulk unload is not supported in lite builds";
   char *jniError = (char *)"";
 #else
   char* errorMsg = HdfsClient::getErrorText((HDFS_Client_RetCode)hdfsClientRetCode);
@@ -1889,7 +1889,7 @@ ExExeUtilHBaseBulkUnLoadTcb::ExExeUtilHBaseBulkUnLoadTcb(
        emptyTarget_(FALSE),
        oneFile_(FALSE)
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   ehi_ = NULL;
 #else
   ehi_ = ExpHbaseInterface::newInstance(getGlobals()->getDefaultHeap(),
@@ -2061,7 +2061,7 @@ short ExExeUtilHBaseBulkUnLoadTcb::getTrafodionScanTables()
 //////////////////////////////////////////////////////
 short ExExeUtilHBaseBulkUnLoadTcb::work()
 {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if (qparent_.down->isEmpty())
     return WORK_OK;
 
@@ -2072,7 +2072,7 @@ short ExExeUtilHBaseBulkUnLoadTcb::work()
   ExRaiseSqlError(getHeap(), &diagsArea_, -1190,
                   &retCode, NULL, NULL,
                   (char *)"ExExeUtilHBaseBulkUnLoadTcb::work()",
-                  (char *)"HBase bulk unload is not supported in local-lite builds",
+                  (char *)"HBase bulk unload is not supported in lite builds",
                   (char *)"");
   handleError();
   return WORK_OK;

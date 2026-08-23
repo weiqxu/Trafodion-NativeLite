@@ -70,7 +70,7 @@
 #include "ComExeTrace.h"
 #include "ComRtUtils.h"
 #include "ComSmallDefs.h"
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 #include "JavaObjectInterface.h"
 #endif
 
@@ -100,9 +100,9 @@ class LmLanguageManagerC;
 class LmLanguageManagerJava;
 extern CliGlobals *cli_globals;
 extern __thread ContextTidMap *tsCurrentContextMap;
-#ifdef TRAF_LOCAL_LITE
-void LocalLiteSetThreadDefaultSchema(const char *schema);
-const char *LocalLiteGetThreadDefaultSchema();
+#ifdef TRAF_LITE
+void LiteSetThreadDefaultSchema(const char *schema);
+const char *LiteGetThreadDefaultSchema();
 #endif
 static  pthread_key_t thread_key;
 
@@ -246,7 +246,7 @@ public:
   inline void setUncProcess() { isUncProcess_ = TRUE; }
   inline NABoolean isUncProcess() {return isUncProcess_;}
   NAHeap *getCurrContextHeap();
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   void setJniErrorStr(NAString errorStr) { setSqlJniErrorStr(errorStr);  }
   void setJniErrorStr(const char *errorStr)  { setSqlJniErrorStr(errorStr); }
   const char* getJniErrorStr() { return getSqlJniErrorStr(); }

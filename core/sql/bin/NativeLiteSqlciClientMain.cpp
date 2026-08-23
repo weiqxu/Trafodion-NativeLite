@@ -1,4 +1,4 @@
-// LocalLite SQLCI-style client for the reduced Trafodion Type 4 protocol.
+// Lite SQLCI-style client for the reduced Trafodion Type 4 protocol.
 
 #include <arpa/inet.h>
 #include <errno.h>

@@ -1819,7 +1819,7 @@ sql_cmd :
 
         |       ERRORtoken NUMBER COMMA GETtoken
                   { 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
                     if (getenv("TEST_SCHEMA_NAME") != NULL)
                       $$ = new Error($2, strlen($2), Error::DETAIL_, TRUE);
                     else

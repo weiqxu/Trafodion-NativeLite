@@ -36,7 +36,7 @@ CPPSRC := \
 	CliImplLmExtFunc.cpp
 
 CPPSRC += mpisetup.cpp vers_libcli.cpp 
-SRCPATH := cli bin common localstore
+SRCPATH := cli bin common litestore
 CPPSRC += CliExtern.cpp
 C_INC_OVERRIDE := -I$(TRAF_HOME)/export/include -I$(TRAF_HOME)/export/include/seabed
 

@@ -23,7 +23,7 @@
 
 CPPSRC := SqlciMain.cpp 
 
-ifeq ($(TRAF_LOCAL_LITE),1)
+ifeq ($(TRAF_LITE),1)
 # Keep all DEP_LIBS in the NEEDED list so BIND_NOW can resolve
 # transitive symbols across shared libraries.
 EARLY_DLLS := -Wl,--no-as-needed

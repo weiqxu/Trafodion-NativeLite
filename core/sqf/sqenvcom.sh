@@ -153,7 +153,7 @@ fi
 export TRAF_HOME=$PWD
 export TRAF_VAR=${TRAF_VAR:-$TRAF_HOME/tmp}
 export TRAF_LOG=${TRAF_LOG:-$TRAF_HOME/logs}
-if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+if [[ "$TRAF_LITE" == "1" ]]; then
   export TRAF_CONF=${TRAF_CONF:-$TRAF_HOME/conf}
 else
   export TRAF_CONF=${TRAF_CONF:-$TRAF_HOME/sql/local_hadoop/traf_conf}
@@ -290,7 +290,7 @@ unset USE_HADOOP_1
 # HIVE_CNF_DIR             directory with Hive config file hive-site.xml
 
 # ---+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
-if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+if [[ "$TRAF_LITE" == "1" ]]; then
   export LOC_JVMLIBS=
 else
   if [[ "$SQ_MTYPE" == 64 ]]; then
@@ -303,8 +303,8 @@ fi
 # cache hbase classpath to a file to avoid running hbase command
 # every time when login as trafodion
 CACHED_HBASE_CP_FILE="$TRAF_VAR/hbase_classpath"
-if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
-  [[ $SQ_VERBOSE == 1 ]] && echo "Skipping Hadoop/HBase classpath setup for local-lite"
+if [[ "$TRAF_LITE" == "1" ]]; then
+  [[ $SQ_VERBOSE == 1 ]] && echo "Skipping Hadoop/HBase classpath setup for lite"
   lv_hbase_cp=
 elif [[ ! -f $CACHED_HBASE_CP_FILE ]]; then
   #hbase classpath captures all the right set of jars hbase is using.
@@ -316,8 +316,8 @@ else
   lv_hbase_cp=`cat $CACHED_HBASE_CP_FILE`
 fi
 
-if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
-  [[ $SQ_VERBOSE == 1 ]] && echo "Skipping Hadoop/HBase distro setup for local-lite"
+if [[ "$TRAF_LITE" == "1" ]]; then
+  [[ $SQ_VERBOSE == 1 ]] && echo "Skipping Hadoop/HBase distro setup for lite"
   HADOOP_JAR_DIRS=
   HADOOP_JAR_FILES=
   HBASE_JAR_FILES=
@@ -814,7 +814,7 @@ SQ_CLASSPATH=
 # log4j, commons-logging, commons-lang, and ZooKeeper jars in its CLASSPATH connecting to a cluster
 # Hortonworks seems to have a hadoop-client.jar
 
-if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+if [[ "$TRAF_LITE" == "1" ]]; then
   SQ_CLASSPATH=
 else
   # expand jar files in list of directories
@@ -855,7 +855,7 @@ fi
 SQ_CLASSPATH=${SQ_CLASSPATH#:}
 
 # add Hadoop and HBase config dirs to classpath, if they exist
-if [[ "$TRAF_LOCAL_LITE" != "1" ]]; then
+if [[ "$TRAF_LITE" != "1" ]]; then
   if [[ -n "$HADOOP_CNF_DIR" ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HADOOP_CNF_DIR"; fi
   if [[ -n "$HBASE_CNF_DIR"  ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HBASE_CNF_DIR";  fi
   if [[ -n "$HIVE_CNF_DIR"   ]]; then SQ_CLASSPATH="$SQ_CLASSPATH:$HIVE_CNF_DIR";   fi
@@ -867,12 +867,12 @@ fi
 # installer and hbase classpath already contains the correct trx jar.
 # In future, installer can put additional hints in bashrc to cleanup
 # and fine tune these adjustments for many other jars.
-if [[ "$TRAF_LOCAL_LITE" != "1" && -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
+if [[ "$TRAF_LITE" != "1" && -e $TRAF_HOME/sql/scripts/sw_env.sh ]]; then
         SQ_CLASSPATH=${SQ_CLASSPATH}:${HBASE_TRXDIR}/${HBASE_TRX_JAR}
 fi
 
 
-if [[ "$TRAF_LOCAL_LITE" == "1" ]]; then
+if [[ "$TRAF_LITE" == "1" ]]; then
   SQ_CLASSPATH=
 else
   SQ_CLASSPATH=${SQ_CLASSPATH}:\

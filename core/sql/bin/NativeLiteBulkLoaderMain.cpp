@@ -6,11 +6,11 @@
 
 #include "Platform.h"
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
 
-#include "LocalLiteConfig.h"
-#include "LocalLiteRocksDBStore.h"
-#include "LocalLiteRowCodec.h"
+#include "LiteConfig.h"
+#include "LiteRocksDBStore.h"
+#include "LiteRowCodec.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -238,8 +238,8 @@ std::string tableName(const char *name)
 
 struct Worker
 {
-  LocalLiteRocksDBStore store;
-  LocalLiteTxnContext *context;
+  LiteRocksDBStore store;
+  LiteTxnContext *context;
   std::string error;
 
   Worker() : context(NULL) {}
@@ -248,7 +248,7 @@ struct Worker
   {
     if (!store.open(&error))
       return false;
-    context = LocalLiteTxnManager::createContext();
+    context = LiteTxnManager::createContext();
     return context != NULL;
   }
 
@@ -256,7 +256,7 @@ struct Worker
   {
     if (context)
       {
-        LocalLiteTxnManager::destroyContext(context);
+        LiteTxnManager::destroyContext(context);
         context = NULL;
       }
     store.close();
@@ -287,7 +287,7 @@ public:
   bool add(const std::vector<std::string> &fields)
   {
     std::string encoded;
-    if (!LocalLiteEncodeBinaryRow(table_, fields, &encoded,
+    if (!LiteEncodeBinaryRow(table_, fields, &encoded,
                                   &worker_->error))
       return false;
     encoded_.push_back(encoded);
@@ -324,19 +324,19 @@ private:
         committed_++;
         return true;
       }
-    if (!LocalLiteTxnManager::begin(worker_->context, &worker_->error))
+    if (!LiteTxnManager::begin(worker_->context, &worker_->error))
       return false;
-    LocalLiteTxn transaction(&worker_->store, worker_->context);
+    LiteTxn transaction(&worker_->store, worker_->context);
     std::vector<std::string> pending;
     if (gResumeManifest && gResumeManifest->recovering())
       {
         for (size_t i = 0; i < encoded_.size(); i++)
           {
             std::string key;
-            if (!LocalLiteBuildPrimaryKey(table_, encoded_[i], &key,
+            if (!LiteBuildPrimaryKey(table_, encoded_[i], &key,
                                           &worker_->error))
               return false;
-            LocalLiteRow existing;
+            LiteRow existing;
             bool found = false;
             if (!transaction.getRowByKey(table_, key, &existing, &found,
                                          &worker_->error))
@@ -355,12 +355,12 @@ private:
     if (!pending.empty() &&
         !transaction.insertRows(table_, pending, &worker_->error))
       {
-        LocalLiteTxnManager::rollback(worker_->context, &worker_->error);
+        LiteTxnManager::rollback(worker_->context, &worker_->error);
         return false;
       }
     if (pending.empty())
-      LocalLiteTxnManager::rollback(worker_->context, &worker_->error);
-    else if (!LocalLiteTxnManager::commit(worker_->context, &worker_->error))
+      LiteTxnManager::rollback(worker_->context, &worker_->error);
+    else if (!LiteTxnManager::commit(worker_->context, &worker_->error))
       return false;
     if (gResumeManifest &&
         !gResumeManifest->record(manifestEntry.str(), &worker_->error))
@@ -374,7 +374,7 @@ private:
   const Config &config_;
   std::string name_;
   std::string partition_;
-  LocalLiteTableDef table_;
+  LiteTableDef table_;
   std::vector<std::string> encoded_;
   uint64_t rows_;
   uint64_t committed_;
@@ -786,7 +786,7 @@ int main(int argc, char **argv)
                 << std::endl;
       return 2;
     }
-  if (LocalLiteConfig_init() != 0)
+  if (LiteConfig_init() != 0)
     {
       std::cerr << "NativeLite bulk-loader environment initialization failed"
                 << std::endl;
@@ -807,7 +807,7 @@ int main(int argc, char **argv)
   report << "{\"contract_version\":1,\"loader\":\"native\",\"warehouses\":"
          << config.warehouses << ",\"elapsed_ms\":" << elapsed
          << ",\"parallel_warehouses\":" << config.parallelWarehouses
-         << ",\"server_metrics\":" << LocalLiteOccMetricsJson()
+         << ",\"server_metrics\":" << LiteOccMetricsJson()
          << ",\"consistency\":\"deferred_to_sql_verifier\"}\n";
   std::cout << report.str();
   if (!config.report.empty())
@@ -829,7 +829,7 @@ int main(int argc, char **argv)
 #include <iostream>
 int main()
 {
-  std::cerr << "nativelite-bulk-loader requires TRAF_LOCAL_LITE" << std::endl;
+  std::cerr << "nativelite-bulk-loader requires TRAF_LITE" << std::endl;
   return 1;
 }
 

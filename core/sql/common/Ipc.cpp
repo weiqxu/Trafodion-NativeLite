@@ -164,7 +164,7 @@ NABoolean GuaProcessHandle::operator == (const GuaProcessHandle &other) const
 
 void GuaProcessHandle::dumpAndStop(bool doDump, bool doStop) const
 {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   char coreFile[1024];
   NAProcessHandle phandle((SB_Phandle_Type *)&phandle_);
   phandle.decompose();

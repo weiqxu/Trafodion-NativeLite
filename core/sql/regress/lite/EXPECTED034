@@ -1,0 +1,95 @@
+>>CREATE TABLE LITEREG034_CHAR
++>  (id INT NOT NULL PRIMARY KEY, code CHAR(4), label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG034_CHAR VALUES
++>  (1, 'A', 'char-a'),
++>  (2, 'AB', 'char-ab'),
++>  (3, 'B', 'char-b'),
++>  (4, NULL, 'char-null');
+--- 4 row(s) inserted.
+>>CREATE INDEX LITEREG034_CHAR_IX ON LITEREG034_CHAR(code DESC);
+--- SQL operation complete.
+>>SELECT id, label FROM LITEREG034_CHAR WHERE code = 'AB' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  char-ab
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG034_CHAR WHERE code >= 'AB' ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  char-ab
+          3  char-b
+--- 2 row(s) selected.
+>>SELECT id, label FROM LITEREG034_CHAR WHERE code IS NULL ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          4  char-null
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG034_CHAR;
+--- SQL operation complete.
+>>CREATE TABLE LITEREG034_FLOAT
++>  (id INT NOT NULL PRIMARY KEY, r REAL, d FLOAT(54),
++>   label VARCHAR(20));
+--- SQL operation complete.
+>>INSERT INTO LITEREG034_FLOAT VALUES
++>  (1, -10.5, -100.25, 'negative'),
++>  (2, -0.0, -0.0, 'negative-zero'),
++>  (3, 0.0, 0.0, 'positive-zero'),
++>  (4, 1.5, 10.25, 'positive'),
++>  (5, NULL, NULL, 'null-value');
+--- 5 row(s) inserted.
+>>CREATE INDEX LITEREG034_R_IX ON LITEREG034_FLOAT(r);
+--- SQL operation complete.
+>>CREATE INDEX LITEREG034_D_IX ON LITEREG034_FLOAT(d DESC);
+--- SQL operation complete.
+>>SELECT id, label FROM LITEREG034_FLOAT WHERE r < 0 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          1  negative
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG034_FLOAT WHERE r >= 0 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          2  negative-zero
+          3  positive-zero
+          4  positive
+--- 3 row(s) selected.
+>>SELECT id, label FROM LITEREG034_FLOAT WHERE d > 0 ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          4  positive
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG034_FLOAT
++> WHERE d = CAST(10.25 AS FLOAT(54)) ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          4  positive
+--- 1 row(s) selected.
+>>SELECT id, label FROM LITEREG034_FLOAT WHERE d IS NULL ORDER BY id;
+ID           LABEL
+-----------  --------------------
+          5  null-value
+--- 1 row(s) selected.
+>>DROP INDEX LITEREG034_R_IX;
+--- SQL operation complete.
+>>DROP TABLE LITEREG034_FLOAT;
+--- SQL operation complete.
+>>CREATE TABLE LITEREG034_FLOAT_UNIQUE
++>  (id INT NOT NULL PRIMARY KEY, r REAL);
+--- SQL operation complete.
+>>INSERT INTO LITEREG034_FLOAT_UNIQUE VALUES (1, -0.0);
+--- 1 row(s) inserted.
+>>CREATE UNIQUE INDEX LITEREG034_FLOAT_UX ON LITEREG034_FLOAT_UNIQUE(r);
+--- SQL operation complete.
+>>INSERT INTO LITEREG034_FLOAT_UNIQUE VALUES (2, 0.0);
+*** ERROR[8001]
+*** ERROR[16001] No message found for SQLCODE -8001. duplicate lite unique index key <MXID>
+--- 0 row(s) inserted.
+>>SELECT id FROM LITEREG034_FLOAT_UNIQUE ORDER BY id;
+ID
+-----------
+          1
+--- 1 row(s) selected.
+>>DROP TABLE LITEREG034_FLOAT_UNIQUE;
+--- SQL operation complete.
+>>exit;

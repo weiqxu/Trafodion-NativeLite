@@ -14889,7 +14889,7 @@ interactive_query_expression:
 			 PARSERHEAP());
 		      $$ = finalize(eue);
 		    }
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
 		  else if (($1->castToStmtDDLNode()) &&
 			   ($1->castToStmtDDLNode()->isVolatile()) &&
 			   ($1->castToStmtDDLNode()->processAsExeUtil()))
@@ -29536,7 +29536,7 @@ before_trigger_prefix: create_trigger_keywords ddl_qualified_name
              TOK_BEFORE iud_event optional_update_column_list TOK_ON
              ddl_qualified_name referencing_clause before_action_orientation
              {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
                *SqlParser_Diags << DgSqlCode(-3131);
                YYERROR;
 #endif
@@ -29610,7 +29610,7 @@ after_trigger_prefix: create_trigger_keywords ddl_qualified_name
              TOK_AFTER iud_event optional_update_column_list TOK_ON
              ddl_qualified_name referencing_clause after_action_orientation
              {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
                *SqlParser_Diags << DgSqlCode(-3131);
                YYERROR;
 #endif
@@ -32856,7 +32856,7 @@ drop_mvrgroup_statement : TOK_DROP TOK_MVGROUP ddl_qualified_name
 drop_trigger_statement : TOK_DROP TOK_TRIGGER ddl_qualified_name 
                          optional_cleanup optional_validate optional_logfile
                 {
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
                   *SqlParser_Diags << DgSqlCode(-3131);
                   YYERROR;
 #endif

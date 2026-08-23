@@ -64,7 +64,7 @@ INSTALL_OBJ    :=
 EXTERN_OBJS    :=
 EXTRA_LIBS     :=
 EXTERN_LIBS    :=
-# Standalone tools may not need LocalLite's engine-wide dependency closure.
+# Standalone tools may not need Lite's engine-wide dependency closure.
 NO_GLOBAL_SYS_LIBS :=
 TARGET         := $(obj)
 LIB_NAME       :=

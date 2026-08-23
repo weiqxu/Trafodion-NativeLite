@@ -42,9 +42,9 @@ SQL_W=$(TRAF_HOME)/../sql
 
 MISC = win misc_sec
 SQ_COMPONENTS := make_sqevlog seabed stfs trafconf $(MISC) tm $(SEAMONSTER_TARGET) make_sql make_monitor tools hbase_utilities
-LOCAL_LITE_COMPONENTS := make_sqevlog seabed stfs trafconf $(MISC) tm $(SEAMONSTER_TARGET) make_sql_local_lite
+LITE_COMPONENTS := make_sqevlog seabed stfs trafconf $(MISC) tm $(SEAMONSTER_TARGET) make_sql_lite
 
-.PHONY: $(SQ_COMPONENTS) local-lite make_sql_local_lite
+.PHONY: $(SQ_COMPONENTS) lite make_sql_lite
 
 buildinfo:
 	@echo "Building $(TRAFODION_VER_PROD) Version $(TRAFODION_VER) $(SQ_BUILD_TYPE)"
@@ -52,8 +52,8 @@ buildinfo:
 
 all: genverhdr $(SQ_COMPONENTS) 
 
-local-lite: SHELL := /bin/bash
-local-lite: genverhdr $(LOCAL_LITE_COMPONENTS)
+lite: SHELL := /bin/bash
+lite: genverhdr $(LITE_COMPONENTS)
 
 win: make_sqevlog seabed
 	cd src/win; $(MAKE) 2>&1 | sed -e "s/$$/	##(SQF)/" ; exit $${PIPESTATUS[0]}
@@ -78,9 +78,9 @@ make_sql: $(SEAMONSTER_TARGET) win hbase_utilities
 	cd sql; $(MAKE) WROOT=$(SQL_W) 2>&1 | sed -e "s/$$/	##(SQL)/" ; exit $${PIPESTATUS[0]}
 	cd $(TRAF_HOME)/sql/scripts && ./makemsg.ksh 2>&1 | sed -e "s/$$/	##(SQL)/" ; exit $${PIPESTATUS[0]}
 
-make_sql_local_lite: $(SEAMONSTER_TARGET) win
-	cd sql; $(MAKE) local-lite WROOT=$(SQL_W) TRAF_LOCAL_LITE=1 2>&1 | sed -e "s/$$/	##(SQL-LOCAL-LITE)/" ; exit $${PIPESTATUS[0]}
-	cd $(TRAF_HOME)/sql/scripts && ./makemsg.ksh 2>&1 | sed -e "s/$$/	##(SQL-LOCAL-LITE)/" ; exit $${PIPESTATUS[0]}
+make_sql_lite: $(SEAMONSTER_TARGET) win
+	cd sql; $(MAKE) lite WROOT=$(SQL_W) TRAF_LITE=1 2>&1 | sed -e "s/$$/	##(SQL-LITE)/" ; exit $${PIPESTATUS[0]}
+	cd $(TRAF_HOME)/sql/scripts && ./makemsg.ksh 2>&1 | sed -e "s/$$/	##(SQL-LITE)/" ; exit $${PIPESTATUS[0]}
 
 make_monitor: stfs make_sqevlog seabed trafconf
 	cd monitor/linux; $(MAKE) all 2>&1 | sed -e "s/$$/	##(SQF)/" ; exit $${PIPESTATUS[0]}

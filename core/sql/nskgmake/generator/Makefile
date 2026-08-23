@@ -23,8 +23,8 @@
 
 INCLUDE_DIRS += sqludr
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-INCLUDE_DIRS += localstore
+ifeq ($(TRAF_LITE),1)
+INCLUDE_DIRS += litestore
 endif
 
 CPPSRC := GenBitMuxFunction.cpp \
@@ -70,11 +70,11 @@ DEFS := -DNDEBUG
 
 SRCPATH := generator langman smdio
 
-ifeq ($(TRAF_LOCAL_LITE),1)
-CPPSRC += LocalLiteRocksDBStore.cpp \
-	LocalLiteStorage.cpp \
-	LocalLiteUnifiedRocksDB.cpp \
-	LocalLiteRowCodec.cpp
-SRCPATH += localstore
-DEFS += -DTRAF_LOCAL_LITE
+ifeq ($(TRAF_LITE),1)
+CPPSRC += LiteRocksDBStore.cpp \
+	LiteStorage.cpp \
+	LiteUnifiedRocksDB.cpp \
+	LiteRowCodec.cpp
+SRCPATH += litestore
+DEFS += -DTRAF_LITE
 endif

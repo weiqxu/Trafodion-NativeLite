@@ -95,7 +95,7 @@ CPPSRC := \
 	VarInt.cpp 
 
 CPPSRC += ComCextMisc.cpp
-CPPSRC += LocalLiteConfig.cpp
+CPPSRC += LiteConfig.cpp
 
 SRCPATH := common porting_layer 
 

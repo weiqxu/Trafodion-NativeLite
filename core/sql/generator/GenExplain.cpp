@@ -916,21 +916,21 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
 {
   NAString description("scan_type: " + getTypeText());
 
-#ifdef TRAF_LOCAL_LITE
-  description += " local_lite_storage: rocksdb ";
-  NABoolean localLiteSecondaryIndex = FALSE;
+#ifdef TRAF_LITE
+  description += " lite_storage: rocksdb ";
+  NABoolean liteSecondaryIndex = FALSE;
   for (CollIndex i = 0; i < listOfUniqueRows_.entries(); i++)
     for (CollIndex j = 0; j < listOfUniqueRows_[i].rowIds_.entries(); j++)
       {
         const NAString &rowId = listOfUniqueRows_[i].rowIds_[j];
         if (rowId.length() >= 6 &&
-            (memcmp(rowId.data(), "LLPB1:", 6) == 0 ||
-             memcmp(rowId.data(), "LLIX1:", 6) == 0 ||
-             memcmp(rowId.data(), "LLIR1:", 6) == 0 ||
-             memcmp(rowId.data(), "LLIB1:", 6) == 0))
-          localLiteSecondaryIndex = TRUE;
+            (memcmp(rowId.data(), "LTPB1:", 6) == 0 ||
+             memcmp(rowId.data(), "LTIX1:", 6) == 0 ||
+             memcmp(rowId.data(), "LTIR1:", 6) == 0 ||
+             memcmp(rowId.data(), "LTIB1:", 6) == 0))
+          liteSecondaryIndex = TRUE;
       }
-  if (localLiteSecondaryIndex)
+  if (liteSecondaryIndex)
     description += "secondary_index: yes index_only: yes ";
 #endif
   
@@ -960,7 +960,7 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
 
   description += keyInfo;
 
-#ifndef TRAF_LOCAL_LITE
+#ifndef TRAF_LITE
   description += "cache_size: ";
   char cacheBuf[12];
   snprintf(cacheBuf, 12, "%u", ((ComTdbHbaseAccess *)tdb)->getHbasePerfAttributes()->numCacheRows());
@@ -1048,7 +1048,7 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
      appendPushedDownExpression(tdb, description);
     }
 #else
-  // NativeLite emits ComTdbLocalLiteRocksdbScan, which deliberately has a
+  // NativeLite emits ComTdbLiteRocksdbScan, which deliberately has a
   // layout independent from ComTdbHbaseAccess.  HBase cache, snapshot, and
   // pushed-filter explain fields are inapplicable and casting the local TDB
   // to the HBase class reads arbitrary offsets as Queue pointers.

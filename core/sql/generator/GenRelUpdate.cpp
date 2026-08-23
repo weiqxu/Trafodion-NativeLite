@@ -81,8 +81,8 @@ extern  int CreateAllCharsExpr(const NAType &formalType,
                                CmpContext *cmpContext,
                                ItemExpr *&newExpr);
 
-#ifdef TRAF_LOCAL_LITE
-static void localLiteGenRuntimePrimaryRowId(
+#ifdef TRAF_LITE
+static void liteGenRuntimePrimaryRowId(
     Generator *generator,
     const SearchKey *searchKey,
     const ValueIdSet &externalInputs,
@@ -112,7 +112,7 @@ static void localLiteGenRuntimePrimaryRowId(
     {
       ItemExpr *keyValue = keyValues[i].getItemExpr()->replaceVEGExpressions(
           externalInputs, externalInputs, FALSE, NULL, FALSE);
-      if (i < ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS &&
+      if (i < ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS &&
           keyValue->getOperatorType() == ITM_DYN_PARAM &&
           ((DynamicParam *) keyValue)->getName().isNull())
         {
@@ -489,7 +489,7 @@ static short genHbaseUpdOrInsertExpr(
   if (updRecExprArray.entries() > 0)
     listOfUpdatedColNames = new(space) Queue(space);
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   const NABoolean retainUpdatedColumnNames = TRUE;
 #else
   const NABoolean retainUpdatedColumnNames = FALSE;
@@ -506,10 +506,10 @@ static short genHbaseUpdOrInsertExpr(
       ValueId tgtValueId = assignExpr->child(0)->castToItemExpr()->getValueId();
       ValueId srcValueId = assignExpr->child(1)->castToItemExpr()->getValueId();
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       ItemExpr *sourceValue = assignExpr->child(1)->castToItemExpr();
       if (boundUpdateTuppIndex && boundUpdateOffset && boundUpdateLength &&
-          ii < ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS &&
+          ii < ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS &&
           sourceValue->getOperatorType() == ITM_DYN_PARAM &&
           ((DynamicParam *) sourceValue)->getName().isNull())
         {
@@ -554,7 +554,7 @@ static short genHbaseUpdOrInsertExpr(
       }
 
       ie->bindNode(generator->getBindWA());
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       // This cast is introduced after the normal predicate rewrite. Complete
       // pre-code generation so reduced T4 positional parameters retain their
       // input ATP attributes in the generated UPDATE expression.
@@ -1041,8 +1041,8 @@ short HbaseDelete::codeGen(Generator * generator)
 				     NULL,
 				     FALSE /* doBulkMove */);
 
-#ifdef TRAF_LOCAL_LITE
-  // The local-lite DELETE executor projects persisted canonical rows into the
+#ifdef TRAF_LITE
+  // The lite DELETE executor projects persisted canonical rows into the
   // conversion tuple before evaluating the generated predicate.
   work_cri_desc->setTupleDescriptor(convertTuppIndex, tuple_desc);
 #endif
@@ -1069,8 +1069,8 @@ short HbaseDelete::codeGen(Generator * generator)
       for (CollIndex i = 0; i < getScanIndexDesc()->getIndexColumns().entries(); i++)
 	{
 	  ValueId scanIndexDescVID = getScanIndexDesc()->getIndexColumns()[i];
-#ifdef TRAF_LOCAL_LITE
-          // A local-lite scan may use an explicit secondary index while the
+#ifdef TRAF_LITE
+          // A lite scan may use an explicit secondary index while the
           // update target remains the base/primary index. Their descriptor
           // column lists are not required to have the same length; the
           // RocksDB executor reconstructs the canonical row and maintains all
@@ -1165,20 +1165,20 @@ short HbaseDelete::codeGen(Generator * generator)
   ExpTupleDesc * rowIdAsciiTupleDesc = 0;
   ex_expr * rowIdExpr = NULL;
   ULng32 rowIdLength = 0;
-#ifdef TRAF_LOCAL_LITE
-  UInt16 localLiteBoundInputTuppIndex[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundInputOffset[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundInputLength[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
+#ifdef TRAF_LITE
+  UInt16 liteBoundInputTuppIndex[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundInputOffset[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundInputLength[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
 #endif
   if (getTableDesc()->getNATable()->isSeabaseTable())
     {
       // dont encode keys for hbase mapped tables since these tables
       // could be populated from outside of traf.
       NABoolean encodeKeys = TRUE;
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       encodeKeys = FALSE;
 #endif
       if (getTableDesc()->getNATable()->isHbaseMapTable())
@@ -1193,15 +1193,15 @@ short HbaseDelete::codeGen(Generator * generator)
 				rowIdLength, 
 				rowIdExpr,
                                 encodeKeys);
-#ifdef TRAF_LOCAL_LITE
-      localLiteGenRuntimePrimaryRowId(
+#ifdef TRAF_LITE
+      liteGenRuntimePrimaryRowId(
           generator, getSearchKey(),
           getGroupAttr()->getCharacteristicInputs(),
           getIndexDesc()->getIndexKey(), work_cri_desc, work_atp,
           rowIdAsciiTuppIndex, rowIdTuppIndex,
           rowIdAsciiRowLen, rowIdAsciiTupleDesc,
-          rowIdLength, rowIdExpr, localLiteBoundInputTuppIndex,
-          localLiteBoundInputOffset, localLiteBoundInputLength);
+          rowIdLength, rowIdExpr, liteBoundInputTuppIndex,
+          liteBoundInputOffset, liteBoundInputLength);
 #endif
     }
   else
@@ -1219,7 +1219,7 @@ short HbaseDelete::codeGen(Generator * generator)
   Queue * listOfFetchedColNames = NULL;
   if (isAlignedFormat)
     {
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       // RocksDB stores a canonical full row. Preserve the base-column mapping
       // when the executor requests only a predicate/projection subset.
       HbaseAccess::genListOfColNames(generator,
@@ -1425,14 +1425,14 @@ short HbaseDelete::codeGen(Generator * generator)
 
   generator->initTdbFields(hbasescan_tdb);
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   for (CollIndex i = 0;
        i < getIndexDesc()->getIndexKey().entries() &&
-       i < ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
-    if (localLiteBoundInputLength[i] > 0)
-      hbasescan_tdb->setLocalLiteBoundKeyInput(
-          static_cast<UInt16>(i), localLiteBoundInputTuppIndex[i],
-          localLiteBoundInputOffset[i], localLiteBoundInputLength[i]);
+       i < ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS; i++)
+    if (liteBoundInputLength[i] > 0)
+      hbasescan_tdb->setLiteBoundKeyInput(
+          static_cast<UInt16>(i), liteBoundInputTuppIndex[i],
+          liteBoundInputOffset[i], liteBoundInputLength[i]);
 #endif
 
   if ((CmpCommon::getDefault(HBASE_ASYNC_OPERATIONS) == DF_ON)
@@ -1494,7 +1494,7 @@ short HbaseDelete::codeGen(Generator * generator)
   if (preCondExpr)
     hbasescan_tdb->setInsDelPreCondExpr(preCondExpr);
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   if (FALSE)
 #else
   if (generator->isTransactionNeeded())
@@ -1761,9 +1761,9 @@ short HbaseUpdate::codeGen(Generator * generator)
 				     NULL,
 				     FALSE /* doBulkMove */);
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   // The native HBase executor consumes the generated conversion expression
-  // directly. The local-lite UPDATE executor also needs the descriptor to
+  // directly. The lite UPDATE executor also needs the descriptor to
   // project persisted rows into the expression's input tuple.
   work_cri_desc->setTupleDescriptor(convertTuppIndex, tuple_desc);
 #endif
@@ -1790,13 +1790,13 @@ short HbaseUpdate::codeGen(Generator * generator)
       for (CollIndex i = 0; i < getScanIndexDesc()->getIndexColumns().entries(); i++)
 	{
 	  ValueId scanIndexDescVID = getScanIndexDesc()->getIndexColumns()[i];
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
           if (i >= getIndexDesc()->getIndexColumns().entries())
             continue;
 #endif
 	  const ValueId indexDescVID = getIndexDesc()->getIndexColumns()[i];
 
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
           ValueId scanDefinitionVID = scanIndexDescVID;
           if (scanIndexDescVID.getItemExpr()->getOperatorType() ==
               ITM_INDEXCOLUMN)
@@ -1925,13 +1925,13 @@ short HbaseUpdate::codeGen(Generator * generator)
   ExpTupleDesc *updatedRowTupleDesc   = 0;
   ULng32 updateRowLen = 0;
   Queue * listOfUpdatedColNames = NULL;
-#ifdef TRAF_LOCAL_LITE
-  UInt16 localLiteBoundUpdateTuppIndex[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundUpdateOffset[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundUpdateLength[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
+#ifdef TRAF_LITE
+  UInt16 liteBoundUpdateTuppIndex[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundUpdateOffset[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundUpdateLength[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
 #endif
   genHbaseUpdOrInsertExpr(generator, 
 			  FALSE,
@@ -1941,10 +1941,10 @@ short HbaseUpdate::codeGen(Generator * generator)
 			  listOfUpdatedColNames,
 			  NULL, mergeInsertRowIdLen, 0,
 			  getIndexDesc(),
-#ifdef TRAF_LOCAL_LITE
-                          localLiteBoundUpdateTuppIndex,
-                          localLiteBoundUpdateOffset,
-                          localLiteBoundUpdateLength
+#ifdef TRAF_LITE
+                          liteBoundUpdateTuppIndex,
+                          liteBoundUpdateOffset,
+                          liteBoundUpdateLength
 #else
                           NULL, NULL, NULL
 #endif
@@ -1975,20 +1975,20 @@ short HbaseUpdate::codeGen(Generator * generator)
   ExpTupleDesc * rowIdAsciiTupleDesc = 0;
   ex_expr * rowIdExpr = NULL;
   ULng32 rowIdLength = 0;
-#ifdef TRAF_LOCAL_LITE
-  UInt16 localLiteBoundInputTuppIndex[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundInputOffset[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
-  UInt32 localLiteBoundInputLength[
-      ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS] = {0};
+#ifdef TRAF_LITE
+  UInt16 liteBoundInputTuppIndex[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundInputOffset[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
+  UInt32 liteBoundInputLength[
+      ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS] = {0};
 #endif
   if (getTableDesc()->getNATable()->isSeabaseTable())
     {
       // dont encode keys for hbase mapped tables since these tables
       // could be populated from outside of traf.
       NABoolean encodeKeys = TRUE;
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
       encodeKeys = FALSE;
 #endif
       if (getTableDesc()->getNATable()->isHbaseMapTable())
@@ -2003,15 +2003,15 @@ short HbaseUpdate::codeGen(Generator * generator)
 				rowIdLength, 
 				rowIdExpr,
                                 encodeKeys);
-#ifdef TRAF_LOCAL_LITE
-      localLiteGenRuntimePrimaryRowId(
+#ifdef TRAF_LITE
+      liteGenRuntimePrimaryRowId(
           generator, getSearchKey(),
           getGroupAttr()->getCharacteristicInputs(),
           getIndexDesc()->getIndexKey(), work_cri_desc, work_atp,
           rowIdAsciiTuppIndex, rowIdTuppIndex,
           rowIdAsciiRowLen, rowIdAsciiTupleDesc,
-          rowIdLength, rowIdExpr, localLiteBoundInputTuppIndex,
-          localLiteBoundInputOffset, localLiteBoundInputLength);
+          rowIdLength, rowIdExpr, liteBoundInputTuppIndex,
+          liteBoundInputOffset, liteBoundInputLength);
 #endif
    }
   else
@@ -2030,8 +2030,8 @@ short HbaseUpdate::codeGen(Generator * generator)
 
   if (isAlignedFormat)
     {
-#ifdef TRAF_LOCAL_LITE
-      // The local-lite UPDATE executor projects persisted canonical rows into
+#ifdef TRAF_LITE
+      // The lite UPDATE executor projects persisted canonical rows into
       // this statement-specific tuple, so it needs one source column ID per
       // generated attribute rather than the native HBase family marker.
       HbaseAccess::genListOfColNames(generator,
@@ -2073,11 +2073,11 @@ short HbaseUpdate::codeGen(Generator * generator)
 			   ex_expr::exp_SCAN_PRED,
 			   &mergeUpdScanExpr);
     }
-#ifdef TRAF_LOCAL_LITE
-  // The local-lite IUD path validates CHECK constraints in its storage
+#ifdef TRAF_LITE
+  // The lite IUD path validates CHECK constraints in its storage
   // boundary.  The native HBase update constraint expression is tied to the
   // HBase update tuple and can dereference stale offsets after ALTER ADD
-  // COLUMN, so do not generate that expression for local-lite UPDATEs.
+  // COLUMN, so do not generate that expression for lite UPDATEs.
   else if (FALSE)
 #else
   else if (getIndexDesc()->isClusteringIndex() && getCheckConstraints().entries())
@@ -2520,21 +2520,21 @@ short HbaseUpdate::codeGen(Generator * generator)
 		      );
 
   generator->initTdbFields(hbasescan_tdb);
-#ifdef TRAF_LOCAL_LITE
+#ifdef TRAF_LITE
   for (CollIndex i = 0;
        i < getIndexDesc()->getIndexKey().entries() &&
-       i < ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
-    if (localLiteBoundInputLength[i] > 0)
-      hbasescan_tdb->setLocalLiteBoundKeyInput(
-          static_cast<UInt16>(i), localLiteBoundInputTuppIndex[i],
-          localLiteBoundInputOffset[i], localLiteBoundInputLength[i]);
+       i < ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS; i++)
+    if (liteBoundInputLength[i] > 0)
+      hbasescan_tdb->setLiteBoundKeyInput(
+          static_cast<UInt16>(i), liteBoundInputTuppIndex[i],
+          liteBoundInputOffset[i], liteBoundInputLength[i]);
   for (CollIndex i = 0;
        i < newRecExprArray().entries() &&
-       i < ComTdbHbaseAccess::MAX_LOCAL_LITE_BOUND_KEY_COLUMNS; i++)
-    if (localLiteBoundUpdateLength[i] > 0)
-      hbasescan_tdb->setLocalLiteBoundUpdateInput(
-          static_cast<UInt16>(i), localLiteBoundUpdateTuppIndex[i],
-          localLiteBoundUpdateOffset[i], localLiteBoundUpdateLength[i]);
+       i < ComTdbHbaseAccess::MAX_LITE_BOUND_KEY_COLUMNS; i++)
+    if (liteBoundUpdateLength[i] > 0)
+      hbasescan_tdb->setLiteBoundUpdateInput(
+          static_cast<UInt16>(i), liteBoundUpdateTuppIndex[i],
+          liteBoundUpdateOffset[i], liteBoundUpdateLength[i]);
 #endif
   hbasescan_tdb->setListOfOmittedColNames(listOfOmittedColNames);
 
@@ -2871,10 +2871,10 @@ short HbaseInsert::codeGen(Generator *generator)
 				NULL,
 				TRUE); // handle serialization
   
-#ifdef TRAF_LOCAL_LITE
-  // CHECK predicates are validated at the local-lite storage boundary.  Do
+#ifdef TRAF_LITE
+  // CHECK predicates are validated at the lite storage boundary.  Do
   // not generate the native HBase tuple predicate here; its descriptor is
-  // not stable across local-lite ALTER ADD COLUMN layouts.
+  // not stable across lite ALTER ADD COLUMN layouts.
   if (FALSE)
 #else
   if (getIndexDesc()->isClusteringIndex() && getCheckConstraints().entries())
