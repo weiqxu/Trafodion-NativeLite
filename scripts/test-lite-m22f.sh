@@ -44,7 +44,7 @@ artifact_dir=${M22_REPORT_DIR:-/tmp/traf-lite-m22-full-report}
 env TRAF_LITE_SYNC_COMMIT=1 \
   TPCC_PROPERTIES="$properties" TPCC_SCALE=qualification \
   TPCC_NATIVE_BULK_LOAD=1 TPCC_NATIVE_COMMIT_ROWS=10000 \
-  NATIVELITE_WORKERS=40 TPCC_ARTIFACT_DIR="$artifact_dir" \
+  TRAFODION_LITE_WORKERS=40 TPCC_ARTIFACT_DIR="$artifact_dir" \
   "$performance"
 
 grep -q '"throughput_tps"' "$artifact_dir/workload-report.json" ||

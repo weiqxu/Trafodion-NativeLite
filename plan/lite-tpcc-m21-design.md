@@ -1,4 +1,4 @@
-# Lite M21: thread-affine multi-worker execution
+# Trafodion Lite M21: Thread-Affine Multi-Worker Execution
 
 Status: implementation complete for the multi-worker/session-isolation gate,
 session-local plan reuse, and the native TPCC bulk-loader; the complete
@@ -12,7 +12,7 @@ CLI context, `SqlciEnv`, compiler context, prepared-plan set, transaction state,
 and diagnostic capture. Requests for that connection execute on its connection
 thread for the full session lifetime.
 
-The server is still a bounded loopback Lite runtime. It does not claim
+The server is still a bounded loopback Trafodion Lite runtime. It does not claim
 formal TPC-C compliance or official tpmC. HDFS/Hive/HBase and the distributed
 SQF service stack remain outside scope.
 
@@ -28,10 +28,10 @@ accept -> handshake/session slot -> connection thread
                                       +-- destroy after cancel quiescence
 ```
 
-The old `NativeLiteEngine` request queue is no longer used for client work.
+The old `TrafodionLiteEngine` request queue is no longer used for client work.
 `submit()` keeps a local request envelope for error/result plumbing, then
 dispatches directly on the owning connection thread. The bootstrap engine
-thread only owns the process default CLI context and Lite store lease.
+thread only owns the process default CLI context and Lite Storage lease.
 
 The legacy optimizer/compiler has process-global mutable state. M21 therefore
 serializes only `fetchRowsPrologue()`/plan construction with
@@ -63,7 +63,7 @@ protected by the existing CLI bootstrap semaphore for the same reason.
 
 The stored-procedure registry is initialized once with `std::call_once`.
 Compiler authorization state and emergency new-handler storage are thread-local
-for embedded Lite contexts. The Lite storage/OCC publication path
+for embedded Trafodion Lite contexts. The Lite Storage/OCC publication path
 continues to use its storage mutex and transaction context; ordinary DML and
 executor requests are not routed through a single server queue.
 
@@ -88,9 +88,9 @@ under `M21_REPORT_DIR`. The test service uses 64 session slots because the
 workload has 32 business terminals plus loader/coordinator/checkpoint/recovery
 connections; business concurrency remains 32.
 
-The native loader is `nativelite-bulk-loader`. It creates no SQL client
-sessions and opens the same Lite store only after schema creation has
-closed the server. It encodes deterministic TPCC rows with the Lite row
+The native loader is `trafodion-lite-bulk-loader`. It creates no SQL client
+sessions and opens the same Lite Storage only after schema creation has
+closed the server. It encodes deterministic TPCC rows with the Lite Storage row
 codec, stages them with `LiteTxn::insertRows`, and commits through the
 unified OCC/index/FK publication path. Warehouse row generation is parallel;
 publication batches are serialized by an explicit loader mutex because the

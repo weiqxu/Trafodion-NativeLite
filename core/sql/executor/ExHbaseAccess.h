@@ -105,7 +105,7 @@ private:
 };
 
 #ifdef TRAF_LITE
-// Executor-side vtable supplement for the dedicated NativeLite scan TDB.
+// Executor-side vtable supplement for the dedicated Trafodion Lite scan TDB.
 // No data members are permitted here; the compiler TDB owns the image.
 class LiteRocksdbScanTdb : public ComTdbLiteRocksdbScan
 {

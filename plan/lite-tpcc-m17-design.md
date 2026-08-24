@@ -1,4 +1,4 @@
-# M17: New-Order execution path and OCC validation optimization
+# Trafodion Lite M17: New-Order Execution Path and OCC Validation Optimization
 
 ## Status
 
@@ -76,11 +76,11 @@ zero-full-scan evidence, and include the OCC validation/publication counters.
 
 The next optimization keeps M17's OCC and unified TransactionDB contract but
 removes avoidable transaction-control work from the T4 request path. `BEGIN`,
-`COMMIT`, and `ROLLBACK` use the existing Lite `ExTransaction` participant
+`COMMIT`, and `ROLLBACK` use the existing Trafodion Lite `ExTransaction` participant
 when the session `ContextCli` is initialized; an uninitialized context and a
 DDL commit boundary deliberately fall back to the original executor path.
 Commit and rollback retain cursor-close semantics. This avoids the unsafe
-TMF-only `SQL_EXEC_Xact` shortcut, which is not the Lite transaction
+TMF-only `SQL_EXEC_Xact` shortcut, which is not the Lite Storage transaction
 participant.
 
 The publication path now exposes `TRAF_LITE_SYNC_COMMIT`. Its default is

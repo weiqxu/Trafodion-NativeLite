@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ThreadLocalRandom;
 
 /** M15G concurrent multi-warehouse TPC-C-like workload and qualification. */
-public final class NativeLiteTpccWorkload {
+public final class TrafodionLiteTpccWorkload {
   private static final String USER = "DB__ROOT";
   private static int retryLimit;
   private static int retryBackoffMillis;
@@ -88,7 +88,7 @@ public final class NativeLiteTpccWorkload {
     }
   }
 
-  private static void executeProfile(NativeLiteTpccTransactions.Terminal terminal,
+  private static void executeProfile(TrafodionLiteTpccTransactions.Terminal terminal,
       String profile, int district, int customer) throws SQLException {
     if ("new_order".equals(profile)) terminal.newOrder(district, customer);
     else if ("payment".equals(profile)) terminal.payment(district, customer);
@@ -105,7 +105,7 @@ public final class NativeLiteTpccWorkload {
   }
 
   private static void runLogical(
-      NativeLiteTpccTransactions.Terminal terminal, String profile,
+      TrafodionLiteTpccTransactions.Terminal terminal, String profile,
       int terminalId, int district, int customer, ProfileStats stats)
       throws Exception {
     long started = System.nanoTime();
@@ -142,8 +142,8 @@ public final class NativeLiteTpccWorkload {
   private static void runTerminal(String url, int terminalId, int warehouse,
       int districts, int customers, int transactionCount, RunStats stats)
       throws Exception {
-    try (NativeLiteTpccTransactions.Terminal terminal =
-             new NativeLiteTpccTransactions.Terminal(
+    try (TrafodionLiteTpccTransactions.Terminal terminal =
+             new TrafodionLiteTpccTransactions.Terminal(
                  url, terminalId, warehouse)) {
       for (int index = 0; index < transactionCount; index++) {
         // Terminals mapped to the same warehouse differ by ten in the caller.
@@ -225,8 +225,8 @@ public final class NativeLiteTpccWorkload {
   }
 
   private static String planCacheHitRatio() {
-    long hits = NativeLiteTpccTransactions.planCacheHits();
-    long misses = NativeLiteTpccTransactions.planCacheMisses();
+    long hits = TrafodionLiteTpccTransactions.planCacheHits();
+    long misses = TrafodionLiteTpccTransactions.planCacheMisses();
     long total = hits + misses;
     return String.format(Locale.ROOT, "%.6f",
         total == 0 ? 0.0 : hits / (double) total);
@@ -316,11 +316,11 @@ public final class NativeLiteTpccWorkload {
     out.append("},\"server_metrics\":")
         .append(occMetrics)
         .append(",\"stock_level_access\":{\"range_scans\":")
-        .append(NativeLiteTpccTransactions.stockLevelRangeScans())
+        .append(TrafodionLiteTpccTransactions.stockLevelRangeScans())
         .append(",\"point_reads\":")
-        .append(NativeLiteTpccTransactions.stockLevelPointReads())
+        .append(TrafodionLiteTpccTransactions.stockLevelPointReads())
         .append(",\"batch_reads\":")
-        .append(NativeLiteTpccTransactions.stockLevelBatchReads())
+        .append(TrafodionLiteTpccTransactions.stockLevelBatchReads())
         .append(",\"full_scans\":0}")
         .append(",\"client_metrics\":{")
         .append("\"occ_conflicts_client_observed\":")
@@ -330,9 +330,9 @@ public final class NativeLiteTpccWorkload {
         .append(stats.profiles.values().stream()
             .mapToLong(profile -> profile.retryBackoffMicros).sum()).append(',')
         .append("\"plan_cache_hits\":")
-        .append(NativeLiteTpccTransactions.planCacheHits()).append(',')
+        .append(TrafodionLiteTpccTransactions.planCacheHits()).append(',')
         .append("\"plan_cache_misses\":")
-        .append(NativeLiteTpccTransactions.planCacheMisses()).append(',')
+        .append(TrafodionLiteTpccTransactions.planCacheMisses()).append(',')
         .append("\"plan_cache_hit_ratio\":")
         .append(planCacheHitRatio()).append(',')
         .append("\"queue_time\":\"unavailable_direct_dispatch\",")
@@ -370,13 +370,13 @@ public final class NativeLiteTpccWorkload {
 
   public static void main(String[] args) throws Exception {
     require(args.length == 4,
-        "usage: NativeLiteTpccWorkload JDBC_URL MODE PROPERTIES REPORT");
+        "usage: TrafodionLiteTpccWorkload JDBC_URL MODE PROPERTIES REPORT");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     Path report = Paths.get(args[3]);
     if ("checkpoint".equals(args[1])) {
       try (Connection connection = connect(args[0])) {
         require("ok".equals(queryString(connection,
-            "SELECT NATIVE_LITE_CHECKPOINT()")), "checkpoint did not return ok");
+            "SELECT TRAFODION_LITE_CHECKPOINT()")), "checkpoint did not return ok");
         connection.rollback();
       }
       Files.write(report, "{\"online_checkpoint\":\"pass\"}\n"
@@ -396,8 +396,8 @@ public final class NativeLiteTpccWorkload {
       return;
     }
     if ("watermark".equals(args[1])) {
-      try (NativeLiteTpccTransactions.Terminal terminal =
-               new NativeLiteTpccTransactions.Terminal(args[0], 999, 1)) {
+      try (TrafodionLiteTpccTransactions.Terminal terminal =
+               new TrafodionLiteTpccTransactions.Terminal(args[0], 999, 1)) {
         try {
           terminal.payment(1, 2);
           throw new AssertionError("disk-watermark transaction succeeded");
@@ -432,7 +432,7 @@ public final class NativeLiteTpccWorkload {
     int items = Integer.parseInt(properties.getProperty(
         "performance.items"));
     long dataSeed = Long.parseLong(properties.getProperty("data.seed"));
-    NativeLiteTpccTransactions.configureCardinality(
+    TrafodionLiteTpccTransactions.configureCardinality(
         customers, orders, newOrders, items, dataSeed);
     int warmup = Integer.parseInt(properties.getProperty(
         "performance.warmup.transactions.per.terminal"));
@@ -461,7 +461,7 @@ public final class NativeLiteTpccWorkload {
     }
     try (Connection connection = connect(args[0])) {
       require("ok".equals(queryString(connection,
-          "SELECT NATIVE_LITE_OCC_METRICS_RESET()")),
+          "SELECT TRAFODION_LITE_OCC_METRICS_RESET()")),
           "OCC metrics reset did not return ok");
       connection.rollback();
     }
@@ -478,7 +478,7 @@ public final class NativeLiteTpccWorkload {
     verify(args[0], warehouses, districts, Paths.get(args[3] + ".verify"));
     String occMetrics;
     try (Connection connection = connect(args[0])) {
-      occMetrics = queryString(connection, "SELECT NATIVE_LITE_OCC_METRICS()");
+      occMetrics = queryString(connection, "SELECT TRAFODION_LITE_OCC_METRICS()");
       connection.rollback();
     }
     String json = json(stats, occMetrics, warehouses, terminals, warmup, measured,

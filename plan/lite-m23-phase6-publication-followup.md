@@ -1,4 +1,4 @@
-# Lite M23 后续阶段：publication group commit 解串行化
+# Trafodion Lite M23 后续阶段：publication group commit 解串行化
 
 ## 范围
 

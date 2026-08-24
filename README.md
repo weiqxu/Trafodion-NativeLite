@@ -1,20 +1,21 @@
-# Trafodion Lite Storage
+# Trafodion Lite
 
-This checkout adds **Lite Storage**, a RocksDB-based single-node storage path
-for the native Trafodion SQL engine.
+**Trafodion Lite** is a Trafodion database powered by **Lite Storage**, an
+embedded RocksDB-based storage engine that replaces HBase. It retains
+Trafodion's native SQL compiler and executor while removing the HBase, HDFS,
+and Hadoop runtime dependencies from this deployment profile.
 
 The `lite` build selects Lite Storage and removes Java, Maven, Hadoop, HDFS,
 HBase, Hive, DCS, REST, TrafCI, and Java client modules from that build path.
 The supported runtimes are standalone `sqlci` and the M11
-`nativelite-server`; both use the normal native compiler/executor over the
-embedded RocksDB catalog and table store.
+`trafodion-lite-server`; both use the normal native compiler/executor over the
+embedded Lite Storage catalog and table store.
 
-The current single-node runtime backed by Lite Storage is not a complete
-standalone database. Its bounded surface includes transactions, DDL/DML,
-indexes, metadata/statistics,
-authorization, constrained UDR execution, session-owned transaction contexts,
-and a reduced Trafodion Type 4 endpoint validated with the repository T4 JDBC
-driver. M12 adds a backend-neutral transactional storage contract, a selected
+The current Trafodion Lite database surface includes transactions, DDL/DML,
+indexes, metadata/statistics, authorization, constrained UDR execution,
+session-owned transaction contexts, and a reduced Trafodion Type 4 endpoint
+validated with the repository T4 JDBC driver. M12 adds a backend-neutral
+transactional storage contract, a selected
 RocksDB TransactionDB engine, durable multi-table DML publication/recovery, and
 versioned metadata keys plus backup/restore tooling. M13 makes that
 TransactionDB the exclusive catalog/table storage format and rejects old
@@ -47,9 +48,9 @@ two overlapping CLI contexts, isolation, independent completion, deterministic
 same-key conflict, reset/delete cleanup, snapshot release, and context reuse.
 The effective authorization identity and new-object ownership also come from
 the current `ContextCli`, including after `SET SESSION AUTHORIZATION`; the
-compiler session is a propagated mirror rather than the Lite authority.
+compiler session is a propagated mirror rather than the Lite Storage authority.
 
-M11B adds a long-running `nativelite-server` that exclusively owns the store,
+M11B adds a long-running `trafodion-lite-server` that exclusively owns the store,
 creates one CLI context per connection, accepts loopback TCP or owner-only Unix
 sockets, reaps completed connection threads, and survives clean and unclean
 restart with committed data intact. Unix startup preserves non-socket, foreign,
@@ -76,7 +77,7 @@ M12 defines `LiteStorageEngine`, session, transaction, and streaming cursor
 interfaces. A shared gate runs RocksDB TransactionDB and SQLite WAL through the
 same atomicity, snapshot, conflict, cancellation, recovery, backup/restore,
 integrity, metrics, and disk-watermark checks. TransactionDB is selected for
-the single-node runtime. A synchronous TransactionDB journal is the durable
+the embedded runtime. A synchronous TransactionDB journal is the durable
 commit decision, all tables are conflict-checked before that decision, and
 idempotent table markers allow startup to finish an interrupted multi-table SQL
 commit. Metadata keys use collision-free version-2 encodings.
@@ -154,7 +155,7 @@ run measured 21.332 TPS and 1.479 s New-Order p95. Its design and staged
 gates are in `plan/lite-tpcc-m17-design.md`; run `make lite-m17`.
 
 M18 is now the active follow-up for T4 transaction-control and durable
-publication overhead. It uses the Lite transaction participant for
+publication overhead. It uses the Lite Storage transaction participant for
 initialized T4 `BEGIN`/`COMMIT`/`ROLLBACK` requests, preserves fallback for
 first-use and DDL contexts, and keeps synchronous RocksDB commit enabled by
 default. The latest sync run measured 19.464 TPS with 1.744 s New-Order p95;
@@ -197,13 +198,13 @@ Run `make lite-m22`.
 
 ### Functional boundary
 
-| Area | Validated Lite Storage-backed surface | Not currently claimed |
+| Area | Validated Trafodion Lite surface | Not currently claimed |
 | --- | --- | --- |
 | DML and storage | Session-owned overlapping transactions; INSERT, UPDATE, DELETE, UPSERT, and MERGE; secondary indexes; backend-neutral transaction/cursor contract; crash-recoverable multi-table DML; checkpoint, backup/restore, integrity verification, disk-watermark checks, and exclusive unified TransactionDB layout | In-place upgrade from the removed per-table format, distributed transactions, node-level HA, online multi-process writers, and zero-downtime upgrade orchestration |
 | Catalog and DDL | Schemas, views, synonyms, sequences, defaults, CHECK and bounded RI constraints, identity columns, triggers, and persisted basic statistics | RI CASCADE, computed system columns, full histograms, and unrestricted physical `_MD_` behavior |
 | Types and executor | ISO88591/UTF8/UCS2, binary types, BOOLEAN, INTERVAL, LONG VARCHAR, cursors, window/grouping operations, local sort/scratch, and cancellation cleanup | LOB/ARRAY and broader collation support, ESP fan-out, and distributed execution |
-| Authorization and UDR | Lite users, roles, ownership/privileges, catalog identity validation at server startup, and bounded native/Java UDR adapters | Password/TLS/external identity services, the full UDR server, and host-rowset behavior |
-| Runtime and clients | Standalone `sqlci`; multi-client `nativelite-server`; loopback TCP and protected 0600 Unix sockets; reduced Trafodion Type 4 association/SQL protocol tested with the repository T4 JDBC driver | Full T4/DCS compatibility, ODBC certification, LOB/call/batch/rowset input, broad catalog APIs, remote/TLS deployment, DCS/REST, and HBase/HDFS/Hive runtimes |
+| Authorization and UDR | Trafodion Lite users, roles, ownership/privileges, catalog identity validation at server startup, and bounded native/Java UDR adapters | Password/TLS/external identity services, the full UDR server, and host-rowset behavior |
+| Runtime and clients | Standalone `sqlci`; multi-client `trafodion-lite-server`; loopback TCP and protected 0600 Unix sockets; reduced Trafodion Type 4 association/SQL protocol tested with the repository T4 JDBC driver | Full T4/DCS compatibility, ODBC certification, LOB/call/batch/rowset input, broad catalog APIs, remote/TLS deployment, DCS/REST, and HBase/HDFS/Hive runtimes |
 
 The detailed milestone evidence and boundaries are maintained in
 [`plan/lite-legacy-regress-roadmap.md`](plan/lite-legacy-regress-roadmap.md).
@@ -214,11 +215,11 @@ The separate newregress qualification order is in
 
 | Test surface | Inventory | Current evidence |
 | --- | ---: | --- |
-| Native Lite Storage lane | 43 TEST/EXPECTED cases | **43/43 pass**, zero non-empty DIFF files |
+| Trafodion Lite regression lane | 43 TEST/EXPECTED cases | **43/43 pass**, zero non-empty DIFF files |
 | Unmodified Trafodion legacy allowlist | 11 cases | **11/11 pass**, zero non-empty DIFF files |
 | Audited Trafodion legacy inventory | 122 unique primary TEST inputs from 9 standard suites | 11 runnable, 51 blocked, 42 unsafe, and 18 excluded |
 | Remaining standard suites | 14 Hive and 25 QAT cases | Hive explicitly excluded; QAT classified as blocked/unassessed pending a shared-state adapter |
-| Separate `newregr` inventory | 281 statically paired cases and 1 unpaired MVS input, plus custom performance workloads | No lite execution/convergence result yet |
+| Separate `newregr` inventory | 281 statically paired cases and 1 unpaired MVS input, plus custom performance workloads | No Trafodion Lite execution/convergence result yet |
 
 The standard `runallsb` surface contains 161 logical cases across 11 suites:
 the 122 audited inputs plus 14 Hive and 25 QAT cases. The eleven directly passing
@@ -252,7 +253,7 @@ scripts/install-lite-deps.sh --dry-run
 scripts/install-lite-deps.sh -y
 ```
 
-Build lite:
+Build Trafodion Lite:
 
 ```bash
 OMPI_CXX=/usr/bin/g++ make lite
@@ -281,7 +282,7 @@ Example:
 >>exit;
 ```
 
-Minimal Lite table smoke example:
+Minimal Lite Storage table smoke example:
 
 ```sql
 >>CREATE TABLE t(a INT, b VARCHAR(20));
@@ -291,19 +292,19 @@ Minimal Lite table smoke example:
 >>exit;
 ```
 
-## Quick NativeLite Server Run
+## Quick Trafodion Lite Server Run
 
 After applying the same `TRAF_HOME`, `TRAF_LITE`, store, and library-path
 environment used above, start the local trusted endpoint with:
 
 ```bash
-$SQL_LIBS/nativelite-server --listen 127.0.0.1 --port 23400
+$SQL_LIBS/trafodion-lite-server --listen 127.0.0.1 --port 23400
 ```
 
 The same build also provides a small SQLCI-style network client:
 
 ```bash
-$SQL_LIBS/nativelite-client \
+$SQL_LIBS/trafodion-lite-client \
   --host 127.0.0.1 --port 23400
 ```
 
@@ -311,12 +312,12 @@ It accepts one or more SQL statements terminated by `;`, supports multiline
 input and `exit`, `quit`, or `\\q`, and can execute a script with `-f`:
 
 ```bash
-$SQL_LIBS/nativelite-client \
+$SQL_LIBS/trafodion-lite-client \
   --host 127.0.0.1 --port 23400 -f smoke.sql
 ```
 
-The client speaks the reduced Trafodion Type 4 protocol exposed by the Lite
-Storage-backed runtime directly;
+The client speaks the reduced Trafodion Type 4 protocol exposed directly by
+the Trafodion Lite runtime backed by Lite Storage;
 it is not a PostgreSQL-wire client. It currently implements direct SQL,
 fetching and tabular result display, transaction-independent disconnect, and
 SQL diagnostics. The endpoint remains the local trusted transport described
@@ -331,15 +332,15 @@ jdbc:t4jdbc://127.0.0.1:23400/:
 
 This M11 endpoint intentionally has no password or TLS exchange. TCP binds are
 restricted to numeric loopback addresses; alternatively pass
-`--unix-socket /path/nativelite.sock`, which creates an owner-only socket for
+`--unix-socket /path/trafodion-lite.sock`, which creates an owner-only socket for
 lifecycle/embedding use; the current T4 JDBC gate uses TCP. User names must
-already exist in the Lite catalog. Existing non-socket, foreign, or active
+already exist in the Lite Storage catalog. Existing non-socket, foreign, or active
 Unix paths are never replaced. Use this endpoint only as the documented local
 trusted transport.
 
 ## Quick Regress Run
 
-After building the lite SQL binary, run the native TEST/EXPECTED lane
+After building the Trafodion Lite SQL binary, run the native TEST/EXPECTED lane
 without starting SQF, TMF, HBase, Hadoop, or ZooKeeper:
 
 ```bash
@@ -358,7 +359,7 @@ store already created by this build:
 
 ```bash
 TRAF_LITE_STORE_DIR=/path/to/store \
-  $SQL_LIBS/nativelite-server --listen 127.0.0.1 --port 23400
+  $SQL_LIBS/trafodion-lite-server --listen 127.0.0.1 --port 23400
 ```
 
 Startup creates `/path/to/store/transactiondb` and publishes the format and

@@ -1048,7 +1048,7 @@ HbaseAccess::addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
      appendPushedDownExpression(tdb, description);
     }
 #else
-  // NativeLite emits ComTdbLiteRocksdbScan, which deliberately has a
+  // Trafodion Lite emits ComTdbLiteRocksdbScan, which deliberately has a
   // layout independent from ComTdbHbaseAccess.  HBase cache, snapshot, and
   // pushed-filter explain fields are inapplicable and casting the local TDB
   // to the HBase class reads arbitrary offsets as Queue pointers.

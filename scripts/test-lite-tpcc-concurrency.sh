@@ -2,10 +2,10 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
 driver_source="$repo_root/core/conn/jdbcT4/src/main/java"
-loader_source="$repo_root/scripts/NativeLiteTpcc.java"
-concurrency_source="$repo_root/scripts/NativeLiteTpccConcurrency.java"
+loader_source="$repo_root/scripts/TrafodionLiteTpcc.java"
+concurrency_source="$repo_root/scripts/TrafodionLiteTpccConcurrency.java"
 inventory="$repo_root/benchmarks/tpcc/m14e-runtime-inventory.tsv"
 properties="$repo_root/benchmarks/tpcc/qualification.properties"
 schema="$repo_root/benchmarks/tpcc/schema.sql"
@@ -14,7 +14,7 @@ sqf_libs="$repo_root/core/sqf/export/lib64d"
 traf_home="$repo_root/core/sqf"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-[[ -x "$server" ]] || fail "missing built NativeLite server: $server"
+[[ -x "$server" ]] || fail "missing built Trafodion Lite server: $server"
 [[ $(wc -l <"$inventory") -eq 16 ]] || fail "M14E runtime inventory drifted"
 grep -q $'default catalog and schema\tprocess environment' "$inventory" ||
   fail "M14E runtime inventory is missing schema ownership"
@@ -38,7 +38,7 @@ server_log="$test_root/server.log"
 report="$test_root/concurrency-report.json"
 mkdir -p "$store_dir" "$classes_dir"
 server_pid=
-port=${NATIVELITE_TEST_PORT:-$((28000 + ($$ % 9000)))}
+port=${TRAFODION_LITE_TEST_PORT:-$((28000 + ($$ % 9000)))}
 jdbc_url="jdbc:t4jdbc://127.0.0.1:${port}/:"
 
 cleanup() {
@@ -65,15 +65,15 @@ env TRAF_HOME="$traf_home" TRAF_LITE=1 \
   "$server" --listen 127.0.0.1 --port "$port" >"$server_log" 2>&1 &
 server_pid=$!
 for _ in $(seq 1 200); do
-  if grep -q 'NativeLite server ready' "$server_log"; then break; fi
+  if grep -q 'Trafodion Lite server ready' "$server_log"; then break; fi
   kill -0 "$server_pid" 2>/dev/null || fail "M14E server exited during startup"
   sleep 0.05
 done
-grep -q 'NativeLite server ready' "$server_log" || fail "M14E server not ready"
+grep -q 'Trafodion Lite server ready' "$server_log" || fail "M14E server not ready"
 
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpcc \
   "$jdbc_url" load smoke "$properties" "$schema" "$test_root/load.json"
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccConcurrency \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccConcurrency \
   "$jdbc_url" "$report"
 grep -q '"compiler_executor_overlap":"pass"' "$report" ||
   fail "M14E executor overlap was not observed"

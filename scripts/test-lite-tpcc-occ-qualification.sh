@@ -54,7 +54,7 @@ property() {
 workload=$(tr -d '\n' <"$workload_report")
 operations=$(tr -d '\n' <"$operations_report")
 schema_sha=$(sha256sum "$asset_dir/schema.sql" | awk '{print $1}')
-driver_sha=$(sha256sum "$repo_root/scripts/NativeLiteTpccTransactions.java" | \
+driver_sha=$(sha256sum "$repo_root/scripts/TrafodionLiteTpccTransactions.java" | \
   awk '{print $1}')
 config_sha=$(sha256sum "$properties" | awk '{print $1}')
 source_revision=$(git -C "$repo_root" rev-parse HEAD)

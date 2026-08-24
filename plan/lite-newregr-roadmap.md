@@ -1,9 +1,9 @@
-# Lite Storage Newregress Qualification Roadmap
+# Trafodion Lite Newregress Qualification Roadmap
 
 ## Purpose And Accounting Boundary
 
 This plan qualifies the historical `core/sql/regress/newregr` assets for
-lite without mixing them into the standard `runallsb` pass rate. The
+Trafodion Lite without mixing them into the standard `runallsb` pass rate. The
 standard inventory contains 161 logical cases. Newregress is a separate asset
 family with different naming, state, clients, runners, and expected-output
 contracts.

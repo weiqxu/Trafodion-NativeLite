@@ -2,21 +2,21 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
 driver_source="$repo_root/core/conn/jdbcT4/src/main/java"
-loader_source="$repo_root/scripts/NativeLiteTpcc.java"
-concurrency_source="$repo_root/scripts/NativeLiteTpccConcurrency.java"
+loader_source="$repo_root/scripts/TrafodionLiteTpcc.java"
+concurrency_source="$repo_root/scripts/TrafodionLiteTpccConcurrency.java"
 properties="$repo_root/benchmarks/tpcc/qualification.properties"
 schema="$repo_root/benchmarks/tpcc/schema.sql"
 sql_libs="$repo_root/core/sql/lib/linux/64bit/debug"
 sqf_libs="$repo_root/core/sqf/export/lib64d"
 traf_home="$repo_root/core/sqf"
-clients=${NATIVELITE_M21_CLIENTS:-32}
+clients=${TRAFODION_LITE_M21_CLIENTS:-32}
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-[[ -x "$server" ]] || fail "missing built NativeLite server: $server"
+[[ -x "$server" ]] || fail "missing built Trafodion Lite server: $server"
 [[ "$clients" =~ ^[0-9]+$ && "$clients" -ge 2 && "$clients" -le 256 ]] ||
-  fail "NATIVELITE_M21_CLIENTS must be between 2 and 256"
+  fail "TRAFODION_LITE_M21_CLIENTS must be between 2 and 256"
 
 slf4j_jar=${SLF4J_API_JAR:-}
 if [[ -z "$slf4j_jar" && -r /usr/share/java/slf4j-api.jar ]]; then
@@ -40,7 +40,7 @@ report="$test_root/concurrency-report.json"
 mkdir -p "$store_dir" "$capacity_store_dir" "$classes_dir"
 server_pid=
 capacity_pid=
-port=${NATIVELITE_TEST_PORT:-$((30000 + ($$ % 7000)))}
+port=${TRAFODION_LITE_TEST_PORT:-$((30000 + ($$ % 7000)))}
 capacity_port=$((port + 1))
 jdbc_url="jdbc:t4jdbc://127.0.0.1:${port}/:"
 capacity_url="jdbc:t4jdbc://127.0.0.1:${capacity_port}/:"
@@ -73,16 +73,16 @@ env TRAF_HOME="$traf_home" TRAF_LITE=1 \
   "$server" --listen 127.0.0.1 --port "$port" --workers "$clients" >"$server_log" 2>&1 &
 server_pid=$!
 for _ in $(seq 1 200); do
-  if grep -q 'NativeLite server ready' "$server_log"; then break; fi
+  if grep -q 'Trafodion Lite server ready' "$server_log"; then break; fi
   kill -0 "$server_pid" 2>/dev/null || fail "M21 server exited during startup"
   sleep 0.05
 done
-grep -q 'NativeLite server ready' "$server_log" || fail "M21 server not ready"
+grep -q 'Trafodion Lite server ready' "$server_log" || fail "M21 server not ready"
 grep -q "workers=$clients" "$server_log" || fail "M21 worker limit was not applied"
 
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpcc \
   "$jdbc_url" load smoke "$properties" "$schema" "$test_root/load.json"
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccConcurrency \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccConcurrency \
   "$jdbc_url" "$report" "$clients"
 grep -q '"client_count":'"$clients" "$report" || fail "M21 client count missing from report"
 
@@ -96,12 +96,12 @@ env TRAF_HOME="$traf_home" TRAF_LITE=1 \
   "$server" --listen 127.0.0.1 --port "$capacity_port" --workers 2 >"$capacity_log" 2>&1 &
 capacity_pid=$!
 for _ in $(seq 1 200); do
-  if grep -q 'NativeLite server ready' "$capacity_log"; then break; fi
+  if grep -q 'Trafodion Lite server ready' "$capacity_log"; then break; fi
   kill -0 "$capacity_pid" 2>/dev/null || fail "M21 capacity server exited during startup"
   sleep 0.05
 done
-grep -q 'NativeLite server ready' "$capacity_log" || fail "M21 capacity server not ready"
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccConcurrency "$capacity_url" capacity
+grep -q 'Trafodion Lite server ready' "$capacity_log" || fail "M21 capacity server not ready"
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccConcurrency "$capacity_url" capacity
 
 kill -TERM "$capacity_pid"
 wait "$capacity_pid"

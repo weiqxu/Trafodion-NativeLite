@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source_file="$repo_root/scripts/NativeLiteTpccTransactions.java"
+source_file="$repo_root/scripts/TrafodionLiteTpccTransactions.java"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 grep -q 'SELECT I_ID,I_PRICE FROM TPCC_ITEM WHERE I_ID IN (' "$source_file" ||

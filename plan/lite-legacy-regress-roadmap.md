@@ -1,13 +1,13 @@
-# Lite Storage Legacy Regress Roadmap
+# Trafodion Lite Legacy Regression Roadmap
 
 ## Purpose
 
 Milestones 0 through 10 in this roadmap track the work required to run the
 portable, non-Hive, and non-HBase portions of the legacy suites under
-`core/sql/regress` against the standalone lite SQLCI and RocksDB store.
+`core/sql/regress` against Trafodion Lite SQLCI and Lite Storage.
 Milestones 11 through 13 extend that validated SQL surface into the session,
 service, transaction, recovery, and unified-storage boundaries required for a
-production-oriented single-node database. Milestone 14 makes TPC-C
+production-oriented database. Milestone 14 makes TPC-C
 qualification the next primary objective and uses those foundations to drive
 isolation, concurrent execution, workload, and operational evidence.
 
@@ -44,7 +44,7 @@ Every included test or section must have:
 - an isolated `TRAF_LITE_STORE_DIR` when executed;
 - retained RAW, LOG, DIFF, exit-status, and first-diagnostic evidence;
 - no unexpected skip or broad output filter that hides a semantic failure;
-- native lite regress, runtime, and RocksDB SQLCI smoke remaining green.
+- Trafodion Lite regression, runtime, and RocksDB SQLCI smoke remaining green.
 
 ## Milestone 0: Inventory, Adapter, And Baseline
 
@@ -106,7 +106,7 @@ Deliverables:
    legacy TEST input and supports section-level rows.
 2. An audit script that detects missing/unknown manifest entries, validates the
    vocabulary, identifies unsafe helpers, and reports suite/milestone totals.
-3. A lite legacy adapter that executes only allowlisted entries by
+3. A Trafodion Lite legacy adapter that executes only allowlisted entries by
    default, uses an isolated store and run directory, and refuses unsafe shell
    or abort directives.
 4. A repeatable baseline report containing the first SQL diagnostic and diff
@@ -128,7 +128,7 @@ Completion criteria:
 ## Milestone 1: UPDATE
 
 Status: completed in the working tree. Native regression coverage is in
-`lite/TEST026`; the full lite suite passes 26/26. Re-probing the two
+`lite/TEST026`; the full Trafodion Lite suite passes 26/26. Re-probing the two
 legacy tests previously blocked first by UPDATE confirms that
 `charsets/TEST003` now reaches DELETE and `executor/TEST101` completes its
 six-row NULL-scale UPDATE before later suite-convergence differences.
@@ -165,7 +165,7 @@ and transaction overlay behavior.
 ## Milestone 3: Secondary Indexes
 
 Status: complete. The RocksDB-only implementation persists unique and
-non-unique index definitions in the Lite catalog, supports `CREATE INDEX` and
+non-unique index definitions in the Lite Storage catalog, supports `CREATE INDEX` and
 `DROP INDEX`, records composite key order, backfills physical index records,
 and maintains them atomically with INSERT, UPDATE, DELETE, UPSERT, MERGE, and
 transaction commit. It validates object and column conflicts, rejects duplicate
@@ -192,7 +192,7 @@ secondary indexes, key direction, uniqueness, primary-key suffixes, and covering
 columns; the optimizer can cost and select them, and the executor resolves the
 selected index back to its owning RocksDB table. Generator-side candidate ranking
 prefers longer prefixes and exact unique matches when several usable indexes are
-available. Ordered keys cover every type currently accepted by lite table
+available. Ordered keys cover every type currently accepted by Lite Storage table
 DDL: integer and floating numerics, fixed and wide NUMERIC/DECIMAL, CHAR/VARCHAR,
 and DATE/TIME/TIMESTAMP. Nullable composite prefixes support consecutive
 `IS NULL` components and range predicates following NULL/equality components.
@@ -208,7 +208,7 @@ predicates, and EXPLAIN coverage.
 
 ## Milestone 4: Catalog DDL And Constraints
 
-Status: complete in the working tree. The Lite catalog now persists schemas,
+Status: complete in the working tree. The Lite Storage catalog now persists schemas,
 views, synonyms, sequences, table defaults, CHECK and RESTRICT/NO ACTION RI
 constraints, identity allocation state, triggers, dependency metadata, and
 ALTER/TRUNCATE changes in RocksDB. Metadata updates use replacement writes and
@@ -225,7 +225,7 @@ invalidation, and failure-atomic metadata changes.
 
 ## Milestone 5: Metadata And Statistics
 
-Status: complete for the RocksDB-only lite surface in the working tree.
+Status: complete for the Trafodion Lite surface backed by Lite Storage in the working tree.
 `LiteSqlTable_process` now serves deterministic SHOWDDL, computes and
 persists table/column row and NULL statistics, and executes UPDATE STATISTICS
 without arkcmp/HBase.  The catalog has a versioned statistics record and
@@ -235,51 +235,51 @@ commit invalidate the table record, so the next SHOWSTATS observes the current
 RocksDB rows. Native coverage is in `lite/TEST038`, including those
 post-DML refreshes, and the full native suite is 38/38. The intentionally
 excluded surface is direct legacy SQL against physical `_MD_` tables and full
-value histograms/UEC estimation; lite metadata is exposed through
+value histograms/UEC estimation; Lite Storage metadata is exposed through
 SHOWDDL/SHOWSTATS and all optimizer/explain behavior remains RocksDB-native.
 
 ## Milestone 6: Character Sets And Data Types
 
-Status: complete for the RocksDB-only lite surface in the working tree.
+Status: complete for the Trafodion Lite surface backed by Lite Storage in the working tree.
 The catalog now preserves UTF8/UCS2 character metadata and byte capacity,
 retains BINARY/VARBINARY instead of normalizing them to character strings, and
 maps BOOLEAN, INTERVAL, and LONG VARCHAR into optimizer descriptors.  The
 canonical RocksDB row codec stores and projects these types, handles NULL and
 bounded multibyte values, and includes BOOLEAN/INTERVAL/BINARY/VARBINARY in
 secondary-key encoding.  Native coverage is in `lite/TEST039`; together
-with the existing suite the full lite lane passes 39/39.  The test also
+with the existing suite the full Trafodion Lite lane passes 39/39.  The test also
 exercises UTF8/UCS2 values, interval projection, binary storage, a composite
 RocksDB index, BOOLEAN predicates, assignment, and index lifecycle.
 
 The deliberate boundary remains explicit: BLOB/CLOB/ARRAY and HBase/HDFS/LOB
-backing are rejected with the existing lite diagnostic; non-default
+backing are rejected with the existing Trafodion Lite diagnostic; non-default
 collations and character translations outside ISO88591/UTF8/UCS2 are not
 claimed by this milestone.  All supported data is persisted in RocksDB tables;
 no HBase client or HFile path is used.
 
 ## Milestone 7: Advanced Executor Coverage
 
-Status: complete for the RocksDB-only, single-process lite surface in the
-working tree.  The lite regress runner enables SQLCI cursor execution;
+Status: complete for the single-process Trafodion Lite surface backed by Lite Storage in the
+working tree. The Trafodion Lite regression runner enables SQLCI cursor execution;
 updatable `FOR UPDATE` cursors now have native coverage for FETCH, positioned
 UPDATE, positioned DELETE, and close/teardown.  The normal executor path covers
 multi-row VALUES/insert-select tuple flow, window functions (ROW_NUMBER, RANK,
 DENSE_RANK, LAG, LEAD, and running aggregates), grouping/sorting, and executor
 statistics/lifecycle through the existing queue and BMO implementations.
 RocksDB scan row handles are cleared on cancellation and TCB teardown, and
-lite startup assigns an isolated scratch directory under
+Trafodion Lite startup assigns an isolated scratch directory under
 `TRAF_LITE_STORE_DIR` for sort/hash overflow files.  Native coverage is in
 `lite/TEST040`; the full native lane passes 40/40 and the RocksDB SQLCI
 smoke remains green.
 
 The deliberate boundary is explicit: standalone SQLCI does not expose embedded
-host-language rowset descriptors, lite tables have no physical partition
+host-language rowset descriptors, Lite Storage tables have no physical partition
 or ESP fan-out, and execution is single-process with RocksDB tables only.
 HBase/HDFS/HFile access and service-stack cancellation are not used.
 
 ## Milestone 8: Authorization
 
-Status: complete for the RocksDB-only lite surface in the working tree.
+Status: complete for the Trafodion Lite surface backed by Lite Storage in the working tree.
 The catalog now persists users, roles, role membership, table ownership,
 table-level SELECT/INSERT/UPDATE/DELETE/REFERENCES/USAGE privileges, grant
 changes, and an authorization generation counter.  SQLCI `-u` and
@@ -288,9 +288,9 @@ the effective/session identity to `CURRENT_USER`, `SESSION_USER`, and `USER`.
 Role membership is transitive, owners and `DB__ROOT` retain administrative
 control, and GRANT/REVOKE changes are checked before compilation and again at
 prepared-statement execution so a cached plan cannot bypass a revoke.  Views
-use their persisted owner as the lite definer boundary; switching the
+use their persisted owner as the Trafodion Lite definer boundary; switching the
 session identity provides the invoker boundary.  Native coverage is in
-`lite/TEST041`, and the full lite lane passes 43/43. Object creation
+`lite/TEST041`, and the full Trafodion Lite lane passes 43/43. Object creation
 reads the effective identity from the current `ContextCli`, not an environment
 variable or a potentially stale compiler-session mirror.
 
@@ -302,7 +302,7 @@ HBase/HDFS/HFile path is used.
 
 ## Milestone 9: UDR
 
-Status: complete for the bounded RocksDB-only lite surface in the
+Status: complete for the bounded Trafodion Lite surface backed by Lite Storage in the
 working tree.  SQLCI now handles UDR DDL and invocation before the MX compiler
 path, so no `_MD_` metadata tables, HBase/HDFS/HFile access, UDR server, or
 Trafodion service stack is required.  Library and routine definitions are
@@ -319,7 +319,7 @@ parameters, one-row table-mapping functions, and `PREPARE`/`EXECUTE` are
 covered by `lite/TEST042`; native and Java adapters share the same
 RocksDB metadata and invocation path.  Result-set output is represented as a
 deterministic SQLCI row, and invocation has no hidden table mutation, so
-COMMIT/ROLLBACK and isolation remain the caller's lite transaction
+COMMIT/ROLLBACK and isolation remain the caller's Lite Storage transaction
 boundary rather than an HBase side effect.
 
 The deliberate boundary is explicit: the portable adapter currently supports
@@ -345,7 +345,7 @@ This was revalidated on 2026-08-15; all eleven allowlisted legacy cases and all
 UPDATE/DELETE, supported translation, and the expected rejection of unsupported
 character-set and translation names.  `executor/TEST014` validates CTAS,
 volatile CTAS, STORE BY compatibility, INVOKE, and CTAS diagnostics on ordinary
-RocksDB tables.  The Lite EXPECTED files record the Lite SQLCI
+RocksDB tables.  The Trafodion Lite EXPECTED files record the Trafodion Lite SQLCI
 diagnostic/DDL display contract without changing legacy source files.  This
 prevents a legacy expected-file mismatch or a skipped entry from being reported
 as M10 success.
@@ -357,9 +357,9 @@ traced back to a storage or executor capability:
 
 | Gate | Status | RocksDB-only deliverable | Required evidence |
 | --- | --- | --- | --- |
-| M10A | bounded complete | CTAS and volatile CTAS use the ordinary Lite DDL path; logical PARTITION/DIVISION/STORE BY/table-attribute hints are accepted as non-physical hints; view mutability and WITH CHECK OPTION metadata are persisted and exposed to the binder | `executor/TEST014`, native `TEST009`; the 120-second `core/TEST029` re-probe now exits normally but remains blocked on reviewed SHOWDDL and view-DML diagnostic differences |
+| M10A | bounded complete | CTAS and volatile CTAS use the ordinary Lite Storage DDL path; logical PARTITION/DIVISION/STORE BY/table-attribute hints are accepted as non-physical hints; view mutability and WITH CHECK OPTION metadata are persisted and exposed to the binder | `executor/TEST014`, native `TEST009`; the 120-second `core/TEST029` re-probe now exits normally but remains blocked on reviewed SHOWDDL and view-DML diagnostic differences |
 | M10B | complete | RocksDB row/null statistics are persisted, UEC is computed from non-NULL encoded values, and DML/transaction publication invalidates stale statistics | native `TEST038` |
-| M10C | complete | Primary/UNIQUE DML, secondary-index maintenance, ordered/range/index-only access, and rollback remain atomic in the Lite store | `core/TEST018` plus native `TEST026`-`TEST035` |
+| M10C | complete | Primary/UNIQUE DML, secondary-index maintenance, ordered/range/index-only access, and rollback remain atomic in Lite Storage | `core/TEST018` plus native `TEST026`-`TEST035` |
 | M10D | complete | UTF8/UCS2, binary types, BOOLEAN/INTERVAL, and supported character translation use the canonical RocksDB row/key codec | `charsets/TEST003`, `charsets/TEST316`, native `TEST039` |
 | M10E | complete | Cursor, window, grouping, sorting, cancellation cleanup, and local scratch-file lifecycle run through the single-process executor | native `TEST040` |
 | M10F | complete | Catalog-backed identity/role/privilege checks and the bounded native/Java UDR adapters run without a service stack | native `TEST041` and `TEST042` |
@@ -378,7 +378,7 @@ shell/service-stack behavior, and 21 are excluded for HBase/Hive/physical-
 storage behavior. Deduplicated by suite/TEST, the 122 inputs are 11 runnable,
 51 blocked, 42 unsafe, and 18 excluded. In particular,
 `executor/TEST101` now reaches its UPDATE body and pins the local diagnostic/
-CQD rendering in its Lite EXPECTED; the remaining blocked charset entries still require
+CQD rendering in its Trafodion Lite EXPECTED; the remaining blocked charset entries still require
 unsupported character-set paths or later DDL/statistics work.  The catalog now
 persists RocksDB-native
 logical metadata rows under the `md|OBJECTS|`, `md|TABLES|`, `md|COLUMNS|`, and
@@ -388,7 +388,7 @@ and the executor builds OBJECTS/TABLES/COLUMNS/KEYS/INDEXES rows directly from
 the RocksDB catalog.  The focused check is `make lite-metadata`; it
 validates table/index creation, metadata scans, and cleanup.  The compatibility
 descriptor exposes metadata scalar fields as text because the legacy metadata
-numeric/short-CHAR projection path is not available in the Lite executor.
+numeric/short-CHAR projection path is not available in the Lite Storage executor.
 No HBase implementation will be added; remaining work must be implemented
 against RocksDB tables or retained as a concrete exclusion.
 
@@ -414,7 +414,7 @@ suite-specific state and baseline adapters exist.
 
 ### RocksDB metadata layout
 
-The Lite catalog uses ordered logical metadata keys without copying HBase
+The Lite Storage catalog uses ordered logical metadata keys without copying HBase
 cells.  User data remains in the existing per-object RocksDB databases;
 the catalog RocksDB stores ordered metadata keys:
 
@@ -442,7 +442,7 @@ Run and converge the portable sections in this order:
 9. `udr`
 
 Completion means all included sections pass, all excluded sections retain an
-explicit reason, there are no unexpected diffs, and the native lite lane
+explicit reason, there are no unexpected diffs, and the Trafodion Lite lane
 continues to pass in full.
 
 ## Milestone Status Summary
@@ -461,7 +461,7 @@ convergence or a production database.
 | M5 metadata and statistics | Complete for the declared Lite Storage surface | Native `TEST038`; SHOWDDL/SHOWSTATS and persisted row/NULL statistics are covered. Full histograms and unrestricted legacy physical `_MD_` behavior are not claimed. |
 | M6 character sets and data types | Complete for the declared Lite Storage surface | Native `TEST039`; ISO88591/UTF8/UCS2, binary types, BOOLEAN, INTERVAL, and LONG VARCHAR are covered. LOB/ARRAY and broader collation/translation behavior remain outside the boundary. |
 | M7 advanced executor | Complete for the single-process surface | Native `TEST040`; cursors, windows, grouping, sorting, cancellation cleanup, and local scratch lifecycle are covered. There is no ESP fan-out or remote multi-session runtime. |
-| M8 authorization | Complete for the Lite catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
+| M8 authorization | Complete for the Lite Storage catalog surface | Native `TEST041`; users, roles, ownership, privileges, revoke checks, and view owner/invoker boundaries are covered. Password authentication and an external identity service are not. |
 | M9 UDR | Complete for the bounded adapter surface | Native `TEST042`; versioned routine metadata and bounded native/Java invocation are covered. This is not the full UDR server or host-rowset surface. |
 | M10 suite convergence | Bounded complete; full portable legacy convergence remains incomplete | `make lite-m10` covers the eleven allowlisted legacy entries and native `TEST001`-`TEST043`. The remaining inventory is still classified as blocked, unsafe/service-stack-dependent, or excluded physical HBase/Hive behavior. |
 | M11 sessionized runtime and standalone server | Complete for the declared local trusted surface | `make lite-m11` covers per-session transaction state, two-`ContextCli` SQLCI behavior, a multi-client server with clean/unclean restart, and a reduced Trafodion Type 4 endpoint through the repository T4 JDBC driver. M14E later removes the original compiler/executor queue with session-thread ownership and narrow DDL/utility locks. M12 supplies the bounded single-node recovery layer, while authentication/TLS and broader security remain later work. |
@@ -472,7 +472,7 @@ convergence or a production database.
 
 ## Milestone 11: Sessionized Runtime And Standalone Server
 
-Status: complete for the declared local trusted surface. M11 moves lite
+Status: complete for the declared local trusted surface. M11 moves Trafodion Lite
 from a single SQLCI process into one long-running database service that owns the
 embedded store and safely hosts multiple client sessions. It deliberately does
 not select or replace the storage engine, claim production recovery, or restore
@@ -515,10 +515,10 @@ transactions concurrently, isolate uncommitted writes, commit or roll back
 independently, resolve same-key conflicts deterministically, and clean up after
 disconnect/cancel without poisoning the other session.
 
-### M11B: Standalone NativeLite Server
+### M11B: Standalone Trafodion Lite Server
 
-- Add a long-running `nativelite-server` process that exclusively opens the
-  configured Lite store.
+- Add a long-running `trafodion-lite-server` process that exclusively opens the
+  configured Lite Storage.
 - Create and destroy one `ContextCli` session per client connection.
 - Provide prepare, execute, fetch, close, transaction, cancellation, health,
   and graceful-shutdown paths over an initial loopback/Unix-socket transport.
@@ -531,7 +531,7 @@ through the server, observe the declared isolation boundary, disconnect without
 leaking transaction state, and read committed data after a clean or unclean
 server restart.
 
-Implemented evidence: `nativelite-server` opens a process-lifetime catalog
+Implemented evidence: `trafodion-lite-server` opens a process-lifetime catalog
 lease, rejects a second server on the same store, creates/destroys one
 `ContextCli` per connection, and accepts numeric loopback TCP or an exact Unix
 socket with mode `0600`. At M11, connection threads fed one serialized engine
@@ -561,7 +561,7 @@ required. The implemented calls are connect/disconnect, set connection option,
 end transaction, prepare, execute/direct execute, fetch, free statement,
 STOPSRVR cancellation, and bounded GetSQLCatalogs support for catalogs, schemas,
 tables, columns, and primary keys. `make lite-m11c` compiles the repository
-T4 driver and runs `NativeLiteT4JdbcTest`; it covers prepared reuse, typed rows,
+T4 driver and runs `TrafodionLiteT4JdbcTest`; it covers prepared reuse, typed rows,
 overlapping transactions, disconnect rollback, cancellation with an active
 peer, metadata, and restart persistence. The driver's public
 `Statement.cancel()` does not dispatch during an active request, so the gate
@@ -740,7 +740,7 @@ database failures.
 ### M14B: Schema, Loader, And Data Integrity
 
 Status: complete. `benchmarks/tpcc/schema.sql` creates all nine mapped tables,
-core foreign keys, and customer/order lookup indexes. `NativeLiteTpcc` creates
+core foreign keys, and customer/order lookup indexes. `TrafodionLiteTpcc` creates
 and deterministically loads the database through the reduced T4 endpoint using
 bounded 1,000-row set commits; an injected failure proves restartable loading.
 The one-warehouse result contains 100,000 ITEM, 100,000 STOCK, 30,000 CUSTOMER,
@@ -976,7 +976,7 @@ admission.
 ### Milestone 16: Stock-Level Range Aggregation and Index Optimization
 
 Status: implementation complete; Release runtime evidence is pending an
-environment that permits the NativeLite TCP listener. M16 addresses the M15
+environment that permits the Trafodion Lite TCP listener. M16 addresses the M15
 performance bottleneck without changing its Trafodion MVCC/OCC transaction
 model.
 
@@ -993,7 +993,7 @@ model.
 - M16F runs the Release workload, records scan/latency deltas, and enforces
   zero Stock-Level full scans while retaining production targets as targets.
   The current host reaches the Release build but the runtime gate is blocked
-  by `NativeLite server startup failed: create TCP socket: Operation not
+  by `Trafodion Lite server startup failed: create TCP socket: Operation not
   permitted`; no substitute performance evidence is accepted.
 - M16G synchronizes all roadmap and benchmark documentation and records the
   final evidence. Formal TPC-C and `tpmC` claims remain excluded.

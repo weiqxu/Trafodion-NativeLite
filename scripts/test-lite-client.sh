@@ -2,22 +2,22 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-server="$repo_root/core/sqf/export/bin64d/nativelite-server"
-client="$repo_root/core/sqf/export/bin64d/nativelite-client"
+server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
+client="$repo_root/core/sqf/export/bin64d/trafodion-lite-client"
 sql_libs="$repo_root/core/sql/lib/linux/64bit/debug"
 sqf_libs="$repo_root/core/sqf/export/lib64d"
 traf_home="$repo_root/core/sqf"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-[[ -x "$server" ]] || fail "missing built NativeLite server: $server"
-[[ -x "$client" ]] || fail "missing built NativeLite client: $client"
+[[ -x "$server" ]] || fail "missing built Trafodion Lite server: $server"
+[[ -x "$client" ]] || fail "missing built Trafodion Lite client: $client"
 
 test_root=$(mktemp -d /tmp/traf-lite-client.XXXXXX)
 store_dir="$test_root/store"
 server_log="$test_root/server.log"
 mkdir -p "$store_dir"
 server_pid=
-port=${NATIVELITE_TEST_PORT:-$((25000 + ($$ % 10000)))}
+port=${TRAFODION_LITE_TEST_PORT:-$((25000 + ($$ % 10000)))}
 
 cleanup() {
   if [[ -n "${server_pid:-}" ]] && kill -0 "$server_pid" 2>/dev/null; then
@@ -34,14 +34,14 @@ env TRAF_HOME="$traf_home" TRAF_LITE=1 \
   "$server" --listen 127.0.0.1 --port "$port" >"$server_log" 2>&1 &
 server_pid=$!
 for _ in $(seq 1 100); do
-  if grep -q 'NativeLite server ready' "$server_log"; then break; fi
+  if grep -q 'Trafodion Lite server ready' "$server_log"; then break; fi
   if ! kill -0 "$server_pid" 2>/dev/null; then
     cat "$server_log" >&2
-    fail "NativeLite server exited during client startup"
+    fail "Trafodion Lite server exited during client startup"
   fi
   sleep 0.05
 done
-grep -q 'NativeLite server ready' "$server_log" || fail "NativeLite server did not become ready"
+grep -q 'Trafodion Lite server ready' "$server_log" || fail "Trafodion Lite server did not become ready"
 
 output=$(printf '%s\n' \
   'create table client_cli_test (id int not null, name varchar(20));' \

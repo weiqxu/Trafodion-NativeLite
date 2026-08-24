@@ -2,11 +2,11 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
 driver_source="$repo_root/core/conn/jdbcT4/src/main/java"
-loader_source="$repo_root/scripts/NativeLiteTpcc.java"
-transaction_source="$repo_root/scripts/NativeLiteTpccTransactions.java"
-isolation_source="$repo_root/scripts/NativeLiteTpccIsolation.java"
+loader_source="$repo_root/scripts/TrafodionLiteTpcc.java"
+transaction_source="$repo_root/scripts/TrafodionLiteTpccTransactions.java"
+isolation_source="$repo_root/scripts/TrafodionLiteTpccIsolation.java"
 properties="$repo_root/benchmarks/tpcc/qualification.properties"
 schema="$repo_root/benchmarks/tpcc/schema.sql"
 sql_libs="$repo_root/core/sql/lib/linux/64bit/debug"
@@ -18,7 +18,7 @@ fail() {
   exit 1
 }
 
-[[ -x "$server" ]] || fail "missing built NativeLite server: $server"
+[[ -x "$server" ]] || fail "missing built Trafodion Lite server: $server"
 command -v javac >/dev/null || fail "javac is required for the M14D gate"
 command -v java >/dev/null || fail "java is required for the M14D gate"
 
@@ -43,7 +43,7 @@ isolation_report="$test_root/isolation-report.json"
 mkdir -p "$base_store" "$classes_dir"
 active_store="$base_store"
 server_pid=
-port=${NATIVELITE_TEST_PORT:-$((27000 + ($$ % 10000)))}
+port=${TRAFODION_LITE_TEST_PORT:-$((27000 + ($$ % 10000)))}
 jdbc_url="jdbc:t4jdbc://127.0.0.1:${port}/:"
 
 cleanup() {
@@ -53,7 +53,7 @@ cleanup() {
     wait "$server_pid" 2>/dev/null || true
   fi
   if [[ "$rc" -ne 0 && -s "$server_log" ]]; then
-    echo "NativeLite M14D server log:" >&2
+    echo "Trafodion Lite M14D server log:" >&2
     sed -n '1,300p' "$server_log" >&2
   fi
   rm -rf "$test_root"
@@ -77,14 +77,14 @@ start_server() {
   fi
   server_pid=$!
   for _ in $(seq 1 200); do
-    if grep -q 'NativeLite server ready' "$server_log"; then return; fi
+    if grep -q 'Trafodion Lite server ready' "$server_log"; then return; fi
     if ! kill -0 "$server_pid" 2>/dev/null; then
       cat "$server_log" >&2
-      fail "NativeLite server exited during M14D startup"
+      fail "Trafodion Lite server exited during M14D startup"
     fi
     sleep 0.05
   done
-  fail "NativeLite server did not become ready for M14D"
+  fail "Trafodion Lite server did not become ready for M14D"
 }
 
 stop_server() {
@@ -94,7 +94,7 @@ stop_server() {
   local rc=$?
   set -e
   server_pid=
-  [[ "$rc" -eq 0 ]] || fail "NativeLite graceful shutdown returned $rc"
+  [[ "$rc" -eq 0 ]] || fail "Trafodion Lite graceful shutdown returned $rc"
 }
 
 find "$driver_source" -name '*.java' -print0 | \
@@ -103,7 +103,7 @@ javac -Xlint:all -cp "$classes_dir:$slf4j_jar" -d "$classes_dir" \
   "$loader_source" "$transaction_source" "$isolation_source"
 
 start_server
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpcc \
   "$jdbc_url" load smoke "$properties" "$schema" "$load_report"
 stop_server
 
@@ -111,7 +111,7 @@ active_store="$test_root/isolation-store"
 mkdir -p "$active_store"
 cp -a "$base_store/." "$active_store/"
 start_server
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccIsolation \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccIsolation \
   "$jdbc_url" "$isolation_report"
 grep -q '"write_skew":"pass"' "$isolation_report" ||
   fail "M14D isolation matrix did not pass"
@@ -131,7 +131,7 @@ for profile in new-order payment delivery; do
     fi
     start_server "$fault"
     set +e
-    java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccTransactions \
+    java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccTransactions \
       "$jdbc_url" "fault-${profile}" "$test_root/fault-unused.json" \
       >"$test_root/${profile}-${point}-client.log" 2>&1
     client_rc=$?
@@ -145,7 +145,7 @@ for profile in new-order payment delivery; do
 
     start_server
     recovery_report="$test_root/${profile}-${point}-recovery.json"
-    java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccTransactions \
+    java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccTransactions \
       "$jdbc_url" "verify-crash-${profile}-${point}" "$recovery_report"
     grep -q '"atomicity":"pass"' "$recovery_report" ||
       fail "$profile $point recovery was not atomic"

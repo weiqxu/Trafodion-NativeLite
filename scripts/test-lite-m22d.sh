@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-loader_source="$repo_root/core/sql/bin/NativeLiteBulkLoaderMain.cpp"
+loader_source="$repo_root/core/sql/bin/TrafodionLiteBulkLoaderMain.cpp"
 
 grep -q 'ResumeManifest' "$loader_source" || {
   echo "FAIL: resumable loader manifest is missing" >&2

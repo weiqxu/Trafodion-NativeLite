@@ -2,34 +2,34 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-server="$repo_root/core/sqf/export/bin64d/nativelite-server"
-bulk_loader="$repo_root/core/sqf/export/bin64d/nativelite-bulk-loader"
+server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
+bulk_loader="$repo_root/core/sqf/export/bin64d/trafodion-lite-bulk-loader"
 driver_source="$repo_root/core/conn/jdbcT4/src/main/java"
-loader_source="$repo_root/scripts/NativeLiteTpcc.java"
-transaction_source="$repo_root/scripts/NativeLiteTpccTransactions.java"
-workload_source="$repo_root/scripts/NativeLiteTpccWorkload.java"
+loader_source="$repo_root/scripts/TrafodionLiteTpcc.java"
+transaction_source="$repo_root/scripts/TrafodionLiteTpccTransactions.java"
+workload_source="$repo_root/scripts/TrafodionLiteTpccWorkload.java"
 properties=${TPCC_PROPERTIES:-$repo_root/benchmarks/tpcc/qualification.properties}
 tpcc_scale=${TPCC_SCALE:-multi}
 schema="$repo_root/benchmarks/tpcc/schema.sql"
 build_type=${LITE_BUILD_TYPE:-debug}
 if [[ "$build_type" == "release" ]]; then
-  server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+  server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
   sql_libs="$repo_root/core/sql/lib/linux/64bit/release"
   sqf_libs="$repo_root/core/sqf/export/lib64d"
 else
-  server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+  server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
   sql_libs="$repo_root/core/sql/lib/linux/64bit/debug"
   sqf_libs="$repo_root/core/sqf/export/lib64d"
 fi
 traf_home="$repo_root/core/sqf"
-workers=${NATIVELITE_WORKERS:-32}
+workers=${TRAFODION_LITE_WORKERS:-32}
 native_bulk_load=${TPCC_NATIVE_BULK_LOAD:-0}
 native_commit_rows=${TPCC_NATIVE_COMMIT_ROWS:-}
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-[[ -x "$server" ]] || fail "missing built NativeLite server: $server"
+[[ -x "$server" ]] || fail "missing built Trafodion Lite server: $server"
 if [[ "$native_bulk_load" == "1" ]]; then
-  [[ -x "$bulk_loader" ]] || fail "missing NativeLite bulk loader: $bulk_loader"
+  [[ -x "$bulk_loader" ]] || fail "missing Trafodion Lite bulk loader: $bulk_loader"
 fi
 
 slf4j_jar=${SLF4J_API_JAR:-}
@@ -60,7 +60,7 @@ mkdir -p "$primary_store" "$checkpoint_store" "$classes_dir"
 active_store="$primary_store"
 server_pid=
 workload_pid=
-port=${NATIVELITE_TEST_PORT:-$((29000 + ($$ % 8000)))}
+port=${TRAFODION_LITE_TEST_PORT:-$((29000 + ($$ % 8000)))}
 jdbc_url="jdbc:t4jdbc://127.0.0.1:${port}/:"
 
 cleanup() {
@@ -117,7 +117,7 @@ start_server() {
   fi
   server_pid=$!
   for _ in $(seq 1 300); do
-    if grep -q 'NativeLite server ready' "$server_log"; then return; fi
+    if grep -q 'Trafodion Lite server ready' "$server_log"; then return; fi
     kill -0 "$server_pid" 2>/dev/null || fail "M14F server exited at startup"
     sleep 0.05
   done
@@ -145,14 +145,14 @@ elif [[ "${TPCC_REUSE_LOADED_STORE:-0}" == "1" ]]; then
       -s "$primary_store/transactiondb/CURRENT" ]] ||
     fail "requested loaded-store reuse has no completed native load"
   start_server
-  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+  java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpcc \
     "$jdbc_url" verify "$tpcc_scale" "$properties" "$schema" \
     "$test_root/load.json"
 elif [[ "$native_bulk_load" == "1" ]]; then
   # Create the catalog through the supported SQL path, then close the server
   # before the native loader opens the same unified RocksDB store.
   start_server
-  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+  java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpcc \
     "$jdbc_url" schema "$tpcc_scale" "$properties" "$schema" \
     "$test_root/schema.json"
   stop_server
@@ -169,12 +169,12 @@ elif [[ "$native_bulk_load" == "1" ]]; then
     "$bulk_loader" "${bulk_loader_args[@]}" \
     --report "$test_root/bulk-load.json"
   start_server
-  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+  java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpcc \
     "$jdbc_url" verify "$tpcc_scale" "$properties" "$schema" \
     "$test_root/load.json"
 else
   start_server
-  java -cp "$classes_dir:$slf4j_jar" NativeLiteTpcc \
+  java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpcc \
     "$jdbc_url" load "$tpcc_scale" "$properties" "$schema" "$test_root/load.json"
 fi
 # Full relationship verification materializes the largest tables in the
@@ -185,13 +185,13 @@ stop_server
 start_server
 rss_before=$(awk '/VmRSS:/ {print $2}' "/proc/$server_pid/status")
 store_bytes_before=$(du -sb "$primary_store" | awk '{print $1}')
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccWorkload \
   "$jdbc_url" run "$properties" "$workload_report" \
   >"$test_root/workload.stdout" 2>&1 &
 workload_pid=$!
 sleep 1
 kill -0 "$workload_pid" 2>/dev/null || fail "workload ended before online checkpoint"
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccWorkload \
   "$jdbc_url" checkpoint "$properties" "$test_root/checkpoint.json"
 wait "$workload_pid"
 workload_pid=
@@ -200,14 +200,14 @@ grep -q '"unclassified_errors":0' "$workload_report" ||
 rss_after=$(awk '/VmHWM:/ {print $2}' "/proc/$server_pid/status")
 store_bytes=$(du -sb "$primary_store" | awk '{print $1}')
 store_delta_bytes=$((store_bytes - store_bytes_before))
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccWorkload \
   "$jdbc_url" verify "$properties" "$test_root/live-verify.json"
 
 stop_server
 clean_started=$(date +%s%N)
 start_server
 clean_recovery_ms=$((($(date +%s%N) - clean_started) / 1000000))
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccWorkload \
   "$jdbc_url" verify "$properties" "$test_root/clean-restart.json"
 
 kill -KILL "$server_pid"
@@ -220,7 +220,7 @@ server_pid=
 unclean_started=$(date +%s%N)
 start_server
 unclean_recovery_ms=$((($(date +%s%N) - unclean_started) / 1000000))
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccWorkload \
   "$jdbc_url" verify "$properties" "$test_root/unclean-restart.json"
 stop_server
 
@@ -228,7 +228,7 @@ active_store="$checkpoint_store"
 checkpoint_started=$(date +%s%N)
 start_server
 checkpoint_recovery_ms=$((($(date +%s%N) - checkpoint_started) / 1000000))
-java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
+java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccWorkload \
   "$jdbc_url" verify "$properties" "$test_root/checkpoint-restore.json"
 stop_server
 
@@ -242,8 +242,8 @@ env TRAF_HOME="$traf_home" TRAF_LITE=1 \
   "$server" --listen 127.0.0.1 --port "$port" --workers "$workers" >"$server_log" 2>&1 &
 server_pid=$!
 for _ in $(seq 1 300); do
-  if grep -q 'NativeLite server ready' "$server_log"; then
-    java -cp "$classes_dir:$slf4j_jar" NativeLiteTpccWorkload \
+  if grep -q 'Trafodion Lite server ready' "$server_log"; then
+    java -cp "$classes_dir:$slf4j_jar" TrafodionLiteTpccWorkload \
       "$jdbc_url" watermark "$properties" "$test_root/watermark.json"
     stop_server
     break

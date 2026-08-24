@@ -1,11 +1,10 @@
 #######################################################################
-# Lite standalone Trafodion Type 4 protocol server.
+# Lite native TPCC bulk loader.
 #######################################################################
 
-CPPSRC := NativeLiteServerMain.cpp
-TARGET := nativelite-server
+CPPSRC := TrafodionLiteBulkLoaderMain.cpp
+TARGET := trafodion-lite-bulk-loader
 
-# Keep the complete dependency set visible to BIND_NOW, matching sqlci.
 ifeq ($(TRAF_LITE),1)
 EARLY_DLLS := -Wl,--no-as-needed
 SYS_LIBS += -Wl,--as-needed
@@ -42,4 +41,4 @@ DEP_LIBS += \
 EXTERN_LIBS := $(LIBROOT)/libtdm_tmfuser.so
 SYS_LIBS += -pthread
 INCLUDE_DIRS := bin sqlci executor litestore cli common
-SRCPATH := bin sqlci
+SRCPATH := bin sqlci executor litestore cli common

@@ -12,7 +12,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** M14E proof that independent T4 sessions enter compiler/executor together. */
-public final class NativeLiteTpccConcurrency {
+public final class TrafodionLiteTpccConcurrency {
   private static final String USER = "DB__ROOT";
 
   private static void require(boolean condition, String message) {
@@ -101,9 +101,9 @@ public final class NativeLiteTpccConcurrency {
         require(!worker.isAlive(), worker.getName() + " did not finish");
       if (failure.get() != null)
         throw new AssertionError("concurrent executor failed", failure.get());
-      require(queryInt(connections.get(0), "SELECT NATIVE_LITE_EXECUTOR_OVERLAP()") >= 2,
+      require(queryInt(connections.get(0), "SELECT TRAFODION_LITE_EXECUTOR_OVERLAP()") >= 2,
           "server did not observe compiler/executor overlap");
-      require(queryInt(connections.get(0), "SELECT NATIVE_LITE_COMPILER_OVERLAP()") >=
+      require(queryInt(connections.get(0), "SELECT TRAFODION_LITE_COMPILER_OVERLAP()") >=
           Math.min(4, clientCount),
           "server did not observe session-owned compiler overlap");
       require(elapsedMillis < 10000,
@@ -156,7 +156,7 @@ public final class NativeLiteTpccConcurrency {
 
   public static void main(String[] args) throws Exception {
     require(args.length == 2 || args.length == 3,
-        "usage: NativeLiteTpccConcurrency JDBC_URL REPORT [CLIENTS]");
+        "usage: TrafodionLiteTpccConcurrency JDBC_URL REPORT [CLIENTS]");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     if (args.length == 2 && "capacity".equals(args[1])) {
       capacityProbe(args[0]);

@@ -3488,7 +3488,7 @@ short HbaseAccess::codeGen(Generator * generator)
         (getHbaseAccessOptions()->getHbaseVersions());
     }
 
-  // NativeLite scans have their own TDB image and executor contract.  Keep
+  // Trafodion Lite scans have their own TDB image and executor contract.  Keep
   // the legacy HBase construction only for non-local builds.
 #ifdef TRAF_LITE
   ComTdbLiteRocksdbScan *hbasescan_tdb = new(space)

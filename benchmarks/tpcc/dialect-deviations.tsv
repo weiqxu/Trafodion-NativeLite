@@ -1,8 +1,8 @@
-id	scope	normative	nativelite_mapping	reason	status
+id	scope	normative	trafodion_lite_mapping	reason	status
 D001	identifier	ORDER table	TPCC_ORDERS	ORDER is reserved and all benchmark tables use a TPCC_ prefix	accepted
 D002	identifier	original table names	TPCC_ prefixed names	isolate qualification assets from user and regression tables	accepted
-D003	HISTORY key	no declared primary key	H_ID synthetic deterministic key	NativeLite durable tables require stable row identity	accepted
-D004	character types	fixed CHAR fields	CHAR for fixed fields and VARCHAR for normative variable fields	NativeLite supports the required fixed and variable character shapes	accepted-m14b
+D003	HISTORY key	no declared primary key	H_ID synthetic deterministic key	Trafodion Lite durable tables require stable row identity	accepted
+D004	character types	fixed CHAR fields	CHAR for fixed fields and VARCHAR for normative variable fields	Trafodion Lite supports the required fixed and variable character shapes	accepted-m14b
 D005	foreign keys	logical relationships	core parent constraints plus full anti-join checks for high-cardinality STOCK and ORDER_LINE relationships	avoid repeated row-at-a-time FK probes while preserving deterministic post-load proof	accepted-m14b
 D006	driver	TPC audited implementation	repository-owned reduced T4 JDBC driver	reproducible functional qualification only	non-compliant
 D007	reporting	official tpmC result	TPC-C-like throughput and latency report	no audit, pricing, or full-disclosure process	non-compliant

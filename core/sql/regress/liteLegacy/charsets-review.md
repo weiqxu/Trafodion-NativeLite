@@ -6,7 +6,7 @@ were classified as `needs-review`; `TEST012` was classified separately.
 
 ## Probe Method
 
-The tests were run through the isolated lite adapter:
+The tests were run through the isolated Trafodion Lite adapter:
 
 ```sh
 core/sql/regress/liteLegacy/runregr \
@@ -45,7 +45,7 @@ their current progress and output differences are retained in
 | TEST316 | runnable | M10 | Exact normalized EXPECTED/LOG match |
 | TEST3265 | blocked | M6 | 64K VARCHAR statistics reaches an unsupported GET metadata request |
 
-A clean lite build now installs the diagnostic message catalog, so the
+A clean `lite` build now installs the diagnostic message catalog, so the
 runnable baseline records the primary SQL error codes with their resolved
 messages and no longer expects secondary `ERROR[16001]` lines. The adapter still
 does not hide diagnostic differences with a broad filter.

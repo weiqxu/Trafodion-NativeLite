@@ -2,13 +2,13 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-server_source="$repo_root/core/sql/bin/NativeLiteServerMain.cpp"
+server_source="$repo_root/core/sql/bin/TrafodionLiteServerMain.cpp"
 
 grep -q 'maximumCompilerRequests_' "$server_source" || {
   echo "FAIL: compiler overlap metric is missing" >&2
   exit 1
 }
-if grep -q 'NativeLite could not expand prepared predicate' "$server_source"; then
+if grep -q 'Trafodion Lite could not expand prepared predicate' "$server_source"; then
   echo "FAIL: prepared keyed predicates still use literal specialization" >&2
   exit 1
 fi

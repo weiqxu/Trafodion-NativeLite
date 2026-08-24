@@ -33,7 +33,7 @@
 extern void my_mpi_fclose();
 
 // sqlcilib expects the standalone executable to provide the per-thread SQLCI
-// environment, just like nativelite-server and sqlci do.
+// environment, just like trafodion-lite-server and sqlci do.
 class SqlciEnv;
 THREAD_P SqlciEnv *global_sqlci_env = NULL;
 
@@ -387,7 +387,7 @@ bool addWarehouse(BulkWriter *writer, int warehouse)
   row.push_back("W" + number(warehouse));
   row.push_back("Street 1");
   row.push_back("Street 2");
-  row.push_back("NativeLite");
+  row.push_back("Trafodion Lite");
   row.push_back("NL");
   row.push_back("123456789");
   row.push_back("0.1000");
@@ -404,7 +404,7 @@ bool addDistrict(BulkWriter *writer, int warehouse, int district,
   row.push_back("District" + number(district));
   row.push_back("Street 1");
   row.push_back("Street 2");
-  row.push_back("NativeLite");
+  row.push_back("Trafodion Lite");
   row.push_back("NL");
   row.push_back("123456789");
   row.push_back("0.1000");
@@ -435,7 +435,7 @@ bool addCustomer(BulkWriter *writer, int warehouse, int district, int customer)
   row.push_back("LAST-" + number((customer - 1) % 1000));
   row.push_back("STREET-1");
   row.push_back("STREET-2");
-  row.push_back("NATIVELITE");
+  row.push_back("TRAFODION_LITE");
   row.push_back("NL");
   row.push_back("123456789");
   row.push_back(number(customer));
@@ -782,13 +782,13 @@ int main(int argc, char **argv)
   if (!parseConfig(argc, argv, &config, &error))
     {
       usage(argv[0]);
-      std::cerr << "NativeLite bulk-loader configuration failed: " << error
+      std::cerr << "Trafodion Lite bulk-loader configuration failed: " << error
                 << std::endl;
       return 2;
     }
   if (LiteConfig_init() != 0)
     {
-      std::cerr << "NativeLite bulk-loader environment initialization failed"
+      std::cerr << "Trafodion Lite bulk-loader environment initialization failed"
                 << std::endl;
       return 1;
     }
@@ -798,7 +798,7 @@ int main(int argc, char **argv)
       std::chrono::steady_clock::now();
   if (!run(config, &error))
     {
-      std::cerr << "NativeLite bulk-loader failed: " << error << std::endl;
+      std::cerr << "Trafodion Lite bulk-loader failed: " << error << std::endl;
       return 1;
     }
   const long long elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -815,7 +815,7 @@ int main(int argc, char **argv)
       std::ofstream output(config.report.c_str());
       if (!output)
         {
-          std::cerr << "NativeLite bulk-loader cannot write report: "
+          std::cerr << "Trafodion Lite bulk-loader cannot write report: "
                     << config.report << std::endl;
           return 1;
         }
@@ -829,7 +829,7 @@ int main(int argc, char **argv)
 #include <iostream>
 int main()
 {
-  std::cerr << "nativelite-bulk-loader requires TRAF_LITE" << std::endl;
+  std::cerr << "trafodion-lite-bulk-loader requires TRAF_LITE" << std::endl;
   return 1;
 }
 

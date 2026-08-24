@@ -252,7 +252,7 @@ lite-m21: lite
 lite-m21-tpcc: lite-m21
 	@echo "Running M21 complete 10-warehouse/32-terminal TPCC-like qualification"
 	TPCC_PROPERTIES="$(CURDIR)/benchmarks/tpcc/m21-10w32c.properties" \
-	TPCC_SCALE=qualification TPCC_NATIVE_BULK_LOAD=1 TPCC_NATIVE_COMMIT_ROWS=10000 NATIVELITE_WORKERS=64 \
+	TPCC_SCALE=qualification TPCC_NATIVE_BULK_LOAD=1 TPCC_NATIVE_COMMIT_ROWS=10000 TRAFODION_LITE_WORKERS=64 \
 	TPCC_ARTIFACT_DIR="$(M21_REPORT_DIR)" \
 		scripts/test-lite-tpcc-performance.sh
 

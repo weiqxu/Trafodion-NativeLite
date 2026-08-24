@@ -27,7 +27,7 @@
 #ifdef TRAF_LITE
 namespace {
 // The compiler still emits the legacy row-list objects for generic HBase
-// paths.  NativeLite treats their wire image as a private, layout-compatible
+// paths.  Trafodion Lite treats their wire image as a private, layout-compatible
 // descriptor so the local TDB/TCB never depends on ComTdbHbaseAccess types.
 class LiteScanRowsImage : public NAVersionedObject
 {

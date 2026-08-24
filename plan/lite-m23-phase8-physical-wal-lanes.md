@@ -1,4 +1,4 @@
-# Lite M23 Phase 8：物理 WAL lane 拆分
+# Trafodion Lite M23 Phase 8：物理 WAL lane 拆分
 
 ## 目标
 

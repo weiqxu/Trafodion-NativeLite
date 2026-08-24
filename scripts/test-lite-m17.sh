@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-transactions="$repo_root/scripts/NativeLiteTpccTransactions.java"
+transactions="$repo_root/scripts/TrafodionLiteTpccTransactions.java"
 occ="$repo_root/core/sql/litestore/LiteRocksDBStore.cpp"
 design="$repo_root/plan/lite-tpcc-m17-design.md"
 

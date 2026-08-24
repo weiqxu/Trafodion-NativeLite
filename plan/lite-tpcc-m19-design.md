@@ -1,4 +1,4 @@
-# M19: execution-path, cache, and rowset batching optimization
+# Trafodion Lite M19: Execution-Path, Cache, and Rowset Batching Optimization
 
 ## Status
 

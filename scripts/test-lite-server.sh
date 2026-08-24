@@ -2,17 +2,17 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-server="$repo_root/core/sqf/export/bin64d/nativelite-server"
+server="$repo_root/core/sqf/export/bin64d/trafodion-lite-server"
 sql_libs="$repo_root/core/sql/lib/linux/64bit/debug"
 sqf_libs="$repo_root/core/sqf/export/lib64d"
 traf_home="$repo_root/core/sqf"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-[[ -x "$server" ]] || fail "missing built NativeLite server: $server"
+[[ -x "$server" ]] || fail "missing built Trafodion Lite server: $server"
 
 test_root=$(mktemp -d /tmp/traf-lite-server.XXXXXX)
 store_dir="$test_root/store"
-socket_path="$test_root/nativelite.t4.sock"
+socket_path="$test_root/trafodion-lite.t4.sock"
 server_log="$test_root/server.log"
 mkdir -p "$store_dir"
 server_pid=
@@ -34,17 +34,17 @@ start_unix() {
     "$server" --unix-socket "$socket_path" >"$server_log" 2>&1 &
   server_pid=$!
   for _ in $(seq 1 100); do
-    if grep -q 'NativeLite server ready' "$server_log"; then
+    if grep -q 'Trafodion Lite server ready' "$server_log"; then
       [[ -S "$socket_path" ]] || fail "ready server has no Unix socket"
       return
     fi
     if ! kill -0 "$server_pid" 2>/dev/null; then
       cat "$server_log" >&2
-      fail "NativeLite server exited during startup"
+      fail "Trafodion Lite server exited during startup"
     fi
     sleep 0.05
   done
-  fail "NativeLite Unix socket was not created"
+  fail "Trafodion Lite Unix socket was not created"
 }
 
 start_unix

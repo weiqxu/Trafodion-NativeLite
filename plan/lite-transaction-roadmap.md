@@ -1,8 +1,8 @@
-# Lite Storage Transaction And Concurrency Roadmap
+# Trafodion Lite Transaction and Concurrency Roadmap
 
 ## Purpose
 
-This document defines how lite should evolve from the current
+This document defines how Trafodion Lite should evolve from the current
 single-process RocksDB smoke path into a storage layer that matches Trafodion's
 executor transaction boundaries.
 
@@ -13,17 +13,17 @@ introduce the same shape of ownership that Trafodion uses elsewhere:
 - The executor owns statement and transaction boundaries.
 - Storage receives an explicit operation context.
 - Reads and writes go through executor TCBs.
-- RocksDB is hidden behind a lite storage API.
+- RocksDB is hidden behind a Lite Storage API.
 - Lite Storage can later replace the storage backend without changing executor
   TCB semantics.
 
 ## Current Baseline
 
-As of M14E (verified 2026-08-16), lite supports the following Lite table
+As of M14E (verified 2026-08-16), Trafodion Lite supports the following Lite Storage table
 and transactional-storage path:
 
 - `CREATE TABLE` and `DROP TABLE` are routed through compiler DDL code and write
-  Lite RocksDB catalog metadata.
+  Lite Storage catalog metadata.
 - `INSERT INTO ... VALUES` and `INSERT ... SELECT` execute through
   `LiteHbaseInsertTcb`.
 - `SELECT` executes through `LiteRocksdbScanTcb`.
@@ -31,7 +31,7 @@ and transactional-storage path:
   `LiteTxn::getRowByKey()` and falls back to full scan when no get-row
   request is present.
 - Persistent rows use the `LTBR1` binary aligned row payload.
-- SQLCI no longer directly executes supported Lite table queries against
+- SQLCI no longer directly executes supported Lite Storage table queries against
   RocksDB.
 
 The important storage limits are:
@@ -40,9 +40,9 @@ The important storage limits are:
   handles.
 - Keyless table rows still use catalog `nextRowId` and an internal 8-byte row
   key.
-- Primary-key Lite tables store row data under deterministic binary row keys
+- Primary-key Lite Storage tables store row data under deterministic binary row keys
   derived from the persisted `LTBR1` row payload.
-- Each `ContextCli` owns its explicit Lite transaction context and buffers
+- Each `ContextCli` owns its explicit Lite Storage transaction context and buffers
   pending writes until `COMMIT WORK`.
 - RocksDB TransactionDB implements the selected backend-neutral storage
   contract, the exclusive catalog/table key space after M13 activation, and the
@@ -57,7 +57,7 @@ The important storage limits are:
 
 This is a durable single-node boundary, not a distributed transaction system.
 Cross-process attempts to open the same `TRAF_LITE_STORE_DIR` are rejected by
-the RocksDB lock and surfaced as an explicit lite process-boundary
+the RocksDB lock and surfaced as an explicit Trafodion Lite process-boundary
 diagnostic. Fresh stores are created directly in the format-version-2
 `transactiondb/` layout. Stores containing the obsolete per-table `catalog/`
 or `data/` directories are rejected explicitly. The old-layout reader,
@@ -65,7 +65,7 @@ migration, export, rollback, and runtime fallback code is not present.
 
 ## Trafodion Transaction Model To Preserve
 
-The existing Trafodion model has three useful boundaries for lite:
+The existing Trafodion model has three useful boundaries for Trafodion Lite:
 
 - `ExTransaction` represents the current executor transaction state and handles
   `BEGIN`, `COMMIT`, and `ROLLBACK`.
@@ -74,13 +74,13 @@ The existing Trafodion model has three useful boundaries for lite:
 - Storage-specific code handles conflict detection, row locking, atomicity, and
   durability for that transaction context.
 
-For lite, this means executor TCBs should not keep calling raw RocksDB
-functions directly. They should call a Lite transaction facade that can run in
+For Trafodion Lite, this means executor TCBs should not keep calling raw RocksDB
+functions directly. They should call a Lite Storage transaction facade that can run in
 autocommit mode today and explicit transaction mode later.
 
 ## Target Architecture
 
-The target lite storage stack should have these layers:
+The target Lite Storage stack should have these layers:
 
 ```text
 SQL statement
@@ -94,7 +94,7 @@ SQL statement
 `LiteStorageManager` should provide process-local ownership of RocksDB
 database handles:
 
-- one shared catalog handle per Lite store root;
+- one shared catalog handle per Lite Storage root;
 - one shared table handle per table path;
 - reference-counted or process-lifetime handle ownership;
 - per-table mutexes for metadata and row-id critical sections;
@@ -113,7 +113,7 @@ database handles:
 
 ### Phase 1: Shared RocksDB Handle Ownership
 
-Status: completed for the lite v1 process boundary. Process-local handle
+Status: completed for the Lite Storage v1 process boundary. Process-local handle
 sharing is covered by the RocksDB SQLCI smoke self-join regression.
 
 Fix the current same-process lock problem first.
@@ -130,31 +130,31 @@ Tasks:
 
 Validation:
 
-- Existing lite runtime smoke passes.
+- Existing Trafodion Lite runtime smoke passes.
 - Existing RocksDB SQLCI smoke passes.
-- A self-join over one Lite table no longer fails on RocksDB `LOCK`.
+- A self-join over one Lite Storage table no longer fails on RocksDB `LOCK`.
 - Two scans over the same table in one query use executor scan TCBs and do not
   reopen the same RocksDB path incompatibly.
 
 ### Phase 2: Statement-Level Atomic Writes
 
-Status: completed for lite v1 Lite table INSERT, including multi-row
+Status: completed for Lite Storage v1 table INSERT, including multi-row
 tuple-flow plans. Row-id allocation and row persistence go through
 `LiteTxn::insertRow()`; an autocommit tuple flow targeting the Lite insert
-TCB opens an implicit Lite transaction, commits its pending rows only after
+TCB opens an implicit Lite Storage transaction, commits its pending rows only after
 complete source/target EOD, and rolls back on source errors, target errors, or
 cancellation. The old public `allocateRowId()` and direct `putRow()` store APIs
-have been removed, so Lite executor writes cannot bypass the transaction
+have been removed, so Lite Storage executor writes cannot bypass the transaction
 facade. At Phase 2 completion, catalog metadata and table rows still lived in
 separate RocksDB databases, so that phase did not claim cross-process or
 crash-atomic multi-DB commit semantics. M12 later added the durable
 compatibility journal for multi-table DML; it did not add cross-process
 writers.
 Same-process concurrent write coverage now exercises multiple writer threads
-plus an overlapping scanner through the Lite transaction facade and validates
+plus an overlapping scanner through the Lite Storage transaction facade and validates
 contiguous, duplicate-free row ids.
 
-Make every autocommit statement atomic at the Lite storage layer.
+Make every autocommit statement atomic at the Lite Storage layer.
 
 Tasks:
 
@@ -180,7 +180,7 @@ Validation:
 
 ### Phase 3: Snapshot-Based Statement Reads
 
-Status: completed for statement-wide reads of each Lite RocksDB table.
+Status: completed for statement-wide reads of each Lite Storage table.
 Executor root begin/end hooks identify a prepared statement execution with the
 statement globals pointer plus execution count. `LiteTxn` uses that token
 for both full scans and get-row access, and every scan TCB that reads the same
@@ -188,10 +188,10 @@ table in that execution reuses one RocksDB snapshot. The root releases all
 snapshots at end-of-data, cancellation, fatal error, or TCB teardown. A later
 execution receives a new context and new snapshots.
 
-RocksDB snapshots are database-local. Because each Lite table currently has a
+RocksDB snapshots are database-local. Because each Lite Storage table currently has a
 separate RocksDB database, this phase gives repeatable reads for repeated access
 to one table, but does not claim a single atomic snapshot instant across
-different Lite tables. Keyless scan metadata continues to expose the internal
+different Lite Storage tables. Keyless scan metadata continues to expose the internal
 RocksDB row id as a hidden `SYSKEY`, and the scan TCB materializes that system
 value separately from the `LTBR1` user column payload.
 
@@ -219,8 +219,8 @@ Validation:
 
 ### Phase 4: Explicit Local Transactions
 
-Status: completed for the single-process lite v1 transaction boundary.
-The implementation provides a repeatable-read context for lite SQLCI.
+Status: completed for the single-process Lite Storage v1 transaction boundary.
+The implementation provides a repeatable-read context for Trafodion Lite SQLCI.
 `BEGIN WORK` creates a pending write set and a transaction read context. The
 first access to each table lazily acquires its RocksDB snapshot, and later
 statements in the transaction reuse that snapshot for both full scans and
@@ -249,14 +249,14 @@ table used separate RocksDB databases. M12 supersedes the multi-table DML
 limitation with preflight plus a durable, idempotently replayed commit journal;
 M13 later makes the single-keyspace target the exclusive runtime format.
 
-Add Lite transaction behavior for `BEGIN`, `COMMIT`, and `ROLLBACK` without
+Add Lite Storage transaction behavior for `BEGIN`, `COMMIT`, and `ROLLBACK` without
 starting TMF/DTM/RMS.
 
 Tasks:
 
-- Teach lite transaction statements to create and finish a
+- Teach Lite Storage transaction statements to create and finish a
   `LiteTxnContext` in CLI context.
-- Route Lite table writes into the current Lite transaction context when one
+- Route Lite Storage table writes into the current Lite Storage transaction context when one
   exists.
 - Buffer writes in a local write set or use RocksDB TransactionDB.
 - Make `COMMIT` atomically publish each table's transaction write set.
@@ -278,27 +278,27 @@ Validation:
 
 ### Phase 5: Deterministic Row Keys And Conflict Detection
 
-Status: completed for the lite v1 key and conflict-detection scope.
+Status: completed for the Lite Storage v1 key and conflict-detection scope.
 Lite Storage DDL now
 accepts PRIMARY KEY and UNIQUE, persists key column ordinals in `LTT3` table
 metadata, and rejects RI/CHECK constraints. INSERTs into primary-key tables
 build a deterministic `P`-prefixed RocksDB row key from the binary aligned
 `LTBR1` payload. UNIQUE constraints use `U`-prefixed secondary uniqueness
 records in the same RocksDB table. Duplicate primary and unique keys are
-rejected in committed data and inside the current pending Lite transaction
+rejected in committed data and inside the current pending Lite Storage transaction
 write set. Keyless tables continue to use the existing internal row id path.
-The lite executor scan TCB can now consume encoded get-row requests from
+The Lite Storage executor scan TCB can now consume encoded get-row requests from
 `listOfGetRows()` through `LiteTxn::getRowByKey()`, including read-own-write
-lookups inside the pending Lite transaction write set. Pre-code can now rewrite
+lookups inside the pending Lite Storage transaction write set. Pre-code can now rewrite
 constant primary-key equality search keys to deterministic `P`-prefixed
-lite get-row keys. Binary NUMERIC, DECIMAL, and BigNum NUMERIC key
+Lite Storage get-row keys. Binary NUMERIC, DECIMAL, and BigNum NUMERIC key
 literals can now be encoded into deterministic get-row keys, including negative
 predicate forms that the compiler represents as constant expressions rather than
 plain `ConstValue`s. UNIQUE-key equality predicates can now be mapped to
 deterministic `U`-prefixed get-row keys when the predicate supplies all columns
 of one unique key. Lite Storage NATable synthesis now exposes primary-key and
 UNIQUE-key metadata to the optimizer. UNIQUE keys are represented as logical
-unique access paths that keep the physical scan name on the base Lite table;
+unique access paths that keep the physical scan name on the base Lite Storage table;
 the executor resolves `U` records back to the persisted base `LTBR1` row.
 Lite Storage DML also skips generic secondary-index maintenance because the
 storage layer maintains `U` uniqueness records in the same RocksDB table.
@@ -315,18 +315,18 @@ Move closer to the original Trafodion HBase-style key model.
 
 Tasks:
 
-- Add primary key metadata support for lite tables.
+- Add primary key metadata support for Lite Storage tables.
 - Generate local row keys from compiler/executor key expressions when a table
   has a primary key.
-- Keep internal row id allocation only for keyless heap-like Lite tables.
+- Keep internal row id allocation only for keyless heap-like Lite Storage tables.
 - Add duplicate-key detection for primary keys.
 - Add conflict diagnostics that map cleanly to SQL errors.
 - Add unique-key metadata and duplicate detection after primary-key storage is
   stable.
-- Teach lite scan/get TCBs to consume optimized key access before exposing
-  lite primary keys as optimizer-visible key metadata.
-- Expose lite UNIQUE keys as optimizer-visible logical access paths while
-  keeping executor scan storage on the base Lite table.
+- Teach Lite Storage scan/get TCBs to consume optimized key access before exposing
+  Lite Storage primary keys as optimizer-visible key metadata.
+- Expose Lite Storage UNIQUE keys as optimizer-visible logical access paths while
+  keeping executor scan storage on the base Lite Storage table.
 
 Validation:
 
@@ -359,38 +359,38 @@ orchestration.
 
 Status: initial executor-bound transaction facade implemented. `LiteTxnManager`
 now exposes executor-bound begin/commit/rollback entry points and records both a
-Lite transaction id and the executor transaction id token for the active local
-transaction. The lite transaction TCB path calls these facade methods.
+Lite Storage transaction id and the executor transaction id token for the active local
+transaction. The Lite Storage transaction TCB path calls these facade methods.
 When a real `ExTransaction` id is available the facade can bind to it; in the
-current TMF-disabled lite path the executor transaction object identity is
+current TMF-disabled `lite` path the executor transaction object identity is
 used as a local binding token. Scan and insert TCBs still talk only to
 `LiteTxn` and do not receive TMF-specific state directly.
 
-Only consider this phase after lite has stable Lite transaction behavior.
+Only consider this phase after Trafodion Lite has stable Lite Storage transaction behavior.
 
 Tasks:
 
 - Keep `LiteTxnManager` as the only executor-to-storage transaction API.
 - Add an implementation that can bind to Trafodion `ExTransaction` ids when a
   full TMF/DTM/RMS stack is available.
-- Do not expose TMF-specific concepts directly inside Lite table scan/insert
+- Do not expose TMF-specific concepts directly inside Lite Storage table scan/insert
   TCBs.
 - Add a real TMF-backed implementation after a full service stack is available.
 
 Validation:
 
-- Existing local autocommit and explicit Lite transaction tests still pass.
+- Existing local autocommit and explicit Lite Storage transaction tests still pass.
 - TMF-enabled builds can route transaction ids through the same facade.
-- TMF-disabled lite builds do not require transaction service processes.
-- Runtime structure checks assert that lite transaction statements call
+- TMF-disabled `lite` builds do not require transaction service processes.
+- Runtime structure checks assert that Lite Storage transaction statements call
   executor-bound facade methods.
 
 ## Design Decisions
 
 ### Do Not Start With Full TMF
 
-Starting with full TMF would make lite depend on the service stack it is
-designed to avoid. The first useful milestone is a Lite transaction facade
+Starting with full TMF would make Trafodion Lite depend on the service stack it is
+designed to avoid. The first useful milestone is a Lite Storage transaction facade
 with statement atomicity and stable reads.
 
 ### Do Not Keep Raw RocksDB Opens In TCB Paths
@@ -422,13 +422,13 @@ ContextCli -> ExTransaction -> LiteTxnContext
              canonical state   RocksDB participant state
 ```
 
-`ExTransaction` owns and synchronizes the Lite transaction participant with
+`ExTransaction` owns and synchronizes the Lite Storage transaction participant with
 its existing executor transaction flags and ID. Scan/DML, DDL, tuple-flow, and
 executor-root snapshot paths receive that participant explicitly. The mutable
 `LiteTxnState` singleton is gone; only `LiteStorageManager` and store
 handles remain process-owned. Reset, disconnect, delete, and destruction clean
 up one session without affecting its peers. The effective authorization
-identity and Lite object ownership are read from that same current
+identity and Trafodion Lite object ownership are read from that same current
 `ContextCli`; the compiler session remains a propagation target, not a second
 authority.
 

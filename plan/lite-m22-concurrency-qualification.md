@@ -1,4 +1,4 @@
-# Lite M22: concurrent commit and full-scale qualification
+# Trafodion Lite M22: Concurrent Commit and Full-Scale Qualification
 
 Status: complete. M22A-M22H pass without relaxing durability, cardinality,
 latency, throughput, or recovery thresholds.

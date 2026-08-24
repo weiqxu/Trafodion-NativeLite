@@ -1238,7 +1238,7 @@ class ComTdbHbaseCoProcAggr : public ComTdbHbaseCoProcAccess
 
 #ifdef TRAF_LITE
 // --------------------------------------------------------------------------
-// NativeLite scan TDB.  This is deliberately independent from
+// Trafodion Lite scan TDB.  This is deliberately independent from
 // ComTdbHbaseAccess: local scans own parameter binding and the RocksDB
 // lookup lifecycle, while the HBase TDB remains an HBase-only contract.
 // --------------------------------------------------------------------------

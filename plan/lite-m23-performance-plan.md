@@ -1,13 +1,13 @@
-# Lite M23 性能提升计划
+# Trafodion Lite M23 性能提升计划
 
 ## 目标
 
 M22H 的固定 TPCC 基线为 10 warehouses、32 terminals、45/40/5/5/5
 事务比例、40 warmup + 200 measured/terminal、3 次 repetition。当前
-Lite 为 55.853 TPS，方差 0.81%；同环境 MySQL 为 202.802 TPS，但
+Trafodion Lite 为 55.853 TPS，方差 0.81%；同环境 MySQL 为 202.802 TPS，但
 MySQL 方差 17.7%，因此不能把 MySQL 结果直接当作正式资格线。
 
-M23 的第一目标是 Lite 达到 **100 TPS、方差不超过 10%**，同时保持
+M23 的第一目标是 Trafodion Lite 达到 **100 TPS、方差不超过 10%**，同时保持
 durable write、事务一致性和恢复门禁。130 TPS 是延伸目标。所有结果必须
 保留事务 mix、连接数、warmup、数据规模和 source revision。
 
@@ -71,12 +71,12 @@ New-Order/Payment p95 下降至少 40%，TPS 至少 110。
 
 ### 阶段 5：综合验收
 
-在同一机器和同一数据规模下重跑 Lite 与 MySQL，固定 warmup、重复次数、
+在同一机器和同一数据规模下重跑 Trafodion Lite 与 MySQL，固定 warmup、重复次数、
 事务 mix 和报告格式；执行完整正确性、恢复和资源门禁。
 
 提交：`test: qualify m23 tpcc performance`
 
-验收：Lite TPS 至少 100、方差不超过 10%、重试率不超过 1%，核心事务
+验收：Trafodion Lite TPS 至少 100、方差不超过 10%、重试率不超过 1%，核心事务
 p95 不高于 M22 基线的 60%，所有 durability/consistency/recovery 门禁通过。
 
 ## 共同约束

@@ -1,30 +1,31 @@
-# Trafodion Lite Storage
+# Trafodion Lite
 
 ## Overview
 
-Lite Storage is a RocksDB-based single-node storage path for the native
-Trafodion SQL engine. The `lite` build selects this storage and removes Java,
+Trafodion Lite is a Trafodion database powered by Lite Storage, an embedded
+RocksDB-based storage engine that replaces HBase. The `lite` build selects this
+storage and removes Java,
 Maven, Hadoop, HDFS, HBase, Hive, DCS, REST, TrafCI, and Java client modules
 from the selected build path.
 
 The runtime targets are standalone `sqlci` and the long-running M11
-`nativelite-server`. Both exercise the normal compiler/executor over an embedded
-RocksDB catalog and table store. The bounded Lite Storage-backed surface
-includes transactions,
-DDL/DML, primary/secondary indexes, constraints, metadata/statistics,
+`trafodion-lite-server`. Both exercise the normal compiler/executor over the
+embedded Lite Storage catalog and table store. The bounded Trafodion Lite
+surface includes transactions, DDL/DML, primary/secondary indexes, constraints,
+metadata/statistics,
 authorization, a constrained UDR adapter, independent per-session transaction
 contexts, and a reduced Trafodion Type 4 client endpoint.
 
-The runtime backed by Lite Storage is not a complete standalone database yet.
-M11 establishes the
+Trafodion Lite is the database product; Lite Storage is its embedded storage
+engine. M11 establishes the
 multi-session process and protocol boundary, while M12 adds the backend-neutral
 transactional storage/recovery contract. M13 makes the format-version-2
 TransactionDB catalog/table key space exclusive and rejects old per-table
 stores; no old-layout migration or runtime fallback is retained.
 Independent session requests compile and execute on their connection threads;
 DDL/catalog mutation and SQLCI compatibility utilities retain narrow locks.
-The current implementation is a single-node service. Distributed
-execution, password/TLS authentication, full
+The current implementation does not provide distributed execution.
+Password/TLS authentication, full
 Trafodion wire compatibility, and the HBase/HDFS/Hive service stack
 remain outside the runtime.
 The transaction and concurrency integration plan is tracked separately in
@@ -42,64 +43,64 @@ Implemented:
 - Native SQF/SQL build graph with Java/Maven/HBase/Hadoop modules trimmed.
 - Lite Storage build defaults in `core/Makefile` for `TRAF_HOME`, `SQ_MTYPE`,
   `SQ_MBTYPE`, MPICH, Thrift, log4cxx, and related native paths.
-- TM lite mode that skips HBase transaction jar setup, `hbasetmlib2`,
+- TM `lite` mode that skips HBase transaction jar setup, `hbasetmlib2`,
   `libjvm`, and Java include paths.
 - SQL build rules that skip Maven jar targets and avoid global JVM/HDFS link
-  flags in lite mode.
+  flags in `lite` mode.
 - Executor, expression, optimizer, and TM stubs/guards for HDFS, Hive, HBase,
   Java/JNI, ORC, LOB, native expression, and fast transport paths.
-- `sqlci` lite runtime initialization that skips monitor/MPI startup,
+- `sqlci` Trafodion Lite runtime initialization that skips monitor/MPI startup,
   sets local defaults, and creates required local directories.
 - `sqlci` REPL startup and trivial query execution without starting monitor,
   TM/DTM/RMS, DCS, REST, ZooKeeper, HBase, or Hadoop.
 - Script guards in `sqenvcom.sh`, `sqgen`, and `sqstart` when
   `TRAF_LITE=1`, so those legacy scripts skip Hadoop/HBase/ZooKeeper
   setup checks if they are used.
-- RocksDB development dependency detection for lite SQL builds. Missing
+- RocksDB development dependency detection for `lite` SQL builds. Missing
   headers produce an explicit build error that names `librocksdb-dev`,
   `rocksdb-devel`, and `ROCKSDB_INC_DIR`.
-- A `sqlci` Lite control layer compiled into `libsqlcilib.so` only when
+- A `sqlci` Lite Storage control layer compiled into `libsqlcilib.so` only when
   `TRAF_LITE=1`. It handles local session/catalog compatibility commands
   and bounded metadata/authorization/UDR operations; normal table queries and
   DML continue through compiler/executor plans.
 - Minimal RocksDB catalog and table data store under
   `TRAF_LITE_STORE_DIR` or `TRAF_VAR/litestore/rocksdb`.
-- Basic Lite table SQL in `sqlci`: compiler-routed `CREATE TABLE`,
+- Basic Lite Storage table SQL in `sqlci`: compiler-routed `CREATE TABLE`,
   `DROP TABLE`, and executor-routed single-row and multi-row
   `INSERT INTO ... VALUES (...)` plus `INSERT ... SELECT` tuple flows.
-- Lite catalog NATable loading for lite RocksDB tables.
-- Lite RocksDB executor scan TCB for compiler-generated Lite table `SELECT`
+- Lite Storage catalog NATable loading for Lite Storage tables.
+- Lite Storage executor scan TCB for compiler-generated Lite Storage table `SELECT`
   plans. It scans RocksDB rows, maps the compiler projection through the
   fetched-column list, writes projected values into the compiler-generated
   binary aligned executor row, and returns rows through normal executor queues.
 - Lite Storage binding disables the HBase coprocessor `COUNT(*)` rewrite, so
   scalar aggregates run through the normal executor aggregate over a local
   executor scan.
-- Lite RocksDB executor insert TCB for compiler-generated Lite table `INSERT`
+- Lite Storage executor insert TCB for compiler-generated Lite Storage table `INSERT`
   plans. It evaluates the compiler-generated insert expression, normalizes the
   executor row into the local canonical binary aligned row layout, and persists
   the `LTBR1` payload through RocksDB.
-- Lite table inserts now go through an autocommit `LiteTxn` facade, which
-  combines row-id allocation and row persistence into one Lite storage manager
+- Lite Storage table inserts now go through an autocommit `LiteTxn` facade, which
+  combines row-id allocation and row persistence into one Lite Storage manager
   operation instead of issuing separate calls from the executor TCB. The legacy
   public store APIs for direct row-id allocation and row put have been removed.
 - Autocommit tuple flows whose target is `LiteHbaseInsertTcb` open a local
   transaction before requesting source rows. They publish the pending rows in
   one per-table RocksDB write batch only after source and target EOD, and roll
   the pending rows back on source errors, target errors, or cancellation.
-- Lite table scans and get-row reads now go through the `LiteTxn` facade
+- Lite Storage table scans and get-row reads now go through the `LiteTxn` facade
   with a statement execution token. All scan TCBs that access the same table in
   one executor statement reuse one RocksDB snapshot, which is released by the
   executor root at completion, cancellation, fatal error, or teardown.
 - Lite Storage `BEGIN WORK`, `COMMIT WORK`, and `ROLLBACK WORK` now use an
-  initial Lite transaction context in single-process SQLCI mode. Transactional
+  initial Lite Storage transaction context in single-process SQLCI mode. Transactional
   local INSERTs are buffered until commit, rollback discards them, and scans
   read their own pending writes over a per-table RocksDB snapshot retained
   across all statements in the transaction.
-- Lite RocksDB storage now shares catalog/table handles inside the lite
+- Lite Storage now shares catalog/table handles inside the Trafodion Lite
   process module, so multiple executor scans of the same table in one statement
   no longer reopen the same RocksDB path and collide on RocksDB `LOCK`.
-- Lite executor table rows preserve nullable values. Scan predicates and
+- Lite Storage executor table rows preserve nullable values. Scan predicates and
   projections over NULL fixed-width and variable-width columns use the normal
   executor tuple descriptors.
 - Lite Storage scalar type coverage includes integer, floating-point, character,
@@ -109,17 +110,17 @@ Implemented:
   secondary-index maintenance, with statement and per-table commit atomicity.
 - HBase access TDBs reached through the old executor path now build a TCB that
   emits an unsupported diagnostic instead of returning `NULL`.
-- Lite Storage `make lite` no longer builds `make_monitor` or top-level SQF
+- The `make lite` target no longer builds `make_monitor` or top-level SQF
   `tools`, because the supported runtimes are embedded `sqlci` and
-  `nativelite-server`, not the SQF service stack.
+  `trafodion-lite-server`, not the SQF service stack.
 - Every `ContextCli` owns an `ExTransaction`, which canonically owns that
   session's `LiteTxnContext`; the old process-global mutable transaction
   singleton is removed. Reset, disconnect, delete, and destruction release that
   context without touching peer sessions.
-- Lite object ownership uses the effective identity in the current
+- Trafodion Lite object ownership uses the effective identity in the current
   `ContextCli`, including after `SET SESSION AUTHORIZATION`; it does not use an
   environment variable or treat the compiler-session copy as authoritative.
-- `nativelite-server` exclusively opens the configured store for its process
+- `trafodion-lite-server` exclusively opens the configured store for its process
   lifetime, creates one CLI context per connection, and accepts numeric loopback
   TCP or an owner-only Unix socket. It reaps completed connection threads,
   refuses to replace non-socket, foreign, or active Unix paths, and removes
@@ -136,10 +137,10 @@ Implemented:
 
 Known limits:
 
-- `sqlci` and `nativelite-server` are the only runtime targets intended to work
+- `sqlci` and `trafodion-lite-server` are the only runtime targets intended to work
   standalone today.
 - Other built binaries such as `tdm_arkcmp`, `shell`, `monitor`, `trafns`,
-  `sqwatchdog`, `pstartd`, and `tm` may be present in the lite build, but
+  `sqwatchdog`, `pstartd`, and `tm` may be present in the `lite` build, but
   they are not a supported standalone database environment.
 - Lite Storage `sqlci` still links internal Trafodion shared libraries and a small
   Seabed baseline. Monitor-specific paths are skipped or guarded, but Seabed
@@ -150,11 +151,11 @@ Known limits:
   The current T4 driver's public `Statement.cancel()` does not dispatch during
   an active request; the protocol gate invokes its internal cancel path.
 - The RocksDB DDL path uses the compiler DDL entry point where applicable and
-  loads Lite tables as NATables from the Lite catalog. DML uses Lite executor
+  loads Lite Storage tables as NATables from the Lite Storage catalog. DML uses Lite Storage executor
   TCBs and preserves compiler-generated physical row bytes. The supported type,
   constraint, statistics, authorization, and UDR surfaces remain deliberately
   bounded by the M4-M10 regression contracts.
-- `SELECT` over Lite RocksDB tables uses the Lite executor scan TCB. The scan
+- `SELECT` over Lite Storage tables uses the Lite Storage executor scan TCB. The scan
   TCB projects from persisted binary aligned rows into the compiler-generated
   executor row layout.
 - Some disabled storage paths still exist as compatibility stubs. They should
@@ -186,7 +187,7 @@ tree, the installer creates a repository-local compatibility directory:
 core/sqf/opt/lite-mpich
 ```
 
-Build the lite graph from the repository root:
+Build the `lite` graph from the repository root:
 
 ```bash
 OMPI_CXX=/usr/bin/g++ make lite
@@ -233,7 +234,7 @@ trafconf
 shell
 sqlci
 tdm_arkcmp
-nativelite-server
+trafodion-lite-server
 ```
 
 Exported shared libraries are under:
@@ -279,7 +280,7 @@ Example:
 >>exit;
 ```
 
-RocksDB Lite table example:
+Lite Storage table example:
 
 ```sql
 >>CREATE TABLE t(a INT, b VARCHAR(20));
@@ -309,12 +310,12 @@ To verify persistence, use the same `TRAF_LITE_STORE_DIR` across two separate
 No `sqenv.sh`, `sqgen`, `sqstart`, monitor, DCS, REST, ZooKeeper, HBase, Hadoop,
 or Java process is required for this `sqlci` path.
 
-## Running NativeLite Server
+## Running Trafodion Lite Server
 
-Use the same environment and matching lite libraries as SQLCI, then run:
+Use the same environment and matching `lite` libraries as SQLCI, then run:
 
 ```bash
-$SQL_LIBS/nativelite-server --listen 127.0.0.1 --port 23400
+$SQL_LIBS/trafodion-lite-server --listen 127.0.0.1 --port 23400
 ```
 
 The server exclusively owns `TRAF_LITE_STORE_DIR` until shutdown. A second
@@ -326,7 +327,7 @@ jdbc:t4jdbc://127.0.0.1:23400/:
 ```
 
 For lifecycle or embedding use, pass an exact Unix socket path, for example
-`--unix-socket /tmp/nativelite/server.sock --port 23400`. The socket is
+`--unix-socket /tmp/trafodion-lite/server.sock --port 23400`. The socket is
 created with mode `0600`. The M11 transport is deliberately trusted-local:
 numeric TCP binds are restricted to loopback and authentication has no password
 exchange. The current T4 JDBC acceptance gate uses TCP.
@@ -344,7 +345,7 @@ state, and closes the store.
 
 ## Operational Usage
 
-Use the built `sqlci` and matching lite SQL libraries from the same
+Use the built `sqlci` and matching `lite` SQL libraries from the same
 worktree. In a development build, prefer an explicit shell setup:
 
 ```bash
@@ -360,14 +361,14 @@ export LD_LIBRARY_PATH=$SQL_LIBS:$SQF_LIBS:${LD_LIBRARY_PATH:-}
 $SQL_LIBS/sqlci
 ```
 
-The Lite RocksDB catalog and table data can be removed by deleting the selected
+The Lite Storage catalog and table data can be removed by deleting the selected
 store directory when no `sqlci` process is using it:
 
 ```bash
 rm -rf "$TRAF_LITE_STORE_DIR"
 ```
 
-If `TRAF_LITE_STORE_DIR` is unset, lite uses
+If `TRAF_LITE_STORE_DIR` is unset, Trafodion Lite uses
 `$TRAF_VAR/litestore/rocksdb` when `TRAF_VAR` is set, otherwise
 `./litestore/rocksdb` relative to the process working directory.
 
@@ -379,7 +380,7 @@ If `CREATE TABLE` reports a TMF error such as:
 ERROR[8604] Transaction subsystem TMF returned error 82 while starting a transaction.
 ```
 
-then the lite compiler/executor table path was not selected. The usual
+then the Trafodion Lite compiler/executor table path was not selected. The usual
 causes are:
 
 - Running `sqlci` from a workspace that does not contain this implementation.
@@ -399,21 +400,21 @@ The resolved `libsqlcilib.so` should come from the same
 `core/sql/lib/linux/64bit/debug` directory as `$SQL_LIBS/sqlci`, and `librocksdb`
 should be present.
 
-Supported lite `sqlci` behavior:
+Supported Trafodion Lite `sqlci` behavior:
 
 - SQL parsing, binding, normalization, optimization, and executor startup.
 - `SELECT` queries against `VALUES` clauses.
-- RocksDB Lite tables with compiler/executor-backed SELECT/INSERT/UPDATE/
+- Lite Storage tables with compiler/executor-backed SELECT/INSERT/UPDATE/
   DELETE/MERGE/UPSERT, transactions, joins, aggregates, ordering, cursors,
   windows, and local scratch behavior.
 - Catalog DDL for tables, views, schemas, sequences, synonyms, indexes,
   constraints, ALTER/TRUNCATE, plus local SHOWDDL/SHOWSTATS and catalog
   enumeration.
-- Lite users, roles and object privileges, and the bounded native/Java UDR
+- Trafodion Lite users, roles and object privileges, and the bounded native/Java UDR
   adapters described by M8/M9.
 - Basic scalar expressions, arithmetic, and string operations.
 - Direct `DATE`, `TIME`, and `TIMESTAMP` result rendering for standalone
-  expressions and Lite table columns.
+  expressions and Lite Storage table columns.
 - `exit;` and `quit;`.
 
 Unsupported behavior:
@@ -474,7 +475,7 @@ Current cases are:
 - `TEST008`: aggregate/subquery binder diagnostics and executor value-evaluation
   diagnostics for invalid character conversion, numeric narrowing overflow, and
   division by zero, including successful post-error table access.
-- `TEST009`: compiler-routed Lite DDL diagnostics, supported DML coexistence,
+- `TEST009`: compiler-routed Lite Storage DDL diagnostics, supported DML coexistence,
   rejected native external-table/service-only DDL, and post-error base-table
   verification.
 - `TEST010`: `INSERT ... SELECT` with target-column reordering, source
@@ -486,7 +487,7 @@ Current cases are:
   and successful execution after a prepared INSERT duplicate-key error.
 - `TEST012`: base-table and derived-table `NATURAL JOIN`, single- and
   multi-column `SELECT DISTINCT`, ordered `FIRST`, legacy `[ANY n]`-style
-  `LIMIT`, and correlated `FIRST` over Lite table scans.
+  `LIMIT`, and correlated `FIRST` over Lite Storage table scans.
 - `TEST013`: ASCII string functions over local `VARCHAR` rows, positive and
   negated POSIX `REGEXP` predicates with NULL input, invalid-pattern diagnostic
   `8452`, and successful table access after the executor error.
@@ -558,7 +559,7 @@ Portable SQL should be promoted only through the reviewed adapter/manifest.
 
 The current successful set-operation surface is `UNION ALL` and `UNION`
 distinct. `INTERSECT` and `EXCEPT` remain disabled by the existing binder
-default and are not claimed by the lite lane. `TEST007` locks this
+default and are not claimed by the Trafodion Lite lane. `TEST007` locks this
 boundary to the existing `3022` diagnostic.
 
 ### Legacy Core/Executor Compatibility Audit
@@ -568,12 +569,12 @@ The audit compared the portable portions of legacy `core/TEST001`,
 string-function subset of `charsets/TEST313`, with native `TEST001` through
 `TEST025`. The legacy files remain useful as SQL-shape input, but their
 environment setup, object inventory, and EXPECTED output cannot be run
-unchanged in lite.
+unchanged in Trafodion Lite.
 
 | Legacy area | Native status | Remaining work |
 | --- | --- | --- |
 | Basic table DDL, `INSERT VALUES`, scans, expressions, joins, aggregates, derived tables, subqueries, and `UNION` | Covered by `TEST001`-`TEST006` | Continue migrating only deterministic, service-independent variants. |
-| Binder, executor-value, DDL, and unsupported-surface diagnostics | Covered by `TEST007`-`TEST009` | Add narrow cases only when they protect a lite invariant. |
+| Binder, executor-value, DDL, and unsupported-surface diagnostics | Covered by `TEST007`-`TEST009` | Add narrow cases only when they protect a Trafodion Lite invariant. |
 | `INSERT ... SELECT` | Covered by `TEST010` | Tuple-flow autocommit is atomic within one target table; M12 adds durable journal coordination for explicit transactions that publish multiple tables. |
 | SQLCI `PREPARE`/`EXECUTE` lifecycle | Covered by `TEST011`, including repeated SELECT/INSERT, new parameter values, name replacement, fresh SELECT results, and post-error recovery | Add cases only when they protect another prepared-execution invariant. |
 | `NATURAL JOIN`, general `SELECT DISTINCT`, and `FIRST`/limit shapes | Covered by `TEST012`, including correlated `FIRST` through ProbeCache | `LIMIT` intentionally retains Trafodion's legacy `[ANY n]` semantics rather than ordered `FIRST` semantics. |
@@ -611,27 +612,27 @@ baseline evidence before mutable DML and catalog surface expansion begins.
 
 ## Lite Storage Implementation
 
-This section records the implementation state of the current lite
+This section records the implementation state of the current Trafodion Lite
 RocksDB path. Keep this section current when completing the plan items below.
 
 ### Build Wiring
 
-- `core/sql/nskgmake/Makerules.linux` defines lite-only `ROCKSDB_INC`,
+- `core/sql/nskgmake/Makerules.linux` defines `lite`-only `ROCKSDB_INC`,
   `ROCKSDB_LIB`, and a header probe for `rocksdb/c.h`.
 - `core/sql/nskgmake/executor/Makefile` compiles
   `core/sql/litestore/LiteRocksDBStore.cpp` and
   `core/sql/litestore/LiteRowCodec.cpp` into the executor library for
-  lite builds.
+  `lite` builds.
 - `core/sql/nskgmake/sqlcilib/Makefile` compiles only
   `core/sql/sqlci/LiteSqlTable.cpp` into `libsqlcilib.so` for
-  lite builds. SQLCI does not link the RocksDB store or row codec for
-  Lite table IO.
+  `lite` builds. SQLCI does not link the RocksDB store or row codec for
+  Lite Storage table IO.
 - `core/sql/nskgmake/sqlcomp/Makefile` compiles the RocksDB store into
-  `libsqlcomp.so` for lite builds, so compiler DDL can write local
+  `libsqlcomp.so` for `lite` builds, so compiler DDL can write local
   catalog metadata without linking Java, HBase, or HDFS code.
 - `core/sql/nskgmake/optimizer/Makefile` compiles the RocksDB store into
-  `liboptimizer.so` for lite builds, so NATable loading can read the
-  Lite catalog before falling back to Seabase/HBase metadata.
+  `liboptimizer.so` for `lite` builds, so NATable loading can read the
+  Lite Storage catalog before falling back to Seabase/HBase metadata.
 - `scripts/install-lite-deps.sh` installs `librocksdb-dev` on apt-based
   systems and `rocksdb-devel` on rpm-based systems.
 - `core/sqf/Makefile` excludes `make_monitor` and top-level `tools` from
@@ -639,7 +640,7 @@ RocksDB path. Keep this section current when completing the plan items below.
 
 ### Storage Layout
 
-The Lite store root is selected in this order:
+The Lite Storage root is selected in this order:
 
 ```text
 TRAF_LITE_STORE_DIR
@@ -661,32 +662,32 @@ binary aligned row payload.
 
 ### Compiler DDL Path
 
-`CREATE TABLE` and `DROP TABLE` now use the compiler DDL path in lite
+`CREATE TABLE` and `DROP TABLE` now use the compiler DDL path in `lite`
 builds instead of SQLCI string parsing.
 
 - `core/sql/sqlci/LiteSqlTable.cpp` no longer intercepts `CREATE TABLE`
   or `DROP TABLE`. Those statements proceed to CLI prepare/execute.
-- `core/sql/generator/GenPreCode.cpp` marks lite table CREATE/DROP as not
+- `core/sql/generator/GenPreCode.cpp` marks Lite Storage table CREATE/DROP as not
   needing a transaction.
-- `core/sql/generator/GenRelMisc.cpp` marks lite table CREATE/DROP DDL
+- `core/sql/generator/GenRelMisc.cpp` marks Lite Storage table CREATE/DROP DDL
   TDBs as HBase DDL. This reuses the existing embedded compiler
   `PROCESSDDL` executor path without starting TMF.
 - `core/sql/executor/ex_ddl.cpp` initializes embedded arkcmp when needed in
-  lite mode, restores the embedded compiler context before `PROCESSDDL`,
-  and drops stale empty diagnostics after successful Lite DDL.
+  `lite` mode, restores the embedded compiler context before `PROCESSDDL`,
+  and drops stale empty diagnostics after successful Lite Storage DDL.
 - `core/sql/arkcmp/CmpStatement.cpp` binds the direct
-  `StmtDDLCreateTable`/`StmtDDLDropTable` node for lite table DDL and
+  `StmtDDLCreateTable`/`StmtDDLDropTable` node for Lite Storage table DDL and
   calls `CmpSeabaseDDL::executeSeabaseDDL()` directly. This avoids the full
   `DDLExpr::bindNode()` wrapper path that expects initialized Seabase/HBase
   services. Lite Storage DDL business errors are returned as embedded compiler
   diagnostics on the SUCCESS return path because the ERROR return path is
   wrapped by the generic compiler-server failure before SQLCI displays the
   original diagnostic.
-- `core/sql/sqlcomp/CmpSeabaseDDLcommon.cpp` recognizes Lite table
+- `core/sql/sqlcomp/CmpSeabaseDDLcommon.cpp` recognizes Lite Storage table
   DDL, skips the uninitialized Seabase/HBase guard, skips
   `sendAllControlsAndFlags()`, suppresses DDL transaction start, and dispatches
-  CREATE TABLE directly to the Lite table branch.
-- `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp` implements lite
+  CREATE TABLE directly to the Lite Storage table branch.
+- `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp` implements Lite Storage
   `liteCreateTable()` and `liteDropTable()` helpers. They apply
   catalog/schema defaults, reject unsupported constraints, defaults, physical
   attributes, Hive options, LOB-like types, and `DROP TABLE CASCADE`, and then
@@ -701,49 +702,49 @@ ERROR[8604] Transaction subsystem TMF returned error 82 while starting a transac
 Lite Storage table DDL should now complete without TMF, Seabase metadata bootstrap,
 HBase, Hadoop, ZooKeeper, or Java runtime services.
 
-### Lite Catalog NATable Loading
+### Lite Storage Catalog NATable Loading
 
 `core/sql/optimizer/NATable.cpp` now has a `TRAF_LITE` metadata path for
-Lite RocksDB tables. During `NATableDB::get()`, lite checks
+Lite Storage tables. During `NATableDB::get()`, the Trafodion Lite path checks
 `LiteRocksDBStore` before calling `CmpSeabaseDDL::getSeabaseTableDesc()`
-for regular Seabase table names. If the table exists in the Lite catalog, the
+for regular Seabase table names. If the table exists in the Lite Storage catalog, the
 optimizer synthesizes a minimal `TrafDesc` tree on the NATable heap:
 
 - `DESC_TABLE_TYPE` with the local object UID, aligned row format, no
   partitioning, regular insert mode, and droppable table flag.
 - Audited table and index `DESC_FILES_TYPE` nodes, so normal DML binding does
-  not reject the table as non-audited before it reaches the lite executor
+  not reject the table as non-audited before it reaches the Lite Storage executor
   guard.
 - User column descriptors from catalog column metadata.
 - A minimal primary index descriptor and key descriptor, reusing the existing
-  HBase/Seabase scan TDB shape as the carrier for the Lite RocksDB scan TCB.
+  HBase/Seabase scan TDB shape as the carrier for the Lite Storage scan TCB.
   Keyless tables expose the internal RocksDB row id as a hidden `SYSKEY`
   clustering column instead of treating the first user column as unique.
-- Logical UNIQUE access-path descriptors for lite `UNIQUE` metadata. These
+- Logical UNIQUE access-path descriptors for Lite Storage `UNIQUE` metadata. These
   descriptors expose unique keys to the optimizer but keep the physical
-  `indexname` on the base Lite table because lite stores `U` uniqueness
+  `indexname` on the base Lite Storage table because Lite Storage stores `U` uniqueness
   records in the same RocksDB table rather than in separate index tables.
 
-The current type mapper covers the Lite DDL v1 scalar surface needed for
+The current type mapper covers the Lite Storage DDL v1 scalar surface needed for
 binding: signed tiny/small/int/large integers, real/float, double, `CHAR`,
 `VARCHAR`, `DATE`, `TIME`, and `TIMESTAMP`. Character columns are represented as
 ISO88591 descriptors.
 
-`core/sql/sqlci/LiteSqlTable.cpp` no longer intercepts Lite table
-`SELECT`. All supported queries, including `VALUES` queries and Lite table
-queries, fall through to CLI prepare and executor execution. Lite table scans
-bind through the Lite catalog NATable path and execute through
+`core/sql/sqlci/LiteSqlTable.cpp` no longer intercepts Lite Storage table
+`SELECT`. All supported queries, including `VALUES` queries and Lite Storage table
+queries, fall through to CLI prepare and executor execution. Lite Storage table scans
+bind through the Lite Storage catalog NATable path and execute through
 `LiteRocksdbScanTcb`.
 
 ### Executor Scan TCB
 
 `core/sql/executor/LiteStorageStubs.cpp` now builds
-`LiteRocksdbScanTcb` for lite `ExHbaseAccessTdb::SELECT_` plans. The
+`LiteRocksdbScanTcb` for Lite Storage `ExHbaseAccessTdb::SELECT_` plans. The
 TCB loads table metadata and rows from `LiteRocksDBStore`, uses
 `LiteRowCodec` to project the persisted binary aligned payload through the
 fetched-column list, writes those values into the compiler-generated binary
 aligned row descriptor, and returns rows through the normal executor up queue.
-Encoded lite get-row requests are consumed through
+Encoded Lite Storage get-row requests are consumed through
 `LiteTxn::getRowByKey()`. Primary-key requests use deterministic `P`
 records. UNIQUE-key requests use deterministic `U` records and resolve back to
 the base persisted `LTBR1` row before projection.
@@ -753,19 +754,19 @@ This replaces the previous SQLCI `SELECT *` bypass.
 ### Executor Insert TCB
 
 `core/sql/executor/LiteStorageStubs.cpp` also builds
-`LiteHbaseInsertTcb` for lite `ExHbaseAccessTdb::INSERT_` plans. The
+`LiteHbaseInsertTcb` for Lite Storage `ExHbaseAccessTdb::INSERT_` plans. The
 TCB evaluates the compiler-generated `convertExpr_`, then
 `LiteRowCodec` normalizes that executor-produced row into the local
 canonical binary aligned table layout and persists the `LTBR1` payload through
 `LiteRocksDBStore`.
-In lite mode the binder marks HBase-style DML as not needing generic index
-maintenance; the Lite storage layer maintains local `U` uniqueness records for
+In `lite` mode the binder marks HBase-style DML as not needing generic index
+maintenance; the Lite Storage layer maintains local `U` uniqueness records for
 UNIQUE constraints in the base RocksDB table.
 
 This replaces the previous SQLCI `INSERT INTO ... VALUES` bypass. INSERT type
 conversion and expression evaluation now come from the compiler/executor path
-for the supported v1 Lite table types. For an insert-select plan, the normal
-`ExTupleFlowTcb` feeds source ATPs to this child. In lite, a tuple flow
+for the supported v1 Lite Storage table types. For an insert-select plan, the normal
+`ExTupleFlowTcb` feeds source ATPs to this child. In `lite` mode, a tuple flow
 whose target identifies itself as a Lite insert creates an implicit
 `LiteTxn` when there is no explicit transaction, commits after complete
 source/target EOD, and rolls back after child errors or cancellation.
@@ -773,7 +774,7 @@ source/target EOD, and rolls back after child errors or cancellation.
 ### SQLCI Handler
 
 `core/sql/sqlci/SqlCmd.cpp` calls
-`LiteSqlTable_process()` before CLI prepare in lite builds. The
+`LiteSqlTable_process()` before CLI prepare in `lite` builds. The
 handler supplies local session/catalog compatibility (`SET`/`USE`,
 `GET`/`SHOW`, SHOWDDL/SHOWSTATS), schema/synonym/statistics operations,
 authorization checks, and bounded UDR handling. Native HBase/Hive table DDL and
@@ -785,14 +786,14 @@ identifiers are uppercased; quoted identifiers preserve case.
 Normal table SELECT and DML intentionally use the compiler/executor paths
 described above; the handler must not become a second general SQL executor.
 
-All supported query execution must use executor TCBs. The SQLCI lite hook
+All supported query execution must use executor TCBs. The Trafodion Lite SQLCI hook
 must not scan RocksDB rows, insert RocksDB rows, or materialize general query
 results directly.
 
 ### Executor Guard
 
 `core/sql/executor/LiteStorageStubs.cpp` still builds
-`LiteUnsupportedHbaseTcb` for HBase access TDB plans other than lite
+`LiteUnsupportedHbaseTcb` for HBase access TDB plans other than supported Lite Storage
 `SELECT_` and `INSERT_` instead of returning `NULL`. This prevents a vague
 crash if an old unsupported HBase access TDB path is reached.
 
@@ -813,37 +814,37 @@ server, and Trafodion Type 4 client-protocol acceptance gates.
 
 Completed:
 
-- RocksDB dependency detection and lite link flags.
+- RocksDB dependency detection and `lite` link flags.
 - Native RocksDB catalog/table store module.
-- Explicit unsupported diagnostics for known lite unsupported SQL.
+- Explicit unsupported diagnostics for known unsupported Trafodion Lite SQL.
 - HBase access TDB guard that returns an unsupported TCB instead of `NULL`.
 - Lite Storage SQF monitor/tools build trimming.
 - SQLCI-entry RocksDB smoke/regression coverage for compiler/executor-backed
   table IO.
-- Compiler-routed Lite table `CREATE TABLE` and `DROP TABLE`, including TMF
+- Compiler-routed Lite Storage table `CREATE TABLE` and `DROP TABLE`, including TMF
   avoidance and visible compiler DDL diagnostics.
-- Lite catalog NATable loading for compiler-bound Lite table references.
-- Lite RocksDB executor scan TCB for compiler-bound Lite table SELECTs.
-- Lite RocksDB executor insert TCB for compiler-bound Lite table INSERTs.
+- Lite Storage catalog NATable loading for compiler-bound Lite Storage table references.
+- Lite Storage executor scan TCB for compiler-bound Lite Storage table SELECTs.
+- Lite Storage executor insert TCB for compiler-bound Lite Storage table INSERTs.
 - Binary aligned executor row materialization and fetched-column projection
-  mapping for Lite table SELECTs.
+  mapping for Lite Storage table SELECTs.
 - Versioned binary aligned row persistence for executor INSERT values.
 - Predicate evaluation for Lite RocksDB scans, including predicates on columns
   that are not part of the final projection.
-- Date/time/timestamp Lite table rows through executor insert, `LTBR1`
+- Date/time/timestamp Lite Storage table rows through executor insert, `LTBR1`
   persistence, and executor scan predicates.
-- Small exact `NUMERIC(p,s)` Lite table rows through executor insert,
+- Small exact `NUMERIC(p,s)` Lite Storage table rows through executor insert,
   `LTBR1` persistence, and executor scan predicates.
-- `DECIMAL(p,s)` and BigNum `NUMERIC(p,s)` Lite table rows through executor
+- `DECIMAL(p,s)` and BigNum `NUMERIC(p,s)` Lite Storage table rows through executor
   insert, `LTBR1` persistence, and executor scan predicates.
-- NULL and insert-expression edge cases for Lite executor INSERT/SCAN rows.
+- NULL and insert-expression edge cases for Lite Storage executor INSERT/SCAN rows.
 - v1 unsupported object/type rules split between SQLCI pre-prepare checks and
   compiler DDL checks.
 - Operational usage documentation for the current sqlci entry point and
   compiler/executor-backed RocksDB table path.
-- Lite store public API cleanup that prevents Lite executor writes from
+- Lite Storage public API cleanup that prevents Lite Storage executor writes from
   bypassing `LiteTxn::insertRow()`.
-- Same-process Lite store concurrency probe covering multiple writer threads,
+- Same-process Lite Storage concurrency probe covering multiple writer threads,
   overlapping scans, shared RocksDB handles, and duplicate-free row-id
   allocation through the transaction facade.
 - The same concurrency probe now covers simultaneous primary-key and UNIQUE-key
@@ -851,29 +852,29 @@ Completed:
   overwrite the persisted row, and failed UNIQUE attempts do not advance the
   keyless row-id metadata.
 - Cross-process shared-store boundary enforcement for `TRAF_LITE_STORE_DIR`:
-  a second process that tries to open an already-held Lite store receives an
-  explicit lite diagnostic instead of a raw RocksDB `LOCK` message.
+  a second process that tries to open an already-held Lite Storage receives an
+  explicit Trafodion Lite diagnostic instead of a raw RocksDB `LOCK` message.
 - M11 sessionization: mutable transaction state lives under each CLI session's
   `ExTransaction`, while storage handles remain process-owned and shared.
 - M11 standalone service and reduced Trafodion Type 4 endpoint, with repository
   T4 JDBC coverage for multi-client isolation, disconnect/cancel cleanup,
   prepared execution, typed fetch, metadata, and restart persistence.
-- Broader executor expression smoke coverage for Lite table INSERT/SCAN paths,
+- Broader executor expression smoke coverage for Lite Storage table INSERT/SCAN paths,
   including `CASE`, string concatenation, `BETWEEN`, `IN`, `LIKE`, and `OR`
   predicates.
-- Broader Lite table query-shape smoke coverage for executor scan TCBs,
+- Broader Lite Storage table query-shape smoke coverage for executor scan TCBs,
   including `ORDER BY`, self-join, inner join, and left join.
-- Ungrouped aggregate expression smoke coverage for Lite table scans,
+- Ungrouped aggregate expression smoke coverage for Lite Storage table scans,
   including `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, aggregate arithmetic, and
   aggregate input filtering over NULL values.
-- Grouped aggregate correctness for Lite table scans, including duplicate
+- Grouped aggregate correctness for Lite Storage table scans, including duplicate
   group keys, NULL group keys, nullable UNIQUE group keys, aggregate input
   filtering, and `HAVING` predicates evaluated above the aggregate.
 - Keyless NATable/NAFileSet metadata exposes the synthetic RocksDB row identity
   as a hidden `SYSKEY` clustering key. Executor scans materialize that value
   from `LiteRow::rowId`, executor inserts ignore the generated SYSKEY
   placeholder when building `LTBR1`, and normal groupby elimination rules can
-  rely on optimizer key metadata without lite rule guards.
+  rely on optimizer key metadata without `lite` rule guards.
 - Explicit transaction COMMIT preflights all pending primary and UNIQUE keys
   against committed storage, then publishes each table's base rows and
   secondary uniqueness records with one RocksDB write batch. Commit-failure
@@ -881,7 +882,7 @@ Completed:
   row from the same table and that a failed keyless UNIQUE commit does not
   advance persisted row-id metadata.
 - A native `core/sql/regress/lite` lane runs isolated TEST/EXPECTED cases
-  directly through the built lite SQLCI. It produces RAW/LOG/DIFF
+  directly through the built Trafodion Lite SQLCI. It produces RAW/LOG/DIFF
   artifacts, supports selecting individual case numbers, and requires no SQF,
   TMF, HBase, Hadoop, or ZooKeeper service startup.
 - Executor INSERT normalization resolves the actual length-indicator location
@@ -890,7 +891,7 @@ Completed:
   truncated executor tuple. Native `TEST004` covers reverse-order variable
   projection, NULL variable fields, primary/UNIQUE lookups, numeric families,
   and datetime fields in one table.
-- The lite SQLCI prologue enables CLI internal-format IO before preparing
+- The Trafodion Lite SQLCI prologue enables CLI internal-format IO before preparing
   the first user statement. SQLCI Formatter therefore receives binary datetime
   values instead of external text that would be converted a second time.
   Native `TEST004` validates direct DATE/TIME/TIMESTAMP output from both
@@ -926,7 +927,7 @@ Completed:
   executor tests. It covers column reordering, expressions, source filtering,
   a `UNION ALL` source, explicit rollback, and a late primary-key conflict that
   must not partially publish earlier tuple-flow rows. A subsequent successful
-  insert confirms that error cleanup releases the implicit Lite transaction.
+  insert confirms that error cleanup releases the implicit Lite Storage transaction.
 - Native `TEST011` migrates the prepared SELECT/INSERT lifecycle from legacy
   executor/core tests. It covers repeated SELECT execution against fresh local
   snapshots, SQLCI parameter rebinding for SELECT and INSERT, prepared-statement
@@ -1018,14 +1019,14 @@ Completed:
   diagnostics `8432`/`4129`/`4116`, and post-error recovery. Existing
   binder/executor behavior required no implementation change.
 - Autocommit tuple-flow inserts now use `LiteTxnManager` as an implicit
-  statement transaction when no explicit Lite transaction is active. The
+  statement transaction when no explicit Lite Storage transaction is active. The
   tuple flow commits only after complete source/target EOD and rolls back on
   either child error or cancellation.
 - RocksDB SQLCI smoke now verifies that an autocommit multi-row `INSERT VALUES`
   with a late primary-key conflict does not partially publish an earlier row.
 
 The transaction/concurrency roadmap Phases 1 through 5 are complete for the
-documented lite v1 boundary. M12 subsequently adds the selected
+documented Lite Storage v1 boundary. M12 subsequently adds the selected
 single-keyspace transaction contract and journal-coordinated, crash-recoverable
 multi-table DML publication. M13 makes the TransactionDB layout the exclusive
 catalog/table runtime format. Cross-process writers,
@@ -1152,11 +1153,11 @@ The authoritative milestone definitions and completion gates are in
   - [x] A SQLCI probe constructs two complete `ContextCli` instances, keeps
     overlapping transactions active, and validates isolation, independent
     completion, reset/delete rollback, and peer survival.
-  - [x] Lite DDL ownership resolves from the authoritative current
+  - [x] Lite Storage DDL ownership resolves from the authoritative current
     `ContextCli`; `TEST041` verifies ownership, GRANT, and identity switching,
     while `executor/TEST014` verifies CTAS remains valid inside the bounded
     explicit-transaction contract.
-  - [x] `nativelite-server` owns the store, creates one CLI context per client,
+  - [x] `trafodion-lite-server` owns the store, creates one CLI context per client,
     supports loopback TCP and protected 0600 Unix sockets, reaps completed
     connection threads, and shuts down cleanly without deleting a replaced
     socket pathname.
@@ -1176,12 +1177,12 @@ The authoritative milestone definitions and completion gates are in
   - Current store supports create, drop, metadata lookup, row ID allocation,
     row insert, and full row scan.
 
-- [x] **Remove SQLCI direct Lite table IO and route supported statements to
+- [x] **Remove SQLCI direct Lite Storage table IO and route supported statements to
   compiler/executor paths.**
   - Implemented in `core/sql/sqlci/LiteSqlTable.cpp` and
     `core/sql/sqlci/SqlCmd.cpp`.
   - SQLCI no longer performs direct RocksDB table scans or inserts. The
-    lite SQLCI hook only reports known unsupported statements before
+    Trafodion Lite SQLCI hook only reports known unsupported statements before
     prepare.
   - `CREATE TABLE` and `DROP TABLE` were moved out of this SQLCI handler and
     now use the compiler DDL path.
@@ -1206,10 +1207,10 @@ The authoritative milestone definitions and completion gates are in
   path.**
   - Implemented in `scripts/test-lite-rocksdb-sqlci.sh`.
   - The script verifies `librocksdb` linkage, absence of Java/Hadoop/HBase/
-    ZooKeeper dynamic library names, Lite table create/insert/select/drop, and
+    ZooKeeper dynamic library names, Lite Storage table create/insert/select/drop, and
     persistence across two `sqlci` processes.
 
-- [x] **Move Lite table DDL from SQLCI string parsing into the compiler DDL
+- [x] **Move Lite Storage table DDL from SQLCI string parsing into the compiler DDL
   path.**
   - Implemented in `core/sql/sqlci/LiteSqlTable.cpp`,
     `core/sql/generator/GenPreCode.cpp`, `core/sql/generator/GenRelMisc.cpp`,
@@ -1222,28 +1223,28 @@ The authoritative milestone definitions and completion gates are in
   - Duplicate CREATE, unsupported constraints/defaults, unsupported LOB-like
     types, and unsupported DROP CASCADE are compiler DDL diagnostics.
   - Embedded compiler context restoration and SUCCESS-with-error-diagnostics
-    propagation keep lite DDL errors visible in SQLCI instead of being
+    propagation keep Lite Storage DDL errors visible in SQLCI instead of being
     masked by generic `-2013`/`-8822` compiler-server errors.
 
-- [x] **Add NATable loading from the Lite catalog.**
-  - Implemented in `core/sql/optimizer/NATable.cpp` with lite-only
+- [x] **Add NATable loading from the Lite Storage catalog.**
+  - Implemented in `core/sql/optimizer/NATable.cpp` with `lite`-only
     catalog lookup and synthesized `TrafDesc` table/column/index descriptors.
   - `core/sql/nskgmake/optimizer/Makefile` now compiles
-    `LiteRocksDBStore.cpp` into `liboptimizer.so` for lite builds.
+    `LiteRocksDBStore.cpp` into `liboptimizer.so` for `lite` builds.
   - `core/sql/sqlci/LiteSqlTable.cpp` now leaves table SELECT queries for
     the normal compiler path instead of handling them in the SQLCI bypass.
   - `core/sql/executor/LiteStorageStubs.cpp` allocates queue private state
-    for the unsupported HBase TCB so compiled Lite table plans return a clear
+    for the unsupported HBase TCB so compiled Lite Storage table plans return a clear
     unsupported diagnostic instead of asserting.
-  - Acceptance check: `SELECT * FROM t` against a Lite RocksDB table no longer
+  - Acceptance check: `SELECT * FROM t` against a Lite Storage table no longer
     reports table-not-found or SQLCI bypass errors; it binds through NATable.
 
-- [x] **Replace the SQLCI `SELECT *` bypass with an executor TCB for Lite table
+- [x] **Replace the SQLCI `SELECT *` bypass with an executor TCB for Lite Storage table
   scans.**
   - Implemented in `core/sql/executor/LiteStorageStubs.cpp` as
     `LiteRocksdbScanTcb`, using the existing HBase access TDB shape only as
-    a carrier for Lite table scan metadata.
-  - `core/sql/comexe/ComTdbHbaseAccess.h` grants the lite scan TCB access
+    a carrier for Lite Storage table scan metadata.
+  - `core/sql/comexe/ComTdbHbaseAccess.h` grants the Lite Storage scan TCB access
     to the compiler-generated work CRI, tuple indexes, and expressions without
     changing the TDB layout.
   - Acceptance check: generated table access plans instantiate the local
@@ -1258,14 +1259,14 @@ The authoritative milestone definitions and completion gates are in
     the existing HBase access TDB can expose a fetched-column list for local
     table columns.
   - The generator keeps projected base/index columns mapped to the scan tuple
-    attributes needed by the lite TCB.
+    attributes needed by the Lite Storage TCB.
   - The scan TCB maps fetched columns from the persisted binary aligned row
     payload to the requested projection and writes supported values into the
     compiler-generated binary aligned row descriptor.
   - Runtime validation covers `SELECT b`, `SELECT a, b`, and `SELECT *` for
-    an `INT, VARCHAR` Lite table.
+    an `INT, VARCHAR` Lite Storage table.
 
-- [x] **Persist Lite table rows as versioned binary aligned payloads.**
+- [x] **Persist Lite Storage table rows as versioned binary aligned payloads.**
   - Implemented in `core/sql/litestore/LiteRowCodec.cpp` and
     `core/sql/litestore/LiteRowCodec.h`.
   - Executor `INSERT INTO ... VALUES` and `INSERT ... SELECT` now evaluate the
@@ -1276,12 +1277,12 @@ The authoritative milestone definitions and completion gates are in
   - Runtime validation covers persisted `INT, VARCHAR` rows across separate
     `sqlci` processes.
 
-- [x] **Move Lite table inserts to executor expressions.**
+- [x] **Move Lite Storage table inserts to executor expressions.**
   - Implemented in `core/sql/executor/LiteStorageStubs.cpp` as
     `LiteHbaseInsertTcb`.
   - `core/sql/sqlci/LiteSqlTable.cpp` no longer intercepts `INSERT`.
   - `core/sql/generator/GenRelMisc.cpp` disables root transaction startup in
-    lite, since this runtime does not start TMF.
+    `lite` mode, since this runtime does not start TMF.
   - `core/sql/litestore/LiteRowCodec.cpp` normalizes the
     executor-produced insert row into the local canonical binary aligned row
     layout before persistence.
@@ -1296,12 +1297,12 @@ The authoritative milestone definitions and completion gates are in
     the compiler-generated `scanExpr_`, and only then materializing the
     projected convert tuple.
   - `core/sql/generator/GenRelScan.cpp` adds executor-predicate columns before
-    projection-only columns in the lite fetched-column list so predicate
+    projection-only columns in the Lite Storage fetched-column list so predicate
     expressions receive the correct tuple attributes.
   - Acceptance check: `SELECT b FROM t WHERE a = 1;` runs through the normal
     SQL compiler/executor path and returns only matching projected columns.
 
-- [x] **Extend lite scalar type coverage for datetime types.**
+- [x] **Extend Lite Storage scalar type coverage for datetime types.**
   - Implemented in `core/sql/litestore/LiteRowCodec.cpp`.
   - `DATE`, `TIME`, and `TIMESTAMP` values are persisted from the
     executor-produced binary representation and copied back into executor scan
@@ -1310,7 +1311,7 @@ The authoritative milestone definitions and completion gates are in
     `DATE`, `TIME`, and `TIMESTAMP` columns while projecting a separate
     `VARCHAR` column.
 
-- [x] **Extend lite scalar type coverage for small exact NUMERIC types.**
+- [x] **Extend Lite Storage scalar type coverage for small exact NUMERIC types.**
   - Implemented in `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp`,
     `core/sql/optimizer/NATable.cpp`, and
     `core/sql/litestore/LiteRowCodec.cpp`.
@@ -1320,7 +1321,7 @@ The authoritative milestone definitions and completion gates are in
   - Runtime validation covers executor inserts and scan predicates over
     `NUMERIC(5,2)` while projecting a separate `VARCHAR` column.
 
-- [x] **Extend lite scalar type coverage for DECIMAL and BigNum NUMERIC
+- [x] **Extend Lite Storage scalar type coverage for DECIMAL and BigNum NUMERIC
   types.**
   - Implemented in `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp`,
     `core/sql/optimizer/NATable.cpp`, and
@@ -1335,13 +1336,13 @@ The authoritative milestone definitions and completion gates are in
     `DECIMAL(5,2)` and `NUMERIC(30,2)` while projecting a separate `VARCHAR`
     column.
 
-- [x] **Cover NULL and expression edge cases for Lite executor INSERT/SCAN
+- [x] **Cover NULL and expression edge cases for Lite Storage executor INSERT/SCAN
   rows.**
   - Implemented in `core/sql/litestore/LiteRowCodec.cpp` by preserving
     NULL bitmap state and advancing variable-column VOA state when projecting
     stored nullable VARCHAR values into executor scan rows.
   - `core/sql/executor/LiteStorageStubs.cpp` now uses the variable column
-    indicator width when writing lite variable-column VOA entries.
+    indicator width when writing Lite Storage variable-column VOA entries.
   - Runtime validation covers NULL fixed-width predicates, NULL VARCHAR
     predicates, executor insert expressions such as arithmetic and CAST,
     NOT NULL insert diagnostics, and multiple nullable VARCHAR columns.
@@ -1350,7 +1351,7 @@ The authoritative milestone definitions and completion gates are in
   prepare.**
   - Implemented in `core/sql/sqlci/LiteSqlTable.cpp` for statements that
     still use the SQLCI pre-prepare bypass, and in
-    `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp` for compiler-routed Lite table
+    `core/sql/sqlcomp/CmpSeabaseDDLtable.cpp` for compiler-routed Lite Storage table
     DDL.
   - Current checks cover Hive/HBase/volatile table DDL, LOB-like column types,
     indexes, views, sequences, schemas, synonyms, table constraints/defaults/
@@ -1360,7 +1361,7 @@ The authoritative milestone definitions and completion gates are in
     the compiler path, so they are enforced before reaching HBase, HDFS, Java,
     or TMF code.
 
-- [x] **Add a focused regression test suite for lite RocksDB through
+- [x] **Add a focused regression test suite for Lite Storage through
   sqlci.**
   - Implemented by extending `scripts/test-lite-rocksdb-sqlci.sh`.
   - Current coverage includes create/drop, duplicate table errors, missing
@@ -1381,16 +1382,16 @@ The standalone `sqlci` path does not need shell scripts. The scripts still exist
 for full Trafodion workflows and for compatibility with existing development
 habits.
 
-Current lite-specific script behavior:
+Current Trafodion Lite-specific script behavior:
 
-- `sqenvcom.sh` sets lite config defaults, clears Hadoop/HBase classpath
+- `sqenvcom.sh` sets Trafodion Lite configuration defaults, clears Hadoop/HBase classpath
   setup, and avoids Hadoop/HBase distro probing when `TRAF_LITE=1`.
 - `sqgen` skips HBase classpath cache cleanup when `TRAF_LITE=1`.
 - `sqstart` skips Kerberos/Hadoop checks, distributed HBase cleanup,
   ZooKeeper cleanup, and `hbcheck` when `TRAF_LITE=1`.
 
 These guards do not make the legacy SQF service stack a supported standalone
-database mode. They only prevent lite development workflows from failing
+database mode. They only prevent Trafodion Lite development workflows from failing
 early on intentionally absent Hadoop/HBase/ZooKeeper dependencies.
 
 ## Disabled Storage Behavior
@@ -1401,7 +1402,7 @@ reached.
 
 Current examples:
 
-- Optimizer HDFS hooks record lite unavailable diagnostics.
+- Optimizer HDFS hooks record Trafodion Lite unavailable diagnostics.
 - Hive metadata, Hive truncate, and Hive query execution utilities emit
   unsupported diagnostics.
 - HDFS/HBase bulk unload paths emit unsupported diagnostics.
@@ -1412,7 +1413,7 @@ Silent success for disabled storage work is a bug.
 
 ## Verification
 
-Check the lite dry run for disabled Java/Hadoop build modules:
+Check the `lite` dry run for disabled Java/Hadoop build modules:
 
 ```bash
 make -n lite | egrep 'mvn|javac|hbase-trx|hbasetmlib2|hbase_utilities|JAVA_HOME'
@@ -1420,7 +1421,7 @@ make -n lite | egrep 'mvn|javac|hbase-trx|hbasetmlib2|hbase_utilities|JAVA_HOME'
 
 Expected output: no matching lines.
 
-After a successful lite link, check produced binaries and libraries for
+After a successful `lite` link, check produced binaries and libraries for
 JVM or HDFS dynamic dependencies:
 
 ```bash
@@ -1429,7 +1430,7 @@ find core/sqf/export -type f -perm -111 -print | xargs -r ldd | egrep 'libjvm|li
 
 Expected output: no matching lines.
 
-For `sqlci`, run `ldd` with the lite library path:
+For `sqlci`, run `ldd` with the `lite` library path:
 
 ```bash
 SQL_LIBS=$(pwd)/core/sql/lib/linux/64bit/debug
@@ -1447,7 +1448,7 @@ printf 'exit;\n' | TRAF_HOME=$(pwd)/core/sqf TRAF_LITE=1 LD_LIBRARY_PATH=$SQL_LI
 printf 'SELECT 1 FROM (VALUES(1)) AS t(x);\nexit;\n' | TRAF_HOME=$(pwd)/core/sqf TRAF_LITE=1 LD_LIBRARY_PATH=$SQL_LIBS:$SQF_LIBS $SQL_LIBS/sqlci
 ```
 
-Current lite static and RocksDB SQLCI smoke checks:
+Current Trafodion Lite static and RocksDB SQLCI smoke checks:
 
 ```bash
 bash scripts/test-lite-runtime.sh
@@ -1461,7 +1462,7 @@ make lite-m11
 ## M20 Prepared Plans and Server Batches
 
 - [x] Keep T4 `Prepare` state as a server-owned CLI plan with input
-  descriptors and bound values. For keyed lite predicates, retain the
+  descriptors and bound values. For keyed Lite Storage predicates, retain the
   prepared protocol contract but specialize bound SQL because the reduced
   compiler cannot expose a key-aware parameter-marker plan yet.
 - [x] Execute INSERT rowsets in one server request and support quoted-string
@@ -1515,12 +1516,12 @@ The authoritative phase contract and current audit status are in
 `plan/lite-m22-concurrency-qualification.md`.
 
 - Keep the full Trafodion build unchanged unless `TRAF_LITE=1` is set.
-- Keep all lite behavior compile-time gated by `TRAF_LITE`.
+- Keep all Trafodion Lite behavior compile-time gated by `TRAF_LITE`.
 - Prefer small native stubs over compiling Java/Hadoop-backed code.
-- Keep the RocksDB Lite store native-only and process-owned; client sessions
+- Keep the Lite Storage native-only and process-owned; client sessions
   must reach it through their explicit transaction context and a session-affine
   execution boundary, while shared storage/OCC publication remains synchronized.
 - Disabled HDFS/Hive/HBase paths must fail explicitly.
-- Treat `sqlci` and the bounded M11 `nativelite-server` as the supported
+- Treat `sqlci` and the bounded M11 `trafodion-lite-server` as the supported
   standalone runtimes; do not imply `mxosrvr`, DCS, REST, or the full SQF
   service stack is standalone.

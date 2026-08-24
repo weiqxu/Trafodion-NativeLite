@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** M14C deterministic TPC-C transaction profiles over the reduced T4 endpoint. */
-public final class NativeLiteTpccTransactions {
+public final class TrafodionLiteTpccTransactions {
   private static final String USER = "DB__ROOT";
   private static final Timestamp TX_TS =
       Timestamp.valueOf("2026-08-15 01:00:00");
@@ -166,7 +166,7 @@ public final class NativeLiteTpccTransactions {
     private int sequence;
 
     Terminal(String url, int selectedTerminal) throws SQLException {
-      this(url, selectedTerminal, NativeLiteTpccTransactions.WAREHOUSE);
+      this(url, selectedTerminal, TrafodionLiteTpccTransactions.WAREHOUSE);
     }
 
     Terminal(String url, int selectedTerminal, int selectedWarehouse)
@@ -432,7 +432,7 @@ public final class NativeLiteTpccTransactions {
         int orderId = LATEST_RUNTIME_ORDER.getOrDefault(
             customerKey(WAREHOUSE, district, customer),
             loadedOrderForCustomer(district, customer));
-        // Both SELECTs expose VARCHAR(32),VARCHAR(32) so the NativeLite
+        // Both SELECTs expose VARCHAR(32),VARCHAR(32) so the TrafodionLite
         // SELECT-batch path can return the customer/order header and all order
         // lines in one T4 response. This preserves the transaction snapshot
         // while avoiding a second round trip on the p95-sensitive profile.
@@ -676,7 +676,7 @@ public final class NativeLiteTpccTransactions {
       duplicate.setString(2, "DUPLICATE");
       duplicate.setString(3, "STREET-1");
       duplicate.setString(4, "STREET-2");
-      duplicate.setString(5, "NATIVELITE");
+      duplicate.setString(5, "TRAFODION_LITE");
       duplicate.setString(6, "NL");
       duplicate.setString(7, "123456789");
       duplicate.setBigDecimal(8, new BigDecimal("0.1000"));
@@ -866,7 +866,7 @@ public final class NativeLiteTpccTransactions {
 
   public static void main(String[] args) throws Exception {
     require(args.length == 3,
-        "usage: NativeLiteTpccTransactions JDBC_URL MODE REPORT");
+        "usage: TrafodionLiteTpccTransactions JDBC_URL MODE REPORT");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     if (args[1].startsWith("fault-")) {
       runCrashProfile(args[0], args[1]);

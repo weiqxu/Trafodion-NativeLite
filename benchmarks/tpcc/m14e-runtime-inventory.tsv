@@ -1,16 +1,16 @@
 state	previous_ownership	m14e_ownership_or_synchronization	evidence
-CLI current ContextCli	worker-thread current context	thread-local ContextTidMap with explicit per-request switch	Globals.cpp and NativeLiteServerMain.cpp
-compiler context	selected by the single engine worker	one embedded compiler context per ContextCli; independent request threads	Context.cpp and NativeLiteServerMain.cpp
+CLI current ContextCli	worker-thread current context	thread-local ContextTidMap with explicit per-request switch	Globals.cpp and TrafodionLiteServerMain.cpp
+compiler context	selected by the single engine worker	one embedded compiler context per ContextCli; independent request threads	Context.cpp and TrafodionLiteServerMain.cpp
 executor transaction	session object behind single engine queue	ContextCli-owned ExTransaction and LiteTxnContext	Context.cpp and LiteRocksDBStore.cpp
-SQLCI environment	process-global global_sqlci_env	thread-local pointer to session-owned SqlciEnv	SqlciMain.cpp SqlciEnv.cpp SqlCmd.cpp NativeLiteServerMain.cpp
+SQLCI environment	process-global global_sqlci_env	thread-local pointer to session-owned SqlciEnv	SqlciMain.cpp SqlciEnv.cpp SqlCmd.cpp TrafodionLiteServerMain.cpp
 default catalog and schema	process environment TRAF_LITE_SCHEMA	thread-local schema value refreshed from session-owned SqlciEnv	Globals.cpp BindWA.cpp LiteSqlTable.cpp
-diagnostic capture	session temporary stream but process-global current environment	session temporary stream plus thread-local current environment	NativeLiteServerMain.cpp
-assertion jump target	single worker target	THREAD_P jump buffer and target initialized per request thread	NativeLiteServerMain.cpp and CmpCommon.h
-authorization identity	ContextCli plus selected worker context	ContextCli selected in the owning request thread	NativeLiteServerMain.cpp
-scratch and statement state	ContextCli selected by one worker	request-thread execution over session ContextCli	NativeLiteServerMain.cpp
-DDL and catalog mutation	global request queue	narrow catalog mutex for CREATE DROP ALTER INITIALIZE	NativeLiteServerMain.cpp
-SQLCI compatibility utility	global request queue	narrow utility mutex; session environment remains thread-owned	NativeLiteServerMain.cpp
+diagnostic capture	session temporary stream but process-global current environment	session temporary stream plus thread-local current environment	TrafodionLiteServerMain.cpp
+assertion jump target	single worker target	THREAD_P jump buffer and target initialized per request thread	TrafodionLiteServerMain.cpp and CmpCommon.h
+authorization identity	ContextCli plus selected worker context	ContextCli selected in the owning request thread	TrafodionLiteServerMain.cpp
+scratch and statement state	ContextCli selected by one worker	request-thread execution over session ContextCli	TrafodionLiteServerMain.cpp
+DDL and catalog mutation	global request queue	narrow catalog mutex for CREATE DROP ALTER INITIALIZE	TrafodionLiteServerMain.cpp
+SQLCI compatibility utility	global request queue	narrow utility mutex; session environment remains thread-owned	TrafodionLiteServerMain.cpp
 table publication and recovery	storage-manager process latch	unchanged storage-manager publication latch	LiteRocksDBStore.cpp
-store lease and engine initialization	engine worker	initialization worker only; request traffic never enters its queue	NativeLiteServerMain.cpp
-cancellation	single activeSession pointer	target context selected directly when its statementPending flag is set	NativeLiteServerMain.cpp
+store lease and engine initialization	engine worker	initialization worker only; request traffic never enters its queue	TrafodionLiteServerMain.cpp
+cancellation	single activeSession pointer	target context selected directly when its statementPending flag is set	TrafodionLiteServerMain.cpp
 UDR policy flags	uninitialized ContextCli heap fields	explicitly initialized for every ContextCli	Context.cpp

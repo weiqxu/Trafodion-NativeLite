@@ -1,4 +1,4 @@
-# Lite M23 后续阶段：分片 durable writer 与 OCC 热点统计
+# Trafodion Lite M23 后续阶段：分片 durable writer 与 OCC 热点统计
 
 ## 目标
 

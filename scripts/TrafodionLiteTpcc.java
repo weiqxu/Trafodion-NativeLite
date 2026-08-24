@@ -18,7 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /** Deterministic, repository-owned loader and verifier for M14 TPC-C-like data. */
-public final class NativeLiteTpcc {
+public final class TrafodionLiteTpcc {
   private static final String USER = "DB__ROOT";
   private static final String FIXED_TS = "2026-08-15 00:00:00";
 
@@ -92,11 +92,11 @@ public final class NativeLiteTpcc {
   }
 
   private interface WarehouseLoader {
-    void load(NativeLiteTpcc worker, int warehouse) throws SQLException;
+    void load(TrafodionLiteTpcc worker, int warehouse) throws SQLException;
   }
 
   private interface ParallelLoader {
-    void load(NativeLiteTpcc worker, int task) throws SQLException;
+    void load(TrafodionLiteTpcc worker, int task) throws SQLException;
   }
 
   private final Connection connection;
@@ -106,7 +106,7 @@ public final class NativeLiteTpcc {
   private int committedBatches;
   private final int failAfterBatches;
 
-  private NativeLiteTpcc(Connection connection, String jdbcUrl, Config config,
+  private TrafodionLiteTpcc(Connection connection, String jdbcUrl, Config config,
       Path schemaPath) {
     this.connection = connection;
     this.jdbcUrl = jdbcUrl;
@@ -145,7 +145,7 @@ public final class NativeLiteTpcc {
           try (Connection workerConnection = DriverManager.getConnection(
               jdbcUrl, USER, "")) {
             workerConnection.setAutoCommit(false);
-            NativeLiteTpcc worker = new NativeLiteTpcc(workerConnection,
+            TrafodionLiteTpcc worker = new TrafodionLiteTpcc(workerConnection,
                 jdbcUrl, config, schemaPath);
             loader.load(worker, selectedTask);
             return null;
@@ -399,7 +399,7 @@ public final class NativeLiteTpcc {
             String select = "SELECT " + w + "," + d + ",N," +
                 "'FIRST-' || CAST(N AS VARCHAR(10)),'OE'," +
                 "'LAST-' || CAST(MOD(N-1,1000) AS VARCHAR(10))," +
-                "'STREET-1','STREET-2','NATIVELITE','NL','123456789'," +
+                "'STREET-1','STREET-2','TRAFODION_LITE','NL','123456789'," +
                 "CAST(N AS CHAR(16)),TIMESTAMP '" + FIXED_TS + "'," +
                 "CASE WHEN MOD(N,10)=0 THEN 'BC' ELSE 'GC' END,50000.00," +
                 "CAST(MOD(N * 17,5000) AS DECIMAL(8,4)) / 10000," +
@@ -550,7 +550,7 @@ public final class NativeLiteTpcc {
       int w = (int) index + 1;
       return "(" + w + "," + quote("W" + w) + "," +
           quote("Street 1") + "," + quote("Street 2") + "," +
-          quote("NativeLite") + ",'NL','123456789',0.1000,300000.00)";
+          quote("Trafodion Lite") + ",'NL','123456789',0.1000,300000.00)";
     });
     insertRows("TPCC_DISTRICT", (long) config.warehouses * config.districts,
         index -> {
@@ -558,7 +558,7 @@ public final class NativeLiteTpcc {
           int d = (int) (index % config.districts) + 1;
           return "(" + w + "," + d + "," + quote("District" + d) + "," +
               quote("Street 1") + "," + quote("Street 2") + "," +
-              quote("NativeLite") + ",'NL','123456789',0.1000,30000.00," +
+              quote("Trafodion Lite") + ",'NL','123456789',0.1000,30000.00," +
               (config.orders + 1) + ")";
         });
     loadSetBasedTables();
@@ -640,12 +640,12 @@ public final class NativeLiteTpcc {
 
   public static void main(String[] args) throws Exception {
     require(args.length == 6,
-        "usage: NativeLiteTpcc URL load|schema|verify qualification|smoke PROPERTIES SCHEMA REPORT");
+        "usage: TrafodionLiteTpcc URL load|schema|verify qualification|smoke PROPERTIES SCHEMA REPORT");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     Config config = new Config(loadProperties(Paths.get(args[3])), args[2]);
     try (Connection connection = DriverManager.getConnection(args[0], USER, "")) {
       connection.setAutoCommit(false);
-      NativeLiteTpcc tpcc = new NativeLiteTpcc(connection, args[0], config,
+      TrafodionLiteTpcc tpcc = new TrafodionLiteTpcc(connection, args[0], config,
           Paths.get(args[4]));
       if ("load".equals(args[1])) tpcc.load();
       else if ("schema".equals(args[1])) {

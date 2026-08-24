@@ -292,7 +292,7 @@ public:
     ex_HIVE_TRUNCATE = 153,
     ex_LOB_UPDATE_UTIL = 154,
     ex_HIVE_QUERY = 155,
-    // NativeLite has a deliberately separate scan TDB.  It must not share
+    // Trafodion Lite has a deliberately separate scan TDB.  It must not share
     // the HBase access TDB layout: the local engine owns its key binding and
     // storage lookup lifecycle.
     ex_LITE_ROCKSDB_SCAN = 156,

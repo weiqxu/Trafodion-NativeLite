@@ -1,4 +1,4 @@
-# Lite M23 Phase 9：原生 WAL 快路径
+# Trafodion Lite M23 Phase 9：原生 WAL 快路径
 
 ## 目标
 

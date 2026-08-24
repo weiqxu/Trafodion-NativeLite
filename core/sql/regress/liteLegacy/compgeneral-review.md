@@ -7,7 +7,7 @@ safety review before execution.
 
 ## Probe Method
 
-The tests were run through the isolated lite adapter with a 30 second
+The tests were run through the isolated Trafodion Lite adapter with a 30 second
 per-test ceiling:
 
 ```sh

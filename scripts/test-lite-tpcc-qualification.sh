@@ -53,7 +53,7 @@ property() {
 workload=$(tr -d '\n' <"$artifact_dir/workload-report.json")
 operations=$(tr -d '\n' <"$artifact_dir/operations-report.json")
 schema_sha=$(sha256sum "$asset_dir/schema.sql" | awk '{print $1}')
-driver_sha=$(sha256sum "$repo_root/scripts/NativeLiteTpccTransactions.java" | \
+driver_sha=$(sha256sum "$repo_root/scripts/TrafodionLiteTpccTransactions.java" | \
   awk '{print $1}')
 config_sha=$(sha256sum "$properties" | awk '{print $1}')
 deviation_count=$(awk -F '\t' 'NR > 1 && NF {count++} END {print count + 0}' \

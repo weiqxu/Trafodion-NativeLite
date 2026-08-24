@@ -176,7 +176,7 @@ endif
 # builds.  Any flavor-specific targets can be added later in this makefile.
 EXECUTABLES= arkcmp sqlci arkesp tdm_udrserv mxlobsrvr sscp ssmp clitestdriver
 ifeq ($(TRAF_LITE),1)
-EXECUTABLES := arkcmp sqlci nativelite_server nativelite_bulk_loader nativelite_client
+EXECUTABLES := arkcmp sqlci trafodion_lite_server trafodion_lite_bulk_loader trafodion_lite_client
 endif
 	# mxCompileUserModule mxsqlcfe mxsqlcofe sqlfe
 

@@ -1,11 +1,11 @@
-# Lite Storage Legacy Regress Adapter
+# Trafodion Lite Legacy Regression Adapter
 
 This directory inventories and probes legacy Trafodion regress inputs without
 modifying their TEST or EXPECTED files and without starting the Trafodion
 service stack.
 
-The adapter is a baseline and migration tool. The native, gating lite
-suite remains `../lite`.
+The adapter is a baseline and migration tool. The native Trafodion Lite
+regression suite remains `../lite`.
 
 ## Manifest
 
@@ -30,7 +30,7 @@ The M10A-M10F convergence gate is:
 make lite-m10
 ```
 
-It runs the complete runnable allowlist and then the complete native lite
+It runs the complete runnable allowlist and then the complete Trafodion Lite
 lane. It also checks the explicit M10A-M10F evidence cases (DDL, statistics,
 DML/indexes, character sets/types, advanced executor, and authorization/UDR).
 A fresh case count is derived from the checked-in `TESTnnn` files, so adding a
@@ -63,7 +63,7 @@ scripts/audit-lite-upstream-regress.sh --list-newregr
 ```
 
 `standard-extra-manifest.tsv` explicitly classifies the 14 Hive cases and 25
-QAT cases omitted from `manifest.tsv`. Hive is excluded because lite
+QAT cases omitted from `manifest.tsv`. Hive is excluded because Trafodion Lite
 removes that runtime. QAT remains blocked/unassessed because its DDL, load, and
 DML cases share one ordered schema/data lifecycle; an adapter must preserve that
 state before any QAT result can be claimed.

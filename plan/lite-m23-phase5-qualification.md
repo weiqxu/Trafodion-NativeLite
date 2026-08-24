@@ -1,4 +1,4 @@
-# M23 阶段 5 综合验收记录
+# Trafodion Lite M23 阶段 5 综合验收记录
 
 ## 执行信息
 
@@ -13,7 +13,7 @@
 ## 已通过的部分
 
 - Java T4 workload 编译通过。
-- NativeLite debug 全量构建通过。
+- Trafodion Lite debug 全量构建通过。
 - M14C 五类事务、回滚、断连、重复键和一致性测试通过。
 - 10 warehouse native loader 完成，8,990,118 keys 的加载报告显示
   517 个同步提交、0 个 publication failure；关系校验通过。

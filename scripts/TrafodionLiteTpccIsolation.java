@@ -10,7 +10,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 
 /** M14D Level 3 isolation matrix over the reduced T4 endpoint. */
-public final class NativeLiteTpccIsolation {
+public final class TrafodionLiteTpccIsolation {
   private static final String USER = "DB__ROOT";
 
   private static void require(boolean condition, String message) {
@@ -200,7 +200,7 @@ public final class NativeLiteTpccIsolation {
 
   public static void main(String[] args) throws Exception {
     require(args.length == 2,
-        "usage: NativeLiteTpccIsolation JDBC_URL REPORT");
+        "usage: TrafodionLiteTpccIsolation JDBC_URL REPORT");
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     dirtyRead(args[0]);
     dirtyWrite(args[0]);

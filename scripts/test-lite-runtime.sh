@@ -21,7 +21,7 @@ local_session_transactions="$repo_root/scripts/test-lite-session-transactions.sh
 local_context_transactions="$repo_root/scripts/test-lite-context-transactions.sh"
 local_server_test="$repo_root/scripts/test-lite-server.sh"
 local_t4jdbc_test="$repo_root/scripts/test-lite-t4jdbc.sh"
-local_t4jdbc_source="$repo_root/scripts/NativeLiteT4JdbcTest.java"
+local_t4jdbc_source="$repo_root/scripts/TrafodionLiteT4JdbcTest.java"
 local_row_codec_test_stubs="$repo_root/scripts/lite-row-codec-test-stubs.cpp"
 local_regress_dir="$repo_root/core/sql/regress/lite"
 local_regress="$local_regress_dir/runregr"
@@ -54,8 +54,8 @@ ex_transaction="$repo_root/core/sql/executor/ex_transaction.cpp"
 context_header="$repo_root/core/sql/cli/Context.h"
 context_source="$repo_root/core/sql/cli/Context.cpp"
 transaction_header="$repo_root/core/sql/executor/ex_transaction.h"
-server_source="$repo_root/core/sql/bin/NativeLiteServerMain.cpp"
-server_makefile="$repo_root/core/sql/nskgmake/nativelite_server/Makefile"
+server_source="$repo_root/core/sql/bin/TrafodionLiteServerMain.cpp"
+server_makefile="$repo_root/core/sql/nskgmake/trafodion_lite_server/Makefile"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -203,11 +203,11 @@ grep -q 'unique conflicts advanced keyless row ids' "$local_store_concurrency" |
 [[ -x "$local_context_transactions" ]] ||
   fail "missing executable lite ContextCli transaction test: $local_context_transactions"
 [[ -x "$local_server_test" ]] ||
-  fail "missing executable NativeLite standalone server test: $local_server_test"
+  fail "missing executable Trafodion Lite standalone server test: $local_server_test"
 [[ -x "$local_t4jdbc_test" ]] ||
-  fail "missing executable NativeLite T4 JDBC test: $local_t4jdbc_test"
+  fail "missing executable Trafodion Lite T4 JDBC test: $local_t4jdbc_test"
 [[ -f "$local_t4jdbc_source" ]] ||
-  fail "missing NativeLite T4 JDBC source: $local_t4jdbc_source"
+  fail "missing Trafodion Lite T4 JDBC source: $local_t4jdbc_source"
 [[ -f "$local_row_codec_test_stubs" ]] ||
   fail "missing lite row-codec standalone test stubs: $local_row_codec_test_stubs"
 grep -q 'cross-session transaction ID was accepted' "$local_session_transactions" ||
@@ -362,34 +362,34 @@ grep -q 'switchToCmpContext' "$ex_ddl" ||
 grep -q 'compatibility contract explicitly permits CTAS' "$ex_ctas" ||
   fail "lite CTAS must remain available inside its bounded user transaction"
 
-[[ -f "$server_source" ]] || fail "missing NativeLite server source"
-[[ -f "$server_makefile" ]] || fail "missing NativeLite server makefile"
-grep -q 'nativelite_server' "$makerules" ||
-  fail "lite build must include the NativeLite server"
+[[ -f "$server_source" ]] || fail "missing Trafodion Lite server source"
+[[ -f "$server_makefile" ]] || fail "missing Trafodion Lite server makefile"
+grep -q 'trafodion_lite_server' "$makerules" ||
+  fail "lite build must include the Trafodion Lite server"
 grep -q 'SQL_EXEC_CreateContext' "$server_source" ||
-  fail "NativeLite server must create one CLI context per connection"
+  fail "Trafodion Lite server must create one CLI context per connection"
 grep -q 'LiteRocksDBStore storeLease_' "$server_source" ||
-  fail "NativeLite server must hold the Lite store for its process lifetime"
+  fail "Trafodion Lite server must hold the Lite store for its process lifetime"
 grep -q 'refusing to replace a non-socket Unix path' "$server_source" ||
-  fail "NativeLite server must preserve unrelated Unix socket path entries"
+  fail "Trafodion Lite server must preserve unrelated Unix socket path entries"
 grep -q 'unixSocketInode_' "$server_source" ||
-  fail "NativeLite server must unlink only the exact Unix socket it created"
+  fail "Trafodion Lite server must unlink only the exact Unix socket it created"
 grep -q 'clientThreadDone_' "$server_source" ||
-  fail "NativeLite server must reap completed connection threads"
+  fail "Trafodion Lite server must reap completed connection threads"
 grep -q 'kT4GetObjectRef' "$server_source" ||
-  fail "NativeLite server must implement the T4 association handshake"
+  fail "Trafodion Lite server must implement the T4 association handshake"
 grep -q 'kT4SqlConnect' "$server_source" ||
-  fail "NativeLite server must implement the T4 SQL dialogue handshake"
+  fail "Trafodion Lite server must implement the T4 SQL dialogue handshake"
 grep -q 'SQL_EXEC_Cancel' "$server_source" ||
-  fail "NativeLite server must expose CLI statement cancellation"
+  fail "Trafodion Lite server must expose CLI statement cancellation"
 grep -q 'LiteSqlTable_isUtilityStatement' "$server_source" ||
-  fail "NativeLite extended-query Describe must not execute SQLCI utilities"
+  fail "Trafodion Lite extended-query Describe must not execute SQLCI utilities"
 grep -q 'OpenTemporary' "$server_source" ||
-  fail "NativeLite diagnostics must not leave named files after a crash"
+  fail "Trafodion Lite diagnostics must not leave named files after a crash"
 grep -q 'kT4Fetch' "$server_source" ||
-  fail "NativeLite T4 server must support result fetching"
+  fail "Trafodion Lite T4 server must support result fetching"
 grep -q 'kT4Cancel' "$server_source" ||
-  fail "NativeLite T4 server must expose the T4 cancel operation"
+  fail "Trafodion Lite T4 server must expose the T4 cancel operation"
 grep -q 'testCancellationWithPeer' "$local_t4jdbc_source" ||
   fail "T4 JDBC gate must cancel a statement without damaging a peer"
 grep -q 'testOverlappingTransactions' "$local_t4jdbc_source" ||

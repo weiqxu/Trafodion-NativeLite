@@ -9,7 +9,7 @@ import java.sql.Types;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-public final class NativeLiteT4JdbcTest {
+public final class TrafodionLiteT4JdbcTest {
   private static final String USER = "DB__ROOT";
   private static final String TABLE = "M11_T4_T";
 
@@ -161,7 +161,7 @@ public final class NativeLiteT4JdbcTest {
       final SQLException[] cancelled = new SQLException[1];
       Thread worker = new Thread(() -> {
         try {
-          statement.executeQuery("SELECT NATIVE_LITE_SLEEP(10000)");
+          statement.executeQuery("SELECT TRAFODION_LITE_SLEEP(10000)");
         } catch (SQLException expected) {
           cancelled[0] = expected;
         }
@@ -196,7 +196,7 @@ public final class NativeLiteT4JdbcTest {
     DatabaseMetaData metadata = connection.getMetaData();
     try (ResultSet tables = metadata.getTables(
         "TRAFODION", "SEABASE", TABLE, new String[]{"TABLE"})) {
-      require(tables.next(), "getTables did not return the NativeLite table");
+      require(tables.next(), "getTables did not return the Trafodion Lite table");
       require(TABLE.equals(tables.getString("TABLE_NAME")),
           "getTables returned the wrong table");
       require(!tables.next(), "getTables returned duplicate rows");
@@ -230,7 +230,7 @@ public final class NativeLiteT4JdbcTest {
     Class.forName("org.trafodion.jdbc.t4.T4Driver");
     try (Connection connection = connect(url)) {
       require("ok".equals(queryString(connection,
-          "SELECT NATIVE_LITE_HEALTH()")), "health query failed");
+          "SELECT TRAFODION_LITE_HEALTH()")), "health query failed");
       execute(connection, "CREATE TABLE " + TABLE +
           "(id INT NOT NULL PRIMARY KEY, note VARCHAR(80))");
       testPrepared(connection);
@@ -255,7 +255,7 @@ public final class NativeLiteT4JdbcTest {
   }
 
   public static void main(String[] args) throws Exception {
-    require(args.length == 2, "usage: NativeLiteT4JdbcTest URL main|restart");
+    require(args.length == 2, "usage: TrafodionLiteT4JdbcTest URL main|restart");
     if ("main".equals(args[1])) runMain(args[0]);
     else if ("restart".equals(args[1])) verifyRestart(args[0]);
     else throw new IllegalArgumentException("unknown mode: " + args[1]);

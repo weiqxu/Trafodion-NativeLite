@@ -34,15 +34,15 @@ fi
 shopt -s nullglob
 native_tests=("$repo_root"/core/sql/regress/lite/TEST[0-9][0-9][0-9])
 native_expected=${#native_tests[@]}
-(( native_expected > 0 )) || fail "native lite suite has no TESTnnn cases"
+(( native_expected > 0 )) || fail "Trafodion Lite suite has no TESTnnn cases"
 
 if ! "$native_runner" >"$native_output"; then
   cat "$native_output" >&2
-  fail "native lite suite regressed"
+  fail "Trafodion Lite suite regressed"
 fi
 if ! grep -Fq "Summary: $native_expected passed, 0 failed" "$native_output"; then
   cat "$native_output" >&2
-  fail "native lite suite regressed"
+  fail "Trafodion Lite suite regressed"
 fi
 
 phase_case() {

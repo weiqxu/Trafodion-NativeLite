@@ -443,7 +443,7 @@ struct T4StatementState
   std::vector<std::string> batchParameterParts;
   bool oldFetchFormat;
   bool prepared;
-  std::shared_ptr<struct NativeLitePreparedPlan> preparedPlan;
+  std::shared_ptr<struct TrafodionLitePreparedPlan> preparedPlan;
   QueryResult result;
   size_t rowOffset;
   T4StatementState()
@@ -649,27 +649,27 @@ std::string encodeT4OldRows(const QueryResult &result, size_t begin,
   return values;
 }
 
-struct NativeLitePreparedParameter
+struct TrafodionLitePreparedParameter
 {
   Lng32 fsDatatype;
   Lng32 length;
   Lng32 indOffset;
   Lng32 varOffset;
 
-  NativeLitePreparedParameter()
+  TrafodionLitePreparedParameter()
       : fsDatatype(0), length(0), indOffset(-1), varOffset(-1) {}
 };
 
-struct NativeLitePreparedPlan
+struct TrafodionLitePreparedPlan
 {
   std::unique_ptr<ExeCliInterface> cli;
   std::string sql;
   std::string sourceSql;
   QueryResult description;
-  std::vector<NativeLitePreparedParameter> parameters;
+  std::vector<TrafodionLitePreparedParameter> parameters;
   bool executed;
 
-  NativeLitePreparedPlan() : executed(false) {}
+  TrafodionLitePreparedPlan() : executed(false) {}
 };
 
 struct Session
@@ -692,7 +692,7 @@ struct Session
   unsigned int activeCancels;
   bool closing;
   bool slotAcquired;
-  std::map<std::string, std::shared_ptr<NativeLitePreparedPlan> > planCache;
+  std::map<std::string, std::shared_ptr<TrafodionLitePreparedPlan> > planCache;
   std::deque<std::string> planCacheLru;
 
   Session()
@@ -720,7 +720,7 @@ struct EngineRequest
   RequestType type;
   std::shared_ptr<Session> session;
   std::string sql;
-  std::shared_ptr<NativeLitePreparedPlan> preparedPlan;
+  std::shared_ptr<TrafodionLitePreparedPlan> preparedPlan;
   std::vector<std::vector<std::string> > parameterRows;
   std::vector<std::vector<bool> > parameterNullRows;
   QueryResult result;
@@ -855,7 +855,7 @@ void setDiagnosticsError(ExeCliInterface *cli, Lng32 returnCode,
   if (result->error.empty())
     {
       std::ostringstream text;
-      text << "NativeLite CLI error " << returnCode;
+      text << "Trafodion Lite CLI error " << returnCode;
       result->error = text.str();
       result->sqlstate = "XX000";
     }
@@ -957,19 +957,19 @@ bool isRollback(const std::string &sql)
   return firstWord(sql) == "ROLLBACK";
 }
 
-class NativeLiteEngine
+class TrafodionLiteEngine
 {
 public:
-  NativeLiteEngine()
+  TrafodionLiteEngine()
       : initialized_(false), initializationFailed_(false), stopping_(false),
         defaultContext_(0), bootstrapEnv_(NULL), activeExecutorRequests_(0),
         maximumExecutorRequests_(0), activeCompilerRequests_(0),
         maximumCompilerRequests_(0)
   {
-    worker_ = std::thread(&NativeLiteEngine::run, this);
+    worker_ = std::thread(&TrafodionLiteEngine::run, this);
   }
 
-  ~NativeLiteEngine()
+  ~TrafodionLiteEngine()
   {
     stop();
   }
@@ -1021,7 +1021,7 @@ public:
     return request.result;
   }
 
-  std::shared_ptr<NativeLitePreparedPlan> prepare(
+  std::shared_ptr<TrafodionLitePreparedPlan> prepare(
       const std::shared_ptr<Session> &session, const std::string &sql,
       QueryResult *result)
   {
@@ -1040,7 +1040,7 @@ public:
 
   QueryResult executePrepared(
       const std::shared_ptr<Session> &session,
-      const std::shared_ptr<NativeLitePreparedPlan> &plan,
+      const std::shared_ptr<TrafodionLitePreparedPlan> &plan,
       const std::vector<std::vector<std::string> > &rows,
       const std::vector<std::vector<bool> > &nullRows)
   {
@@ -1064,7 +1064,7 @@ public:
     if (statements.empty())
       {
         result.sqlstate = "42601";
-        result.error = "NativeLite batch contains no statements";
+        result.error = "Trafodion Lite batch contains no statements";
         return result;
       }
     bool selectBatch = true;
@@ -1093,7 +1093,7 @@ public:
                   {
                     aggregate.sqlstate = "21000";
                     aggregate.error =
-                        "NativeLite SELECT batch column count mismatch";
+                        "Trafodion Lite SELECT batch column count mismatch";
                     return aggregate;
                   }
                 for (size_t column = 0;
@@ -1105,7 +1105,7 @@ public:
                     {
                       aggregate.sqlstate = "42804";
                       aggregate.error =
-                          "NativeLite SELECT batch column type mismatch";
+                          "Trafodion Lite SELECT batch column type mismatch";
                       return aggregate;
                     }
                 aggregate.rows.insert(aggregate.rows.end(),
@@ -1193,7 +1193,7 @@ private:
     ExportJmpBufPtr = &ExportJmpBuf;
     if (setjmp(ExportJmpBuf))
       {
-        std::cerr << "NativeLite terminating after a CLI assertion"
+        std::cerr << "Trafodion Lite terminating after a CLI assertion"
                   << std::endl;
         _exit(1);
       }
@@ -1210,7 +1210,7 @@ private:
           {
             request->result.sqlstate = "08003";
             request->result.error =
-                "NativeLite session request crossed its owner thread";
+                "Trafodion Lite session request crossed its owner thread";
             request->success = false;
             return;
           }
@@ -1257,13 +1257,13 @@ private:
             // safely unwind arbitrary compiler/executor frames with C++
             // destructors after longjmp, so terminate instead of leaving a
             // client blocked forever on an abandoned EngineRequest.
-            std::cerr << "NativeLite terminating after a CLI assertion"
+            std::cerr << "Trafodion Lite terminating after a CLI assertion"
                       << std::endl;
             _exit(1);
           }
         std::lock_guard<std::mutex> lock(queueMutex_);
         initializationFailed_ = true;
-        initializationError_ = "CLI assertion while initializing NativeLite";
+        initializationError_ = "CLI assertion while initializing Trafodion Lite";
         initialized_.store(true);
         readyCondition_.notify_all();
         return;
@@ -1352,7 +1352,7 @@ private:
       {
         request->error = readCapture(session->env->get_logfile());
         if (request->error.empty())
-          request->error = "unknown NativeLite authorization identity";
+          request->error = "unknown Trafodion Lite authorization identity";
         cleanupFailedCreate(session);
         return;
       }
@@ -1522,13 +1522,12 @@ private:
           }
       }
 
-    if (normalized == "SELECT NATIVE_LITE_HEALTH()" ||
-        normalized == "SELECT NATIVELITE_HEALTH()" ||
-        normalized == "SHOW NATIVE_LITE HEALTH")
+    if (normalized == "SELECT TRAFODION_LITE_HEALTH()" ||
+        normalized == "SHOW TRAFODION_LITE HEALTH")
       {
         *handled = true;
         Column column;
-        column.name = "native_lite_health";
+        column.name = "trafodion_lite_health";
         column.oid = 25;
         column.typeLength = -1;
         result.columns.push_back(column);
@@ -1537,12 +1536,11 @@ private:
         return result;
       }
 
-    if (normalized == "SELECT NATIVE_LITE_EXECUTOR_OVERLAP()" ||
-        normalized == "SELECT NATIVELITE_EXECUTOR_OVERLAP()")
+    if (normalized == "SELECT TRAFODION_LITE_EXECUTOR_OVERLAP()")
       {
         *handled = true;
         Column column;
-        column.name = "native_lite_executor_overlap";
+        column.name = "trafodion_lite_executor_overlap";
         column.oid = 23;
         column.typeLength = 4;
         result.columns.push_back(column);
@@ -1556,12 +1554,11 @@ private:
         return result;
       }
 
-    if (normalized == "SELECT NATIVE_LITE_COMPILER_OVERLAP()" ||
-        normalized == "SELECT NATIVELITE_COMPILER_OVERLAP()")
+    if (normalized == "SELECT TRAFODION_LITE_COMPILER_OVERLAP()")
       {
         *handled = true;
         Column column;
-        column.name = "native_lite_compiler_overlap";
+        column.name = "trafodion_lite_compiler_overlap";
         column.oid = 23;
         column.typeLength = 4;
         result.columns.push_back(column);
@@ -1575,12 +1572,11 @@ private:
         return result;
       }
 
-    if (normalized == "SELECT NATIVE_LITE_OCC_METRICS()" ||
-        normalized == "SELECT NATIVELITE_OCC_METRICS()")
+    if (normalized == "SELECT TRAFODION_LITE_OCC_METRICS()")
       {
         *handled = true;
         Column column;
-        column.name = "native_lite_occ_metrics";
+        column.name = "trafodion_lite_occ_metrics";
         column.oid = 25;
         column.typeLength = -1;
         column.length = 4096;
@@ -1592,12 +1588,11 @@ private:
         return result;
       }
 
-    if (normalized == "SELECT NATIVE_LITE_OCC_METRICS_RESET()" ||
-        normalized == "SELECT NATIVELITE_OCC_METRICS_RESET()")
+    if (normalized == "SELECT TRAFODION_LITE_OCC_METRICS_RESET()")
       {
         *handled = true;
         Column column;
-        column.name = "native_lite_occ_metrics_reset";
+        column.name = "trafodion_lite_occ_metrics_reset";
         column.oid = 25;
         column.typeLength = -1;
         result.columns.push_back(column);
@@ -1610,12 +1605,11 @@ private:
         return result;
       }
 
-    if (normalized == "SELECT NATIVE_LITE_COMPILER_METRICS()" ||
-        normalized == "SELECT NATIVELITE_COMPILER_METRICS()")
+    if (normalized == "SELECT TRAFODION_LITE_COMPILER_METRICS()")
       {
         *handled = true;
         Column column;
-        column.name = "native_lite_compiler_metrics";
+        column.name = "trafodion_lite_compiler_metrics";
         column.oid = 25;
         column.typeLength = -1;
         result.columns.push_back(column);
@@ -1630,12 +1624,11 @@ private:
         return result;
       }
 
-    if (normalized == "SELECT NATIVE_LITE_CHECKPOINT()" ||
-        normalized == "SELECT NATIVELITE_CHECKPOINT()")
+    if (normalized == "SELECT TRAFODION_LITE_CHECKPOINT()")
       {
         *handled = true;
         Column column;
-        column.name = "native_lite_checkpoint";
+        column.name = "trafodion_lite_checkpoint";
         column.oid = 25;
         column.typeLength = -1;
         result.columns.push_back(column);
@@ -1662,11 +1655,9 @@ private:
         return result;
       }
 
-    const std::string sleepPrefix = "SELECT NATIVE_LITE_SLEEP(";
-    const std::string alternatePrefix = "SELECT NATIVELITE_SLEEP(";
+    const std::string sleepPrefix = "SELECT TRAFODION_LITE_SLEEP(";
     size_t prefixLength = startsWith(normalized, sleepPrefix)
-        ? sleepPrefix.size()
-        : startsWith(normalized, alternatePrefix) ? alternatePrefix.size() : 0;
+        ? sleepPrefix.size() : 0;
     if (prefixLength != 0 && normalized[normalized.size() - 1] == ')')
       {
         *handled = true;
@@ -1677,12 +1668,12 @@ private:
         if (!end || *end != '\0' || milliseconds < 0 || milliseconds > 60000)
           {
             result.sqlstate = "22023";
-            result.error = "NATIVE_LITE_SLEEP requires 0..60000 milliseconds";
+            result.error = "TRAFODION_LITE_SLEEP requires 0..60000 milliseconds";
             return result;
           }
 
         Column column;
-        column.name = "native_lite_sleep";
+        column.name = "trafodion_lite_sleep";
         column.oid = 23;
         column.typeLength = 4;
         result.columns.push_back(column);
@@ -1951,7 +1942,7 @@ private:
   }
 
   bool bindPreparedParameters(
-      const std::shared_ptr<NativeLitePreparedPlan> &plan,
+      const std::shared_ptr<TrafodionLitePreparedPlan> &plan,
       const std::vector<std::string> &values,
       const std::vector<bool> &nulls, std::string *error)
   {
@@ -1959,7 +1950,7 @@ private:
         nulls.size() != values.size())
       {
         if (error)
-          *error = "NativeLite prepared parameter count mismatch";
+          *error = "Trafodion Lite prepared parameter count mismatch";
         return false;
       }
     char *input = plan->cli->inputBuf();
@@ -1967,7 +1958,7 @@ private:
     if (inputLength > 0 && !input)
       {
         if (error)
-          *error = "NativeLite prepared input buffer is unavailable";
+          *error = "Trafodion Lite prepared input buffer is unavailable";
         return false;
       }
     if (input && inputLength > 0)
@@ -1975,7 +1966,7 @@ private:
 
     for (size_t index = 0; index < values.size(); index++)
       {
-        const NativeLitePreparedParameter &parameter =
+        const TrafodionLitePreparedParameter &parameter =
             plan->parameters[index];
         if (parameter.indOffset >= 0)
           *reinterpret_cast<int16_t *>(input + parameter.indOffset) =
@@ -1985,7 +1976,7 @@ private:
         if (parameter.varOffset < 0 || parameter.length <= 0)
           {
             if (error)
-              *error = "NativeLite prepared input descriptor has no data slot";
+              *error = "Trafodion Lite prepared input descriptor has no data slot";
             return false;
           }
         char *target = input + parameter.varOffset;
@@ -1998,7 +1989,7 @@ private:
                 if (value.size() > maxLength)
                   {
                     if (error)
-                      *error = "NativeLite prepared character parameter is too long";
+                      *error = "Trafodion Lite prepared character parameter is too long";
                     return false;
                   }
                 const uint16_t length = static_cast<uint16_t>(value.size());
@@ -2087,13 +2078,13 @@ private:
             break;
           default:
             if (error)
-              *error = "NativeLite prepared parameter type requires text binding";
+              *error = "Trafodion Lite prepared parameter type requires text binding";
             return false;
           }
         if (!end || *end != '\0')
           {
             if (error)
-              *error = "NativeLite prepared numeric parameter is invalid";
+              *error = "Trafodion Lite prepared numeric parameter is invalid";
             return false;
           }
       }
@@ -2123,7 +2114,7 @@ private:
     if (!switchTo(request->session))
       {
         result.sqlstate = "08003";
-        result.error = "NativeLite session is closed";
+        result.error = "Trafodion Lite session is closed";
         request->result = result;
         return;
       }
@@ -2146,8 +2137,8 @@ private:
 
     for (size_t attempt = 0; attempt < statements.size(); attempt++)
       {
-        std::shared_ptr<NativeLitePreparedPlan> plan(
-            new NativeLitePreparedPlan());
+        std::shared_ptr<TrafodionLitePreparedPlan> plan(
+            new TrafodionLitePreparedPlan());
         plan->sql = statements[attempt];
         plan->sourceSql = request->sql;
         ContextCli *context = GetCliGlobals()->currContext();
@@ -2169,7 +2160,7 @@ private:
             static_cast<size_t>(inputCount) != parameterCount)
           {
             result.sqlstate = "07001";
-            result.error = "NativeLite prepared parameter descriptor mismatch";
+            result.error = "Trafodion Lite prepared parameter descriptor mismatch";
             plan->cli->fetchRowsEpilogue(plan->sql.c_str());
             continue;
           }
@@ -2177,7 +2168,7 @@ private:
         bool unsupported = false;
         for (Lng32 entry = 1; entry <= inputCount; entry++)
           {
-            NativeLitePreparedParameter parameter;
+            TrafodionLitePreparedParameter parameter;
             plan->cli->getAttributes(entry, TRUE, parameter.fsDatatype,
                                      parameter.length,
                                      &parameter.indOffset,
@@ -2207,13 +2198,13 @@ private:
     if (result.error.empty())
       {
         result.sqlstate = "HY000";
-        result.error = "NativeLite could not prepare statement";
+        result.error = "Trafodion Lite could not prepare statement";
       }
     request->result = result;
   }
 
   bool reopenPreparedPlan(const std::shared_ptr<Session> &session,
-                          const std::shared_ptr<NativeLitePreparedPlan> &plan,
+                          const std::shared_ptr<TrafodionLitePreparedPlan> &plan,
                           QueryResult *result)
   {
     if (!plan || !plan->cli)
@@ -2236,7 +2227,7 @@ private:
         static_cast<size_t>(inputCount) != plan->parameters.size())
       {
         result->sqlstate = "07001";
-        result->error = "NativeLite prepared parameter descriptor changed";
+        result->error = "Trafodion Lite prepared parameter descriptor changed";
         return false;
       }
     for (Lng32 entry = 1; entry <= inputCount; entry++)
@@ -2250,7 +2241,7 @@ private:
 
   QueryResult executePreparedStatement(
       const std::shared_ptr<Session> &session,
-      const std::shared_ptr<NativeLitePreparedPlan> &plan,
+      const std::shared_ptr<TrafodionLitePreparedPlan> &plan,
       const std::vector<std::vector<std::string> > &rows,
       const std::vector<std::vector<bool> > &nullRows)
   {
@@ -2258,7 +2249,7 @@ private:
     if (!switchTo(session) || !plan || !plan->cli)
       {
         result.sqlstate = "08003";
-        result.error = "NativeLite prepared statement is unavailable";
+        result.error = "Trafodion Lite prepared statement is unavailable";
         return result;
       }
     applySessionEnvironment(session);
@@ -2272,13 +2263,13 @@ private:
     if (rows.empty() || rows.size() != nullRows.size())
       {
         result.sqlstate = "07001";
-        result.error = "NativeLite prepared batch is empty or malformed";
+        result.error = "Trafodion Lite prepared batch is empty or malformed";
         return result;
       }
     if (rows.size() > 1 && firstWord(plan->sourceSql) != "INSERT")
       {
         result.sqlstate = "0A000";
-        result.error = "NativeLite prepared batching requires INSERT statements";
+        result.error = "Trafodion Lite prepared batching requires INSERT statements";
         return result;
       }
 
@@ -2376,13 +2367,13 @@ private:
            verb == "DELETE" || verb == "MERGE" || verb == "UPSERT";
   }
 
-  std::shared_ptr<NativeLitePreparedPlan> findAutomaticPlan(
+  std::shared_ptr<TrafodionLitePreparedPlan> findAutomaticPlan(
       const std::shared_ptr<Session> &session, const std::string &sql)
   {
-    std::map<std::string, std::shared_ptr<NativeLitePreparedPlan> >::iterator
+    std::map<std::string, std::shared_ptr<TrafodionLitePreparedPlan> >::iterator
         found = session->planCache.find(sql);
     if (found == session->planCache.end())
-      return std::shared_ptr<NativeLitePreparedPlan>();
+      return std::shared_ptr<TrafodionLitePreparedPlan>();
 
     session->planCacheLru.erase(std::remove(session->planCacheLru.begin(),
                                             session->planCacheLru.end(), sql),
@@ -2393,7 +2384,7 @@ private:
 
   void rememberAutomaticPlan(const std::shared_ptr<Session> &session,
                              const std::string &sql,
-                             const std::shared_ptr<NativeLitePreparedPlan> &plan)
+                             const std::shared_ptr<TrafodionLitePreparedPlan> &plan)
   {
     static const size_t kAutomaticPlanCacheLimit = 64;
     session->planCache[sql] = plan;
@@ -2418,7 +2409,7 @@ private:
   QueryResult executeWithAutomaticPlan(
       const std::shared_ptr<Session> &session, const std::string &sql)
   {
-    std::shared_ptr<NativeLitePreparedPlan> plan =
+    std::shared_ptr<TrafodionLitePreparedPlan> plan =
         findAutomaticPlan(session, sql);
     if (!plan)
       {
@@ -2465,16 +2456,16 @@ private:
     if (!switchTo(session))
       {
         result.sqlstate = "08003";
-        result.error = "NativeLite session is closed";
+        result.error = "Trafodion Lite session is closed";
         return result;
       }
     if (!GetCliGlobals() || !GetCliGlobals()->currContext())
       {
-        std::cerr << "NativeLite missing current CLI context after switch"
+        std::cerr << "Trafodion Lite missing current CLI context after switch"
                   << " session=" << session.get()
                   << " handle=" << session->contextHandle << std::endl;
         result.sqlstate = "08003";
-        result.error = "NativeLite session context is unavailable";
+        result.error = "Trafodion Lite session context is unavailable";
         return result;
       }
     applySessionEnvironment(session);
@@ -2542,7 +2533,7 @@ private:
             if (utilityRc != 0)
               {
                 result.error = output.empty() ?
-                    "NativeLite utility statement failed" : output;
+                    "Trafodion Lite utility statement failed" : output;
                 result.sqlstate = sqlstateForUtilityError(result.error);
               }
             else
@@ -2632,7 +2623,7 @@ private:
         if (!transactionPassed)
           {
             result.error = transactionError.empty()
-                ? "NativeLite transaction context is unavailable"
+                ? "Trafodion Lite transaction context is unavailable"
                 : transactionError;
             const size_t stateMarker = result.error.find("SQLSTATE ");
             if (stateMarker != std::string::npos &&
@@ -3095,10 +3086,10 @@ std::string liteTypeSize(const std::string &type)
   return "0";
 }
 
-class NativeLiteServer
+class TrafodionLiteServer
 {
 public:
-  NativeLiteServer(const std::string &host, int port,
+  TrafodionLiteServer(const std::string &host, int port,
                    const std::string &unixSocket, unsigned int maxSessions)
       : host_(host), port_(port), unixSocket_(unixSocket), listenFd_(-1),
         ownsUnixSocket_(false), unixSocketDevice_(0), unixSocketInode_(0),
@@ -3111,7 +3102,7 @@ public:
   {
   }
 
-  ~NativeLiteServer()
+  ~TrafodionLiteServer()
   {
     stopClients();
     if (listenFd_ >= 0)
@@ -3128,7 +3119,7 @@ public:
 
   int run()
   {
-    std::cout << "NativeLite server ready on "
+    std::cout << "Trafodion Lite server ready on "
               << (unixSocket_.empty() ? host_ + ":" + portString()
                                       : unixSocket_)
               << " workers=" << maxSessions_
@@ -3154,7 +3145,7 @@ public:
         }
         clientThreadDone_.push_back(done);
         clientThreads_.push_back(std::thread(
-            &NativeLiteServer::serveClientAndMark, this, fd, done));
+            &TrafodionLiteServer::serveClientAndMark, this, fd, done));
       }
     if (gListenFd.load() < 0)
       listenFd_ = -1;
@@ -3197,7 +3188,7 @@ private:
     uint32_t hostAddress = ntohl(address.sin_addr.s_addr);
     if ((hostAddress >> 24) != 127)
       {
-        *error = "NativeLite trusted transport is restricted to loopback";
+        *error = "Trafodion Lite trusted transport is restricted to loopback";
         return false;
       }
     if (bind(listenFd_, reinterpret_cast<sockaddr *>(&address),
@@ -3414,7 +3405,7 @@ private:
       {
         QueryResult capacity;
         capacity.sqlstate = "53300";
-        capacity.error = "NativeLite session capacity exhausted (limit=" +
+        capacity.error = "Trafodion Lite session capacity exhausted (limit=" +
                          std::to_string(maxSessions_) + ")";
         std::string errorBody;
         appendT4ConnectError(&errorBody, capacity);
@@ -3428,7 +3419,7 @@ private:
         QueryResult failure;
         failure.sqlstate = "08004";
         failure.error = createError.empty() ?
-            "NativeLite could not create a session context" : createError;
+            "Trafodion Lite could not create a session context" : createError;
         std::string errorBody;
         appendT4ConnectError(&errorBody, failure);
         sendT4Response(fd, request, errorBody);
@@ -3463,7 +3454,7 @@ private:
     appendT4String(&reply, "localhost");
     appendU32(&reply, 0); // node id
     appendU32(&reply, static_cast<uint32_t>(getpid()));
-    appendT4String(&reply, "$NATIVELITE");
+    appendT4String(&reply, "$TRAFODION_LITE");
     appendT4String(&reply, host_);
     appendU32(&reply, static_cast<uint32_t>(port_));
     sendT4Response(fd, request, reply);
@@ -3484,7 +3475,7 @@ private:
       {
         appendU32(&reply, 1); // AS parameter error
         appendU32(&reply, 0);
-        appendT4String(&reply, "invalid NativeLite cancel request");
+        appendT4String(&reply, "invalid Trafodion Lite cancel request");
       }
     else
       {
@@ -3754,7 +3745,7 @@ private:
     if (!splitT4Statements(sql, &batch))
       {
         state.result.sqlstate = "42601";
-        state.result.error = "NativeLite batch has unterminated quoted text";
+        state.result.error = "Trafodion Lite batch has unterminated quoted text";
       }
     else
       state.result = batch.size() > 1
@@ -3991,7 +3982,7 @@ private:
           {
             state.result.sqlstate = "42601";
             state.result.error =
-                "NativeLite batch has unterminated quoted text";
+                "Trafodion Lite batch has unterminated quoted text";
           }
         else
           state.result = batch.size() > 1
@@ -4237,7 +4228,7 @@ private:
           }
         else
           {
-            result.error = "NativeLite T4 catalog API is not supported";
+            result.error = "Trafodion Lite T4 catalog API is not supported";
             result.sqlstate = "HYC00";
           }
       }
@@ -4403,7 +4394,7 @@ private:
   bool ownsUnixSocket_;
   dev_t unixSocketDevice_;
   ino_t unixSocketInode_;
-  NativeLiteEngine engine_;
+  TrafodionLiteEngine engine_;
   unsigned int maxSessions_;
   std::atomic<int> activeSessions_;
   std::atomic<int32_t> nextDialogueId_;
@@ -4489,7 +4480,7 @@ int main(int argc, char **argv)
 
   if (LiteConfig_init() != 0)
     {
-      std::cerr << "failed to initialize NativeLite environment" << std::endl;
+      std::cerr << "failed to initialize Trafodion Lite environment" << std::endl;
       return 1;
     }
   atexit(my_mpi_fclose);
@@ -4497,11 +4488,11 @@ int main(int argc, char **argv)
   signal(SIGINT, signalHandler);
   signal(SIGTERM, signalHandler);
 
-  NativeLiteServer server(host, port, unixSocket, workers);
+  TrafodionLiteServer server(host, port, unixSocket, workers);
   std::string error;
   if (!server.start(&error))
     {
-      std::cerr << "NativeLite server startup failed: " << error << std::endl;
+      std::cerr << "Trafodion Lite server startup failed: " << error << std::endl;
       return 1;
     }
   return server.run();
@@ -4512,7 +4503,7 @@ int main(int argc, char **argv)
 #include <iostream>
 int main()
 {
-  std::cerr << "nativelite-server requires TRAF_LITE" << std::endl;
+  std::cerr << "trafodion-lite-server requires TRAF_LITE" << std::endl;
   return 1;
 }
 

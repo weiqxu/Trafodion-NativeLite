@@ -30,7 +30,7 @@ timeout was retried with a 120-second limit. See
 | TEST014 | runnable | M10 | Exact normalized EXPECTED/LOG match for CTAS, volatile CTAS, STORE BY, and diagnostics |
 | TEST025 | blocked | M4 | Control-query-shape selection differs and MDAM preparation reports error 2105 |
 | TEST050 | runnable | M4 | Exact normalized EXPECTED/LOG match after the M2-M6 re-probe |
-| TEST101 | runnable | M10 | The six-row NULL-scale UPDATE and ROUND behavior now match the lite execution contract; `EXPECTED101.LITE` records the intentional lite diagnostic/CQD rendering |
+| TEST101 | runnable | M10 | The six-row NULL-scale UPDATE and ROUND behavior now match the Trafodion Lite execution contract; `EXPECTED101.LITE` records the intentional Trafodion Lite diagnostic/CQD rendering |
 | TEST107 | unsafe | M7 | Large sort setup is incomplete and SQLCI terminates with status 139 after the session |
 | TEST140 | excluded | - | Its DDL section inseparably combines HBase physical options and a Hive load |
 
